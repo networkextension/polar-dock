@@ -68,6 +68,54 @@ that a 30-second human read would have caught.
 
 ---
 
+### Stage 1 sub-concern — reference materials (PDF / 设计稿 / 需求文档)
+
+**Goal.** Owner uploads PDFs, design mockups, requirement docs
+alongside the project; coder tool sees them as plain
+context when working on tasks.
+
+**Recommendation: hybrid (platform attachment + just-in-time
+fetch + vision pre-processing).** Concretely:
+
+1. **Upload path**: drag-drop on project page → R2 / local
+   `uploads/` (existing `StorageBackend`). New table
+   `project_attachments(project_id, kind, path, mime, summary_md,
+   created_at)`. Reuses the same plumbing as chat attachments.
+2. **Vision pre-processing for non-text** (design mockups,
+   screenshots, whiteboard photos): on upload, kick off a
+   server-side job that asks a vision-capable LLM (Claude with
+   vision; or 任一 vision 模型) to produce a structured Markdown
+   description: layout, components, copy, behaviors. Store as
+   `summary_md`. Original binary stays in storage; LLMs that
+   can't see images get the `summary_md` instead.
+3. **PDF extraction**: cheap path is `pdftotext` shelled out
+   server-side; LLM fallback only when the PDF is image-heavy.
+   Same `summary_md` slot.
+4. **Just-in-time fetch**: when polar-agent dispatches a task on
+   this project, server bundles the relevant attachments (or just
+   their `summary_md` for tools without vision) and polar-agent
+   drops them into `<workdir>/_refs/` — `.gitignore`'d, never
+   committed. Coder tool's prompt mentions the path:
+   "参考资料在 `_refs/`，需要时读"。
+
+**Why hybrid** (not "stick it in git" and not "platform-only"):
+- Git: design files are 30-50 MB binaries; git-lfs is workable
+  but adds friction, and version diffs of a PNG are useless
+- Platform-only: coder tools natively read files in workdir, not
+  arbitrary URLs; pulling refs onto the disk is what actually
+  works
+- Hybrid: ergonomic upload UX + clean git history + works with
+  every coder tool regardless of vision capability
+
+**Estimate**: 1 wk for upload + storage + just-in-time fetch
+plumbing; +0.5 wk for vision pre-processing job and `summary_md`
+generation. Ship as part of Stage 1 review work.
+
+**Trigger**: first project where the idea field alone isn't
+enough — typically the first non-trivial project.
+
+---
+
 ## Stage 2 — Split feature
 
 **Goal.** Project idea → list of features → list of tasks per
@@ -289,6 +337,45 @@ phone.
 ## Cross-cutting concerns
 
 These touch every stage:
+
+### Per-stage LLM selection
+
+Each stage has different capability requirements; mixing the
+wrong LLM at the wrong stage is the single most common way to
+burn tokens for nothing. Today the project page lets the owner
+pick a bot + LLM config for the *decompose* step (Stage 2). The
+pipeline as a whole needs the same per-stage control:
+
+| Stage | Capability needed | Reasonable choice |
+|---|---|---|
+| 1 — review (text idea) | language, cheap | small/cheap LLM (haiku, gpt-4o-mini) |
+| 1 — review (design 拆稿) | **vision** | Claude with vision; gpt-4-vision |
+| 1 — review (PDF heavy) | document understanding | Claude / GPT-4 with the PDF as input |
+| 2 — split features | reasoning, structured output | flagship coding LLM |
+| 4 — coding | tool-using, codebase understanding | local kimi/claude/codex CLI (already chosen per bot) |
+| 6 — CI failure analysis | reasoning over logs | flagship; cheap on retries |
+| 7 — release notes / changelog | summarization | small/cheap LLM |
+
+Implementation note: design 稿 → markdown 用 Claude vision 一次
+后，下游 stages 的 LLM 不需要 vision 了，可以选更便宜的。这是
+*per-stage* control 真正省钱的地方——不是「整个项目用一个 LLM」，
+而是「每个阶段挑性价比最高的那一个」，并且把跨阶段的视觉/文档
+理解结果固化成 `summary_md` / `decompose_prompt` 等中间产物，
+后续步骤复用而不重算。
+
+UI implication: project settings should expose more than one LLM
+choice — at minimum a "vision LLM" slot for attachment
+pre-processing, plus the existing per-decompose LLM config.
+Sensible defaults: vision = the workspace's vision-capable
+config if any; everything else = the workspace default.
+
+Schema implication: project row gets `vision_llm_config_id` (and
+later, `summarization_llm_config_id`). All nullable, all
+falling back to workspace defaults.
+
+**Estimate**: 0.5 wk to add the slots + UI + plumbing; the
+actual benefit is realized as Stages 1, 6, 7 land and start
+needing their own LLM choice.
 
 ### Auth & credential lifecycle
 - Project-scoped: git deploy key, CI provider token, signing
