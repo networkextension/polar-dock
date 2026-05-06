@@ -151,6 +151,25 @@ Package polar-agent + kimi-cli + claude + codex + git into a single OCI image. O
 ### macOS Runtime Variants (Apple Silicon)
 For iOS/macOS native builds (Xcode-required) where Linux containers can't help. Two paths recorded: (1) **bare-metal Mac mini** running polar-agent under `launchd` — simplest, lowest friction, single failure domain. (2) **tart-based macOS VMs** on Apple Silicon hosts — snapshots, multiple concurrent VMs (Apple licensing caps at 2 per host), pre-baked Xcode + tools. Image contents and first-boot script parallel the Linux `standard` design. Recommended ship order: Linux container first (1.5–2.5 wk), then bare-metal Mac mini plist + setup doc (0.5 wk), then tart VM image when parallel iOS builds become a bottleneck (1.5–2 wk). Detail: [`doc/agent-container-design.md`](doc/agent-container-design.md) §"macOS runtime variants".
 
+---
+
+## Project Pipeline (end-to-end)
+
+### Project End-to-End Pipeline (idea → review → split → agent → code → push → CI → publish)
+A 7-stage pipeline that takes a project from a written idea to a deployed build artifact without manual hand-offs. Today stages 2 (AI 拆解 features + sprint iteration) and 4 (task pickup → polar-agent → coder tool) work end-to-end. The remaining stages have varied gaps:
+
+- **Stage 1 — Review** (idea + LLM prompt sanity check): partial. Add `GET /api/projects/:id/decompose-preview` to surface the exact prompt before the run + edit textarea. Optional reviewer role + draft table later. **0.5 wk** for the preview endpoint, **1.5 wk** with full reviewer flow.
+- **Stage 3 — Agent auto-start** (per-project pool, wake-on-dispatch): partial. Builds on the existing auto-provision FUTURE_WORK entry; adds per-project preferred host + workspace pre-warm. **1–2 wk** on top of base auto-provision.
+- **Stage 5 — Push code**: not started. Coder output sits in workdir. Three options discussed (A polar-agent does git / B coder tool does git / C hybrid with polar-agent safety net). Recommendation: **option C** — coder commits, polar-agent post-task safety net for any unstaged changes, project-scoped deploy keys. **1.5 wk**.
+- **Stage 6 — CI/CD**: not started. Per-project `ci_provider` + `ci_repo_url`; status poll/webhook attached to each task. GitHub Actions only for v1. **1 wk** for v1, **2 wk** for multi-provider.
+- **Stage 7 — Publish build result**: not started. Per-project artifact convention (iOS .ipa via existing iosdist OTA, web `dist/` to `/projects/<id>/preview/`, CLI tarball, library publish). iOS path leans on iosdist module. **1 wk** for iOS, **2 wk** with web + tarball.
+
+Cross-cutting: project-scoped credential lifecycle (deploy keys, signing identities, CI tokens), per-task structured log (tokens × price, CI minutes × price), per-stage retry semantics with idempotency keys.
+
+Suggested ship order: Stage 5 first (~1.5 wk), then 1 → 6 → 7 → 3, ~5 engineer-weeks total to "end-to-end usable for one iOS project." Each stage gated by its own trigger condition; premature stages become dead code. Out of scope: multi-tenant project isolation, auto-merge / PR automation, cost guardrails.
+
+Full design: [`doc/project-pipeline-design.md`](doc/project-pipeline-design.md).
+
 ### polar-agent Auto-Provision + Cross-Machine Deploy
 Today the operator has to: download the right release tarball, copy `agents/polar-agent_<os>_<arch>` into PATH, generate an agent token in the bots page, run `polar-agent login`, edit `~/.polar/start_agents.env` with the right bot IDs, install kimi-cli/claude/codex separately, log each of those in. Six manual steps × every machine the operator wants to attach from. Targets to automate:
 
