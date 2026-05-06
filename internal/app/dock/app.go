@@ -612,19 +612,20 @@ func (s *Server) registerRoutes() {
 		api.GET("/video-projects/:id/shots.zip", s.AuthMiddleware(), s.handleVideoProjectShotsZip)
 		api.GET("/system-agent", s.AuthMiddleware(), s.handleSystemAgentStatus)
 		// teams (collaboration workspaces). T2 = CRUD + read-only members
-		// list. T3 = invitations. Role middleware lands in T5.
+		// list. T3 = invitations. T5 = RequireTeamRole middleware
+		// chained on team-scoped routes (replaces inline role checks).
 		api.GET("/teams", s.AuthMiddleware(), s.handleTeamList)
 		api.POST("/teams", s.AuthMiddleware(), s.handleTeamCreate)
-		api.GET("/teams/:id", s.AuthMiddleware(), s.handleTeamDetail)
-		api.PUT("/teams/:id", s.AuthMiddleware(), s.handleTeamUpdate)
-		api.DELETE("/teams/:id", s.AuthMiddleware(), s.handleTeamDelete)
-		api.GET("/teams/:id/members", s.AuthMiddleware(), s.handleTeamMembers)
+		api.GET("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamDetail)
+		api.PUT("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamUpdate)
+		api.DELETE("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleOwner), s.handleTeamDelete)
+		api.GET("/teams/:id/members", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamMembers)
 		// T3 invitations: admin-side (under team) + invitee-side
 		// (token-based) + inbox (under user/me, separate path to
 		// avoid Gin's literal-vs-wildcard collision at /invitations/*).
-		api.POST("/teams/:id/invitations", s.AuthMiddleware(), s.handleTeamInvitationCreate)
-		api.GET("/teams/:id/invitations", s.AuthMiddleware(), s.handleTeamInvitationList)
-		api.DELETE("/teams/:id/invitations/:inv_id", s.AuthMiddleware(), s.handleTeamInvitationRevoke)
+		api.POST("/teams/:id/invitations", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamInvitationCreate)
+		api.GET("/teams/:id/invitations", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamInvitationList)
+		api.DELETE("/teams/:id/invitations/:inv_id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamInvitationRevoke)
 		api.GET("/invitations/:token", s.handleInvitationPublicPreview)
 		api.POST("/invitations/:token/accept", s.AuthMiddleware(), s.handleInvitationAccept)
 		api.POST("/invitations/:token/decline", s.handleInvitationDecline)
