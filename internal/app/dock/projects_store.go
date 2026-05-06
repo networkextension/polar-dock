@@ -46,36 +46,43 @@ type Project struct {
 	RuntimeEnv       string    `json:"runtime_env"`
 	BusinessScenario string    `json:"business_scenario"`
 	CodeProvider     string    `json:"code_provider"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	// CurrentSprint: monotonically increases each AI 拆解 run.
+	// 0 = no sprint yet (just-created project). 1 = first decompose.
+	// Features and tasks tag themselves with this number on insert
+	// so the UI can group by sprint.
+	CurrentSprint int       `json:"current_sprint"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type ProjectFeature struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id"`
-	Ord         int       `json:"ord"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Complexity  string    `json:"complexity"`
-	Selected    bool      `json:"selected"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	ProjectID    string    `json:"project_id"`
+	Ord          int       `json:"ord"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Complexity   string    `json:"complexity"`
+	Selected     bool      `json:"selected"`
+	SprintNumber int       `json:"sprint_number"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type ProjectTask struct {
-	ID            string     `json:"id"`
-	ProjectID     string     `json:"project_id"`
-	FeatureID     *string    `json:"feature_id,omitempty"`
-	Title         string     `json:"title"`
-	Description   string     `json:"description"`
-	Status        string     `json:"status"`
-	BotUserID     *string    `json:"bot_user_id,omitempty"`
-	ChatThreadID  *int64     `json:"chat_thread_id,omitempty"`
-	LLMThreadID   *int64     `json:"llm_thread_id,omitempty"`
-	Ord           int        `json:"ord"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	ID           string     `json:"id"`
+	ProjectID    string     `json:"project_id"`
+	FeatureID    *string    `json:"feature_id,omitempty"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	Status       string     `json:"status"`
+	BotUserID    *string    `json:"bot_user_id,omitempty"`
+	ChatThreadID *int64     `json:"chat_thread_id,omitempty"`
+	LLMThreadID  *int64     `json:"llm_thread_id,omitempty"`
+	SprintNumber int        `json:"sprint_number"`
+	Ord          int        `json:"ord"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 }
 
 // ---- projects ------------------------------------------------------
@@ -94,17 +101,29 @@ func (s *Server) createProject(p *Project) error {
 	p.CreatedAt = now
 	p.UpdatedAt = now
 	_, err := s.db.Exec(
-		`INSERT INTO projects (id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+		`INSERT INTO projects (id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, current_sprint, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
 		p.ID, p.WorkspaceID, p.CreatorUserID, p.Name, p.Description, p.Status, p.Template,
-		p.RuntimeEnv, p.BusinessScenario, p.CodeProvider, now,
+		p.RuntimeEnv, p.BusinessScenario, p.CodeProvider, p.CurrentSprint, now,
 	)
 	return err
 }
 
+// projectSelectColumns is the canonical SELECT list for projects.
+// Centralized so adding a column means touching one place.
+const projectSelectColumns = `id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, COALESCE(current_sprint, 0), created_at, updated_at`
+
+func scanProject(scanFn func(...any) error) (*Project, error) {
+	var p Project
+	if err := scanFn(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CurrentSprint, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 func (s *Server) listProjects(workspaceID string) ([]Project, error) {
 	rows, err := s.db.Query(
-		`SELECT id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, created_at, updated_at
+		`SELECT `+projectSelectColumns+`
 		 FROM projects WHERE workspace_id = $1 ORDER BY updated_at DESC`,
 		workspaceID,
 	)
@@ -114,29 +133,29 @@ func (s *Server) listProjects(workspaceID string) ([]Project, error) {
 	defer rows.Close()
 	out := []Project{}
 	for rows.Next() {
-		var p Project
-		if err := rows.Scan(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		p, err := scanProject(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, p)
+		out = append(out, *p)
 	}
 	return out, rows.Err()
 }
 
 func (s *Server) getProject(id, workspaceID string) (*Project, error) {
-	var p Project
-	err := s.db.QueryRow(
-		`SELECT id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, created_at, updated_at
+	row := s.db.QueryRow(
+		`SELECT `+projectSelectColumns+`
 		 FROM projects WHERE id = $1 AND workspace_id = $2`,
 		id, workspaceID,
-	).Scan(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CreatedAt, &p.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	)
+	p, err := scanProject(row.Scan)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	return &p, nil
+	return p, nil
 }
 
 // ProjectMetaUpdate carries the editable project fields, all
@@ -208,10 +227,64 @@ func (s *Server) deleteProject(id, workspaceID string) error {
 
 // ---- features ------------------------------------------------------
 
-// replaceProjectFeatures atomically swaps the feature list. Used by
-// the decompose endpoint — re-decomposing wipes the old list rather
-// than appending, so the user iterates on the prompt without leftover
-// stale items mixing in.
+// appendProjectFeatures inserts a new sprint of features. It does
+// NOT delete anything — old sprints stay queryable. Atomically
+// bumps projects.current_sprint and tags the new rows with that
+// sprint number, so the UI can group by sprint and the user can
+// see how the project evolved.
+//
+// Returns the new sprint number so callers can include it in the
+// response (FE highlights the just-added sprint).
+func (s *Server) appendProjectFeatures(projectID string, features []ProjectFeature) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var newSprint int
+	if err := tx.QueryRow(
+		`UPDATE projects SET current_sprint = COALESCE(current_sprint, 0) + 1, updated_at = NOW()
+		 WHERE id = $1
+		 RETURNING current_sprint`,
+		projectID,
+	).Scan(&newSprint); err != nil {
+		return 0, err
+	}
+
+	// Find the highest existing ord for this project so the new
+	// sprint's features sort after older ones. We reset ord per
+	// sprint instead of globally; FE groups by sprint anyway.
+	for i := range features {
+		f := &features[i]
+		if f.ID == "" {
+			f.ID = generateResourceID()
+		}
+		f.ProjectID = projectID
+		f.Ord = i
+		f.SprintNumber = newSprint
+		if f.Complexity == "" {
+			f.Complexity = ProjectFeatureComplexityMedium
+		}
+		f.CreatedAt = time.Now().UTC()
+		if _, err := tx.Exec(
+			`INSERT INTO project_features (id, project_id, ord, title, description, complexity, selected, sprint_number, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			f.ID, projectID, f.Ord, f.Title, f.Description, f.Complexity, f.Selected, f.SprintNumber, f.CreatedAt,
+		); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return newSprint, nil
+}
+
+// replaceProjectFeatures kept for backward compat / non-iterative
+// flows. Wipes everything and inserts under sprint 1. Currently
+// unused by the decompose endpoint (which uses appendProjectFeatures);
+// kept as a primitive in case future flows want a "reset" path.
 func (s *Server) replaceProjectFeatures(projectID string, features []ProjectFeature) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -221,6 +294,9 @@ func (s *Server) replaceProjectFeatures(projectID string, features []ProjectFeat
 	if _, err := tx.Exec(`DELETE FROM project_features WHERE project_id = $1`, projectID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`UPDATE projects SET current_sprint = 1, updated_at = NOW() WHERE id = $1`, projectID); err != nil {
+		return err
+	}
 	for i := range features {
 		f := &features[i]
 		if f.ID == "" {
@@ -228,14 +304,15 @@ func (s *Server) replaceProjectFeatures(projectID string, features []ProjectFeat
 		}
 		f.ProjectID = projectID
 		f.Ord = i
+		f.SprintNumber = 1
 		if f.Complexity == "" {
 			f.Complexity = ProjectFeatureComplexityMedium
 		}
 		f.CreatedAt = time.Now().UTC()
 		if _, err := tx.Exec(
-			`INSERT INTO project_features (id, project_id, ord, title, description, complexity, selected, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			f.ID, projectID, f.Ord, f.Title, f.Description, f.Complexity, f.Selected, f.CreatedAt,
+			`INSERT INTO project_features (id, project_id, ord, title, description, complexity, selected, sprint_number, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			f.ID, projectID, f.Ord, f.Title, f.Description, f.Complexity, f.Selected, f.SprintNumber, f.CreatedAt,
 		); err != nil {
 			return err
 		}
@@ -245,8 +322,9 @@ func (s *Server) replaceProjectFeatures(projectID string, features []ProjectFeat
 
 func (s *Server) listProjectFeatures(projectID string) ([]ProjectFeature, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, ord, title, description, complexity, selected, created_at
-		 FROM project_features WHERE project_id = $1 ORDER BY ord ASC`,
+		`SELECT id, project_id, ord, title, description, complexity, selected, COALESCE(sprint_number, 1), created_at
+		 FROM project_features WHERE project_id = $1
+		 ORDER BY sprint_number ASC, ord ASC`,
 		projectID,
 	)
 	if err != nil {
@@ -256,7 +334,7 @@ func (s *Server) listProjectFeatures(projectID string) ([]ProjectFeature, error)
 	out := []ProjectFeature{}
 	for rows.Next() {
 		var f ProjectFeature
-		if err := rows.Scan(&f.ID, &f.ProjectID, &f.Ord, &f.Title, &f.Description, &f.Complexity, &f.Selected, &f.CreatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.ProjectID, &f.Ord, &f.Title, &f.Description, &f.Complexity, &f.Selected, &f.SprintNumber, &f.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -317,21 +395,22 @@ func (s *Server) generatePlanFromSelectedFeatures(projectID string) ([]ProjectTa
 			return nil, err
 		}
 		t := ProjectTask{
-			ID:          generateResourceID(),
-			ProjectID:   projectID,
-			Title:       f.Title,
-			Description: f.Description,
-			Status:      ProjectTaskStatusTodo,
-			Ord:         f.Ord,
-			CreatedAt:   time.Now().UTC(),
-			UpdatedAt:   time.Now().UTC(),
+			ID:           generateResourceID(),
+			ProjectID:    projectID,
+			Title:        f.Title,
+			Description:  f.Description,
+			Status:       ProjectTaskStatusTodo,
+			SprintNumber: f.SprintNumber,
+			Ord:          f.Ord,
+			CreatedAt:    time.Now().UTC(),
+			UpdatedAt:    time.Now().UTC(),
 		}
 		fid := f.ID
 		t.FeatureID = &fid
 		if _, err := tx.Exec(
-			`INSERT INTO project_tasks (id, project_id, feature_id, title, description, status, ord, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
-			t.ID, t.ProjectID, t.FeatureID, t.Title, t.Description, t.Status, t.Ord, t.CreatedAt,
+			`INSERT INTO project_tasks (id, project_id, feature_id, title, description, status, sprint_number, ord, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+			t.ID, t.ProjectID, t.FeatureID, t.Title, t.Description, t.Status, t.SprintNumber, t.Ord, t.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -349,67 +428,16 @@ func (s *Server) generatePlanFromSelectedFeatures(projectID string) ([]ProjectTa
 	return out, nil
 }
 
-func (s *Server) listProjectTasks(projectID string) ([]ProjectTask, error) {
-	rows, err := s.db.Query(
-		`SELECT id, project_id, feature_id, title, description, status, bot_user_id, chat_thread_id, llm_thread_id, ord, created_at, updated_at, started_at, completed_at
-		 FROM project_tasks WHERE project_id = $1 ORDER BY ord ASC, created_at ASC`,
-		projectID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []ProjectTask{}
-	for rows.Next() {
-		var t ProjectTask
-		var featureID, botUserID sql.NullString
-		var chatThreadID, llmThreadID sql.NullInt64
-		var startedAt, completedAt sql.NullTime
-		if err := rows.Scan(&t.ID, &t.ProjectID, &featureID, &t.Title, &t.Description, &t.Status, &botUserID, &chatThreadID, &llmThreadID, &t.Ord, &t.CreatedAt, &t.UpdatedAt, &startedAt, &completedAt); err != nil {
-			return nil, err
-		}
-		if featureID.Valid {
-			v := featureID.String
-			t.FeatureID = &v
-		}
-		if botUserID.Valid {
-			v := botUserID.String
-			t.BotUserID = &v
-		}
-		if chatThreadID.Valid {
-			v := chatThreadID.Int64
-			t.ChatThreadID = &v
-		}
-		if llmThreadID.Valid {
-			v := llmThreadID.Int64
-			t.LLMThreadID = &v
-		}
-		if startedAt.Valid {
-			v := startedAt.Time
-			t.StartedAt = &v
-		}
-		if completedAt.Valid {
-			v := completedAt.Time
-			t.CompletedAt = &v
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
+// projectTaskSelectColumns + scanProjectTask centralize the
+// scanning so list / single-row / load-by-id paths stay in sync.
+const projectTaskSelectColumns = `id, project_id, feature_id, title, description, status, bot_user_id, chat_thread_id, llm_thread_id, COALESCE(sprint_number, 1), ord, created_at, updated_at, started_at, completed_at`
 
-// loadProjectTask is the single-row variant of listProjectTasks.
-// Used by pickup to fetch the task we're updating.
-func (s *Server) loadProjectTask(projectID, taskID string) (*ProjectTask, error) {
-	row := s.db.QueryRow(
-		`SELECT id, project_id, feature_id, title, description, status, bot_user_id, chat_thread_id, llm_thread_id, ord, created_at, updated_at, started_at, completed_at
-		 FROM project_tasks WHERE project_id = $1 AND id = $2`,
-		projectID, taskID,
-	)
+func scanProjectTask(scanFn func(...any) error) (*ProjectTask, error) {
 	var t ProjectTask
 	var featureID, botUserID sql.NullString
 	var chatThreadID, llmThreadID sql.NullInt64
 	var startedAt, completedAt sql.NullTime
-	if err := row.Scan(&t.ID, &t.ProjectID, &featureID, &t.Title, &t.Description, &t.Status, &botUserID, &chatThreadID, &llmThreadID, &t.Ord, &t.CreatedAt, &t.UpdatedAt, &startedAt, &completedAt); err != nil {
+	if err := scanFn(&t.ID, &t.ProjectID, &featureID, &t.Title, &t.Description, &t.Status, &botUserID, &chatThreadID, &llmThreadID, &t.SprintNumber, &t.Ord, &t.CreatedAt, &t.UpdatedAt, &startedAt, &completedAt); err != nil {
 		return nil, err
 	}
 	if featureID.Valid {
@@ -437,6 +465,39 @@ func (s *Server) loadProjectTask(projectID, taskID string) (*ProjectTask, error)
 		t.CompletedAt = &v
 	}
 	return &t, nil
+}
+
+func (s *Server) listProjectTasks(projectID string) ([]ProjectTask, error) {
+	rows, err := s.db.Query(
+		`SELECT `+projectTaskSelectColumns+`
+		 FROM project_tasks WHERE project_id = $1
+		 ORDER BY sprint_number ASC, ord ASC, created_at ASC`,
+		projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProjectTask{}
+	for rows.Next() {
+		t, err := scanProjectTask(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *t)
+	}
+	return out, rows.Err()
+}
+
+// loadProjectTask is the single-row variant of listProjectTasks.
+// Used by pickup to fetch the task we're updating.
+func (s *Server) loadProjectTask(projectID, taskID string) (*ProjectTask, error) {
+	row := s.db.QueryRow(
+		`SELECT `+projectTaskSelectColumns+`
+		 FROM project_tasks WHERE project_id = $1 AND id = $2`,
+		projectID, taskID,
+	)
+	return scanProjectTask(row.Scan)
 }
 
 type ProjectTaskUpdate struct {

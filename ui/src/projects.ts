@@ -289,9 +289,32 @@ function renderProjectPanel(): void {
   descEl.value = activeProject.description;
   clearStatus(decomposeStatusEl);
   clearStatus(planStatusEl);
+  // Decompose button text reflects whether this is the first
+  // decompose (sprint=0) or an iteration (current_sprint > 0).
+  const sprint = activeProject.current_sprint || 0;
+  decomposeBtn.textContent = sprint === 0
+    ? "AI 拆解功能 →"
+    : `AI 拆解 → Sprint ${sprint + 1} →`;
 
   renderFeatures();
   renderTasks();
+}
+
+// groupBySprint splits a sorted-by-sprint slice into [sprint, items[]].
+// Pre-condition: items already sorted by sprint_number ASC then ord
+// (which is what listProjectFeatures / listProjectTasks return).
+function groupBySprint<T extends { sprint_number: number }>(items: T[]): Array<[number, T[]]> {
+  const groups: Array<[number, T[]]> = [];
+  for (const item of items) {
+    const sprint = item.sprint_number || 1;
+    const last = groups[groups.length - 1];
+    if (last && last[0] === sprint) {
+      last[1].push(item);
+    } else {
+      groups.push([sprint, [item]]);
+    }
+  }
+  return groups;
 }
 
 function renderFeatures(): void {
@@ -304,26 +327,35 @@ function renderFeatures(): void {
   featuresCountEl.textContent = `${selectedCount} / ${activeFeatures.length} 已选`;
   generatePlanBtn.disabled = selectedCount === 0;
 
-  featuresListEl.innerHTML = activeFeatures
-    .map((f) => {
-      const c = COMPLEXITY_COLOR[f.complexity];
-      const cl = COMPLEXITY_LABEL[f.complexity];
-      // Inline overrides on the checkbox: the global "input { width:
-      // 100%; padding: 12px 14px }" rule (styles.css) is meant for
-      // text fields, but it also applies to checkboxes here and
-      // collapses the flex sibling text column to a single character
-      // wide. Reset to native sizing.
-      return `
-        <label style="display:flex; gap:10px; align-items:flex-start; padding:10px; background:${f.selected ? "#fff" : "#f7f7f9"}; border:1px solid var(--border,#ececf0); border-radius:6px; cursor:pointer;">
-          <input type="checkbox" ${f.selected ? "checked" : ""} data-feature-toggle="${escapeHTML(f.id)}" style="margin:3px 0 0 0; padding:0; width:auto; flex-shrink:0;" />
-          <div style="flex:1; min-width:0;">
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              <div style="font-weight:500; font-size:14px;">${escapeHTML(f.title)}</div>
-              <span style="padding:1px 6px; border-radius:3px; background:${c}; color:#fff; font-size:10px;">${escapeHTML(cl)}</span>
-            </div>
-            <div style="font-size:12px; color:var(--text-muted,#888); margin-top:3px;">${escapeHTML(f.description)}</div>
-          </div>
-        </label>`;
+  // Group by sprint so each iteration is a labeled section. Single
+  // sprint = no header (avoid noise on first decompose). Multi-sprint
+  // = "Sprint N" header with item count.
+  const groups = groupBySprint(activeFeatures);
+  const showSprintHeaders = groups.length > 1;
+
+  featuresListEl.innerHTML = groups
+    .map(([sprint, items]) => {
+      const sprintHeader = showSprintHeaders
+        ? `<div style="font-size:12px; font-weight:600; color:var(--text-muted,#888); padding:6px 0 2px 0; border-top:1px dashed var(--border,#ececf0); margin-top:6px;">Sprint ${sprint} · ${items.length} 个功能</div>`
+        : "";
+      const rows = items
+        .map((f) => {
+          const c = COMPLEXITY_COLOR[f.complexity];
+          const cl = COMPLEXITY_LABEL[f.complexity];
+          return `
+            <label style="display:flex; gap:10px; align-items:flex-start; padding:10px; background:${f.selected ? "#fff" : "#f7f7f9"}; border:1px solid var(--border,#ececf0); border-radius:6px; cursor:pointer;">
+              <input type="checkbox" ${f.selected ? "checked" : ""} data-feature-toggle="${escapeHTML(f.id)}" style="margin:3px 0 0 0; padding:0; width:auto; flex-shrink:0;" />
+              <div style="flex:1; min-width:0;">
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                  <div style="font-weight:500; font-size:14px;">${escapeHTML(f.title)}</div>
+                  <span style="padding:1px 6px; border-radius:3px; background:${c}; color:#fff; font-size:10px;">${escapeHTML(cl)}</span>
+                </div>
+                <div style="font-size:12px; color:var(--text-muted,#888); margin-top:3px;">${escapeHTML(f.description)}</div>
+              </div>
+            </label>`;
+        })
+        .join("");
+      return sprintHeader + rows;
     })
     .join("");
 
@@ -350,35 +382,45 @@ function renderTasks(): void {
   // the panel opens — saves a click in the common case (project
   // has code_provider=kimi, agent attached as kimi-bot).
   syncDispatchAllBotOptions();
-  tasksListEl.innerHTML = activeTasks
-    .map((t) => {
-      const opts = TASK_STATUS_OPTIONS.map(
-        (s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${TASK_STATUS_LABEL[s]}</option>`,
-      ).join("");
-      const isPickerOpen = pickerOpenForTaskID === t.id;
-      // Quick-action buttons next to the status select. Hidden
-      // when the task is already in the corresponding terminal
-      // state to avoid no-op clicks.
-      const finishBtn = t.status !== "done"
-        ? `<button type="button" class="btn-inline btn-secondary" data-task-finish="${escapeHTML(t.id)}" title="标记为完成" style="font-size:11px; padding:3px 6px;">✓</button>`
+  // Group by sprint so the user can see iteration history in
+  // order. Same logic as features: single sprint = no header,
+  // multi-sprint = labeled section per sprint.
+  const taskGroups = groupBySprint(activeTasks);
+  const showTaskSprintHeaders = taskGroups.length > 1;
+  tasksListEl.innerHTML = taskGroups
+    .map(([sprint, items]) => {
+      const sprintHeader = showTaskSprintHeaders
+        ? `<div style="font-size:12px; font-weight:600; color:var(--text-muted,#888); padding:6px 0 2px 0; border-top:1px dashed var(--border,#ececf0); margin-top:6px;">Sprint ${sprint} · ${items.length} 个任务</div>`
         : "";
-      const cancelBtn = t.status !== "blocked" && t.status !== "done"
-        ? `<button type="button" class="btn-inline btn-secondary" data-task-cancel="${escapeHTML(t.id)}" title="标记为阻塞 / 取消" style="font-size:11px; padding:3px 6px;">✗</button>`
-        : "";
-      return `
-        <div style="padding:10px; background:#fff; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:10px; align-items:flex-start;">
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:500; font-size:14px;">${escapeHTML(t.title)}</div>
-            <div style="font-size:12px; color:var(--text-muted,#888); margin-top:3px;">${escapeHTML(t.description)}</div>
-            <div style="margin-top:6px; font-size:11px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              ${renderTaskBotSlot(t, isPickerOpen)}
-            </div>
-          </div>
-          <div style="display:flex; gap:4px; align-items:center;">
-            ${finishBtn}${cancelBtn}
-            <select class="input" style="font-size:12px; padding:4px 6px; width:auto;" data-task-status="${escapeHTML(t.id)}">${opts}</select>
-          </div>
-        </div>`;
+      const rows = items
+        .map((t) => {
+          const opts = TASK_STATUS_OPTIONS.map(
+            (s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${TASK_STATUS_LABEL[s]}</option>`,
+          ).join("");
+          const isPickerOpen = pickerOpenForTaskID === t.id;
+          const finishBtn = t.status !== "done"
+            ? `<button type="button" class="btn-inline btn-secondary" data-task-finish="${escapeHTML(t.id)}" title="标记为完成" style="font-size:11px; padding:3px 6px;">✓</button>`
+            : "";
+          const cancelBtn = t.status !== "blocked" && t.status !== "done"
+            ? `<button type="button" class="btn-inline btn-secondary" data-task-cancel="${escapeHTML(t.id)}" title="标记为阻塞 / 取消" style="font-size:11px; padding:3px 6px;">✗</button>`
+            : "";
+          return `
+            <div style="padding:10px; background:#fff; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:10px; align-items:flex-start;">
+              <div style="flex:1; min-width:0;">
+                <div style="font-weight:500; font-size:14px;">${escapeHTML(t.title)}</div>
+                <div style="font-size:12px; color:var(--text-muted,#888); margin-top:3px;">${escapeHTML(t.description)}</div>
+                <div style="margin-top:6px; font-size:11px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  ${renderTaskBotSlot(t, isPickerOpen)}
+                </div>
+              </div>
+              <div style="display:flex; gap:4px; align-items:center;">
+                ${finishBtn}${cancelBtn}
+                <select class="input" style="font-size:12px; padding:4px 6px; width:auto;" data-task-status="${escapeHTML(t.id)}">${opts}</select>
+              </div>
+            </div>`;
+        })
+        .join("");
+      return sprintHeader + rows;
     })
     .join("");
   tasksListEl.querySelectorAll<HTMLSelectElement>("[data-task-status]").forEach((sel) => {
@@ -539,16 +581,18 @@ async function decompose(): Promise<void> {
     setStatus(decomposeStatusEl, data.error || "拆解失败", true);
     return;
   }
-  activeFeatures = data.features;
-  // Surface which LLM actually produced this run so A/B comparison
-  // is unambiguous without checking server logs.
+  // Reload from server so we get the merged features list (old
+  // sprints + the just-appended new sprint), not just the new
+  // batch from the response.
+  await openProject(activeProject.id);
+  // Surface which LLM produced this run + the new sprint number
+  // so A/B comparison + iteration history are obvious.
   const llmTag = data.llm_used
     ? `（${escapeHTML(data.llm_used.name)} · ${escapeHTML(data.llm_used.model)}）`
     : "";
-  setStatus(decomposeStatusEl, `拆出 ${activeFeatures.length} 个功能 ${llmTag}`, false);
-  renderFeatures();
-  // Reload project so status flips to planning.
-  void openProject(activeProject.id);
+  const newCount = data.features.length;
+  const sprintTag = data.new_sprint ? ` → Sprint ${data.new_sprint}` : "";
+  setStatus(decomposeStatusEl, `拆出 ${newCount} 个新功能${sprintTag} ${llmTag}`, false);
 }
 
 async function toggleFeature(featureID: string, selected: boolean): Promise<void> {
