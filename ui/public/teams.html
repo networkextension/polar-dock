@@ -75,8 +75,14 @@
           </div>
         </div>
 
-        <div class="lp-content" style="padding:0; overflow:hidden; flex:1; display:flex;">
-          <div class="video-studio-layout">
+        <div class="lp-content" style="padding:0; overflow:hidden; flex:1; display:flex; flex-direction:column;">
+          <!-- Inbox banner: pending invitations addressed to my email -->
+          <section id="teamsInbox" hidden style="padding:14px 18px; background:#fff7e6; border-bottom:1px solid #f5d28a; display:flex; flex-direction:column; gap:8px;">
+            <div style="font-weight:600; font-size:13px; color:#8a5a00;">你有 <span id="teamsInboxCount">0</span> 条待处理的工作区邀请</div>
+            <div id="teamsInboxList" style="display:flex; flex-direction:column; gap:6px;"></div>
+          </section>
+
+          <div class="video-studio-layout" style="flex:1; min-height:0;">
 
             <!-- Left: team list -->
             <aside class="video-studio-projects">
@@ -114,6 +120,7 @@
                 <nav class="lp-subnav" style="display:flex; gap:4px; border-bottom:1px solid var(--border,#eee);">
                   <button class="lp-subnav-item active" type="button" data-teams-tab="info">基本信息</button>
                   <button class="lp-subnav-item" type="button" data-teams-tab="members">成员</button>
+                  <button class="lp-subnav-item" type="button" data-teams-tab="invitations" hidden>邀请</button>
                   <button class="lp-subnav-item" type="button" data-teams-tab="danger">危险区</button>
                 </nav>
 
@@ -137,9 +144,39 @@
 
                 <!-- Tab: members -->
                 <section data-teams-pane="members" hidden style="display:flex; flex-direction:column; gap:12px;">
-                  <div style="font-size:13px; color:var(--text-muted,#888);">成员管理（邀请、角色编辑、踢出）将在 T3 上线，本页当前仅展示</div>
+                  <div style="font-size:13px; color:var(--text-muted,#888);">角色编辑 / 踢出将在 T7 上线，本页当前仅展示。要邀请新成员请切到「邀请」tab。</div>
                   <div id="teamsMembersList" class="video-studio-project-list">
                     <div class="chat-empty">加载中...</div>
+                  </div>
+                </section>
+
+                <!-- Tab: invitations (admin+ only) -->
+                <section data-teams-pane="invitations" hidden style="display:flex; flex-direction:column; gap:14px;">
+                  <div style="display:flex; flex-direction:column; gap:8px; padding:12px; background:var(--surface-muted,#f7f7f9); border-radius:8px;">
+                    <div style="font-weight:600; font-size:13px;">邀请新成员</div>
+                    <form id="teamsInviteForm" style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
+                      <div style="flex:1; min-width:200px;">
+                        <label class="form-label">邮箱</label>
+                        <input id="teamsInviteEmail" class="input" type="email" required placeholder="someone@example.com" />
+                      </div>
+                      <div style="min-width:120px;">
+                        <label class="form-label">角色</label>
+                        <select id="teamsInviteRole" class="input">
+                          <option value="member">成员</option>
+                          <option value="admin">管理员</option>
+                          <option value="viewer">只读</option>
+                        </select>
+                      </div>
+                      <button id="teamsInviteSubmit" class="btn-inline btn-secondary" type="submit">发邀请</button>
+                    </form>
+                    <div id="teamsInviteStatus" class="status-text"></div>
+                  </div>
+
+                  <div>
+                    <div style="font-weight:600; font-size:13px; margin-bottom:6px;">待处理邀请</div>
+                    <div id="teamsInvitationsList" class="video-studio-project-list">
+                      <div class="chat-empty">加载中...</div>
+                    </div>
                   </div>
                 </section>
 

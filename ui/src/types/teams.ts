@@ -60,3 +60,52 @@ export type TeamUpdatePayload = {
   description: string;
   avatar_url: string;
 };
+
+// Admin-side invitation view (shown in the team's invitations tab).
+export type AdminInvitation = {
+  id: string;
+  team_id: string;
+  email: string;
+  role: TeamRole;
+  inviter_user_id: string;
+  status: "pending" | "accepted" | "declined" | "revoked" | "expired";
+  expires_at: string;
+  created_at: string;
+  invite_url: string;
+  inviter_name: string;
+  inviter_email: string;
+  accepted_at?: string;
+};
+
+export type AdminInvitationListResponse = {
+  invitations: AdminInvitation[];
+};
+
+export type AdminInvitationCreateResponse = {
+  invitation: AdminInvitation;
+  email_sent: boolean;
+  email_send_disabled: boolean;
+};
+
+export type AdminInvitationCreatePayload = {
+  email: string;
+  role: TeamRole;
+};
+
+// Recipient-side inbox view.
+export type InboxInvitation = {
+  id: string;
+  token: string;
+  team_id: string;
+  team_name: string;
+  team_slug: string;
+  team_avatar_url: string;
+  role: TeamRole;
+  inviter_name: string;
+  expires_at: string;
+  created_at: string;
+};
+
+export type InboxInvitationListResponse = {
+  invitations: InboxInvitation[];
+};

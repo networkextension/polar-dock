@@ -180,6 +180,94 @@ func buildEmailVerificationMessage(lang string, user *User, verifyURL string) Ma
 	}
 }
 
+// buildTeamInvitationLink composes the public preview URL the
+// recipient clicks to view + accept the invitation. Uses the static
+// HTML page with the token in the query string, which works in both
+// the dev express layer and any prod static-serving frontend without
+// path-parameter routing.
+func (s *Server) buildTeamInvitationLink(token string) string {
+	baseURL := strings.TrimRight(s.publicBaseURL, "/")
+	if baseURL == "" {
+		baseURL = strings.TrimRight(DefaultPasskeyOrigin, "/")
+	}
+	return fmt.Sprintf("%s/invite.html?token=%s", baseURL, url.QueryEscape(token))
+}
+
+// buildTeamInvitationMessage formats the invitation email. zh-CN +
+// English variants — matches the existing email-verification i18n
+// pattern so we don't fork tone or signature.
+func buildTeamInvitationMessage(lang string, teamName, inviterName, inviterEmail, role, recipient, inviteURL string, ttl time.Duration) MailMessage {
+	ttlHours := int(ttl / time.Hour)
+	roleLabelEn := role
+	roleLabelZh := role
+	switch role {
+	case "owner":
+		roleLabelEn = "Owner"
+		roleLabelZh = "所有者"
+	case "admin":
+		roleLabelEn = "Admin"
+		roleLabelZh = "管理员"
+	case "member":
+		roleLabelEn = "Member"
+		roleLabelZh = "成员"
+	case "viewer":
+		roleLabelEn = "Viewer"
+		roleLabelZh = "只读"
+	}
+
+	subject := fmt.Sprintf("%s invited you to join %s", inviterName, teamName)
+	body := strings.Join([]string{
+		fmt.Sprintf("Hi,"),
+		"",
+		fmt.Sprintf("%s (%s) has invited you to join the workspace \"%s\" as %s.", inviterName, inviterEmail, teamName, roleLabelEn),
+		"",
+		"Click the link below to view and accept the invitation:",
+		inviteURL,
+		"",
+		fmt.Sprintf("This invitation expires in %d hours.", ttlHours),
+		"If you didn't expect this email, you can safely ignore it.",
+		"",
+		"— Polar",
+	}, "\n")
+	if normalizeLang(lang) == langZhCN {
+		subject = fmt.Sprintf("%s 邀请你加入 %s", inviterName, teamName)
+		body = strings.Join([]string{
+			"你好，",
+			"",
+			fmt.Sprintf("%s（%s）邀请你以「%s」身份加入工作区「%s」。", inviterName, inviterEmail, roleLabelZh, teamName),
+			"",
+			"点击下方链接查看并接受邀请：",
+			inviteURL,
+			"",
+			fmt.Sprintf("该邀请将在 %d 小时后过期。", ttlHours),
+			"如果你不认识此发件人，可以直接忽略这封邮件。",
+			"",
+			"—— Polar",
+		}, "\n")
+	}
+	return MailMessage{
+		To:        recipient,
+		Subject:   subject,
+		PlainText: body,
+	}
+}
+
+// sendTeamInvitation dispatches the email if a mailer is configured.
+// Returns nil + ok=false if the mailer is disabled — the handler then
+// surfaces a "邮件未发送，请手动复制链接" hint to the inviter; the
+// invitation row itself was already created and the link works.
+func (s *Server) sendTeamInvitation(ctx context.Context, lang, teamName, inviterName, inviterEmail string, inv *TeamInvitation, inviteURL string) (bool, error) {
+	if s == nil || s.mailer == nil || !s.mailer.Enabled() {
+		return false, nil
+	}
+	ttl := time.Until(inv.ExpiresAt)
+	msg := buildTeamInvitationMessage(lang, teamName, inviterName, inviterEmail, inv.Role, inv.Email, inviteURL, ttl)
+	if err := s.mailer.Send(ctx, msg); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Server) sendEmailVerification(ctx context.Context, lang string, user *User) error {
 	if s == nil || s.mailer == nil || !s.mailer.Enabled() {
 		return errors.New("email service unavailable")
