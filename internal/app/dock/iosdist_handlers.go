@@ -118,11 +118,11 @@ func (s *Server) installPublicBaseURL(c *gin.Context) string {
 // ---- App CRUD -------------------------------------------------------------
 
 func (s *Server) handleIOSAppList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
-	apps, err := s.listIOSApps(userID)
+	apps, err := s.listIOSApps(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -137,6 +137,10 @@ type iosAppCreateRequest struct {
 }
 
 func (s *Server) handleIOSAppCreate(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, ok := requireUserID(c)
 	if !ok {
 		return
@@ -158,6 +162,7 @@ func (s *Server) handleIOSAppCreate(c *gin.Context) {
 	}
 	app := &IOSApp{
 		OwnerUserID: userID,
+		WorkspaceID: workspaceID,
 		Name:        name,
 		BundleID:    bundleID,
 		Description: strings.TrimSpace(req.Description),
@@ -170,7 +175,7 @@ func (s *Server) handleIOSAppCreate(c *gin.Context) {
 }
 
 func (s *Server) handleIOSAppDetail(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -178,7 +183,7 @@ func (s *Server) handleIOSAppDetail(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -196,7 +201,7 @@ func (s *Server) handleIOSAppDetail(c *gin.Context) {
 }
 
 func (s *Server) handleIOSAppDelete(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -204,7 +209,7 @@ func (s *Server) handleIOSAppDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -213,7 +218,7 @@ func (s *Server) handleIOSAppDelete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
 	}
-	if err := s.deleteIOSApp(id, userID); err != nil {
+	if err := s.deleteIOSApp(id, workspaceID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
@@ -224,7 +229,7 @@ func (s *Server) handleIOSAppDelete(c *gin.Context) {
 // icon. icon_source is set to 'manual' so subsequent IPA uploads won't
 // overwrite it. 5 MiB cap is plenty for 1024×1024 PNG/JPEG.
 func (s *Server) handleIOSAppIconUpload(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -232,7 +237,7 @@ func (s *Server) handleIOSAppIconUpload(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -274,11 +279,11 @@ func (s *Server) handleIOSAppIconUpload(c *gin.Context) {
 	if s.chatStorage.IsRemote() {
 		removeLocalFile(dstPath)
 	}
-	if err := s.setIOSAppIcon(app.ID, userID, publicURL, "manual"); err != nil {
+	if err := s.setIOSAppIcon(app.ID, workspaceID, publicURL, "manual"); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	updated, _ := s.getIOSApp(app.ID, userID)
+	updated, _ := s.getIOSApp(app.ID, workspaceID)
 	c.JSON(http.StatusOK, gin.H{"app": updated})
 }
 
@@ -290,7 +295,7 @@ type iosAppVisibilityRequest struct {
 }
 
 func (s *Server) handleIOSAppVisibilityUpdate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -298,7 +303,7 @@ func (s *Server) handleIOSAppVisibilityUpdate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -308,11 +313,11 @@ func (s *Server) handleIOSAppVisibilityUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
 		return
 	}
-	if err := s.setIOSAppPublicVisibility(app.ID, userID, req.IsPublic); err != nil {
+	if err := s.setIOSAppPublicVisibility(app.ID, workspaceID, req.IsPublic); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	updated, _ := s.getIOSApp(app.ID, userID)
+	updated, _ := s.getIOSApp(app.ID, workspaceID)
 	c.JSON(http.StatusOK, gin.H{"app": updated})
 }
 
@@ -326,6 +331,10 @@ type iosSignSubmitRequest struct {
 }
 
 func (s *Server) handleIOSVersionSign(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, ok := requireUserID(c)
 	if !ok {
 		return
@@ -344,7 +353,7 @@ func (s *Server) handleIOSVersionSign(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(appID, userID)
+	app, err := s.getIOSApp(appID, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -378,12 +387,12 @@ func (s *Server) handleIOSVersionSign(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "新应用名超过 64 字符"})
 		return
 	}
-	cert, err := s.getIOSCertificate(req.CertID, userID)
+	cert, err := s.getIOSCertificate(req.CertID, workspaceID)
 	if err != nil || cert == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "证书不存在或无权访问"})
 		return
 	}
-	profile, err := s.getIOSProfileForOwner(req.ProfileID, userID)
+	profile, err := s.getIOSProfileForOwner(req.ProfileID, workspaceID)
 	if err != nil || profile == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Profile 不存在或无权访问"})
 		return
@@ -425,7 +434,7 @@ func (s *Server) handleIOSVersionSign(c *gin.Context) {
 }
 
 func (s *Server) handleIOSAppSignTaskList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -433,7 +442,7 @@ func (s *Server) handleIOSAppSignTaskList(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -447,7 +456,7 @@ func (s *Server) handleIOSAppSignTaskList(c *gin.Context) {
 }
 
 func (s *Server) handleIOSSignTaskDetail(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -465,7 +474,7 @@ func (s *Server) handleIOSSignTaskDetail(c *gin.Context) {
 		return
 	}
 	// Owner check via the task's app row.
-	app, err := s.getIOSApp(task.AppID, userID)
+	app, err := s.getIOSApp(task.AppID, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "签名任务不存在"})
 		return
@@ -482,7 +491,7 @@ func signIdempotencyKey(ipaSHA256 string, certID, profileID int64, newBundleID, 
 }
 
 func (s *Server) handleIOSAppTestRequestList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -490,7 +499,7 @@ func (s *Server) handleIOSAppTestRequestList(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -512,7 +521,7 @@ type iosAppTestFlightRequest struct {
 }
 
 func (s *Server) handleIOSAppTestFlightUpdate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -520,7 +529,7 @@ func (s *Server) handleIOSAppTestFlightUpdate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -540,18 +549,18 @@ func (s *Server) handleIOSAppTestFlightUpdate(c *gin.Context) {
 			return
 		}
 	}
-	if err := s.setIOSAppTestFlightURL(app.ID, userID, cleaned); err != nil {
+	if err := s.setIOSAppTestFlightURL(app.ID, workspaceID, cleaned); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	updated, _ := s.getIOSApp(app.ID, userID)
+	updated, _ := s.getIOSApp(app.ID, workspaceID)
 	c.JSON(http.StatusOK, gin.H{"app": updated})
 }
 
 // ---- Version upload + delete ---------------------------------------------
 
 func (s *Server) handleIOSVersionUpload(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -559,9 +568,9 @@ func (s *Server) handleIOSVersionUpload(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(appID, userID)
+	app, err := s.getIOSApp(appID, workspaceID)
 	if err != nil || app == nil {
-		log.Printf("[iosdist upload] app=%d not found for user %s: %v", appID, userID, err)
+		log.Printf("[iosdist upload] app=%d not found in workspace %s: %v", appID, workspaceID, err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
 	}
@@ -705,7 +714,7 @@ func (s *Server) handleIOSVersionUpload(c *gin.Context) {
 	// permanently — we never trample it.
 	if parsedIPA != nil && len(parsedIPA.IconBytes) > 0 && app.IconSource != "manual" {
 		if iconURL, err := s.persistIOSExtractedIcon(c, app.ID, parsedIPA); err == nil {
-			_ = s.setIOSAppIcon(app.ID, userID, iconURL, "ipa")
+			_ = s.setIOSAppIcon(app.ID, workspaceID, iconURL, "ipa")
 		} else {
 			log.Printf("iosdist: persist extracted icon for app %d failed: %v", app.ID, err)
 		}
@@ -746,7 +755,7 @@ func (s *Server) persistIOSExtractedIcon(c *gin.Context, appID int64, info *ipaI
 }
 
 func (s *Server) handleIOSVersionDelete(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -758,7 +767,7 @@ func (s *Server) handleIOSVersionDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(appID, userID)
+	app, err := s.getIOSApp(appID, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -790,6 +799,10 @@ type iosInstallTokenResponse struct {
 }
 
 func (s *Server) handleIOSVersionInstallToken(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, ok := requireUserID(c)
 	if !ok {
 		return
@@ -802,7 +815,7 @@ func (s *Server) handleIOSVersionInstallToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(appID, userID)
+	app, err := s.getIOSApp(appID, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -1002,11 +1015,11 @@ func absolutizeURL(base, raw string) string {
 // ---- Certificates ---------------------------------------------------------
 
 func (s *Server) handleIOSCertificateList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
-	certs, err := s.listIOSCertificates(userID)
+	certs, err := s.listIOSCertificates(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -1018,6 +1031,10 @@ func (s *Server) handleIOSCertificateList(c *gin.Context) {
 }
 
 func (s *Server) handleIOSCertificateUpload(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, ok := requireUserID(c)
 	if !ok {
 		return
@@ -1122,6 +1139,7 @@ func (s *Server) handleIOSCertificateUpload(c *gin.Context) {
 
 	cert := &IOSCertificate{
 		OwnerUserID:       userID,
+		WorkspaceID:       workspaceID,
 		Name:              name,
 		Kind:              kind,
 		FileURL:           publicURL,
@@ -1157,7 +1175,7 @@ func (s *Server) handleIOSCertificateUpload(c *gin.Context) {
 }
 
 func (s *Server) handleIOSCertificateDelete(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -1165,7 +1183,7 @@ func (s *Server) handleIOSCertificateDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	cert, err := s.getIOSCertificate(id, userID)
+	cert, err := s.getIOSCertificate(id, workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -1174,7 +1192,7 @@ func (s *Server) handleIOSCertificateDelete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "证书不存在"})
 		return
 	}
-	if err := s.deleteIOSCertificate(id, userID); err != nil {
+	if err := s.deleteIOSCertificate(id, workspaceID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
@@ -1184,11 +1202,11 @@ func (s *Server) handleIOSCertificateDelete(c *gin.Context) {
 // ---- Provisioning profiles -----------------------------------------------
 
 func (s *Server) handleIOSProfileList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
-	profiles, err := s.listIOSProfiles(userID)
+	profiles, err := s.listIOSProfiles(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -1197,6 +1215,10 @@ func (s *Server) handleIOSProfileList(c *gin.Context) {
 }
 
 func (s *Server) handleIOSProfileUpload(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, ok := requireUserID(c)
 	if !ok {
 		return
@@ -1273,6 +1295,7 @@ func (s *Server) handleIOSProfileUpload(c *gin.Context) {
 
 	profile := &IOSProvisioningProfile{
 		OwnerUserID:  userID,
+		WorkspaceID:  workspaceID,
 		Name:         name,
 		Kind:         kind,
 		FileURL:      publicURL,
@@ -1313,7 +1336,7 @@ func (s *Server) handleIOSProfileUpload(c *gin.Context) {
 }
 
 func (s *Server) handleIOSProfileDelete(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -1321,7 +1344,7 @@ func (s *Server) handleIOSProfileDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := s.deleteIOSProfile(id, userID); err != nil {
+	if err := s.deleteIOSProfile(id, workspaceID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}

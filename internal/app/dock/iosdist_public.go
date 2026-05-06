@@ -635,7 +635,7 @@ func (s *Server) handleIOSPublicShareTestRequest(c *gin.Context) {
 	// the operator can manually invite from the admin inbox.
 	delivered := false
 	if app.ASCBetaGroupID != "" {
-		if cfg, err := s.getIOSASCConfig(app.OwnerUserID); err == nil && cfg != nil {
+		if cfg, err := s.getIOSASCConfig(app.WorkspaceID); err == nil && cfg != nil {
 			if err := s.ascCreateTester(c.Request.Context(), cfg, email, rec.FirstName, rec.LastName, []string{app.ASCBetaGroupID}); err != nil {
 				_ = s.markIOSTestRequest(rec.ID, "failed", err.Error())
 			} else {

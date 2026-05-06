@@ -79,12 +79,12 @@ func (s *Server) processIOSSignTask(ctx context.Context, taskID int64) {
 		_ = s.markIOSSignTaskFailed(taskID, "应用不存在", "")
 		return
 	}
-	cert, err := s.getIOSCertificate(task.CertID, app.OwnerUserID)
+	cert, err := s.getIOSCertificate(task.CertID, app.WorkspaceID)
 	if err != nil || cert == nil {
 		_ = s.markIOSSignTaskFailed(taskID, "证书不存在或无权访问", "")
 		return
 	}
-	profile, err := s.getIOSProfileForOwner(task.ProfileID, app.OwnerUserID)
+	profile, err := s.getIOSProfileForOwner(task.ProfileID, app.WorkspaceID)
 	if err != nil || profile == nil {
 		_ = s.markIOSSignTaskFailed(taskID, "Profile 不存在或无权访问", "")
 		return

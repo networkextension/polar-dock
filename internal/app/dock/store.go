@@ -1587,6 +1587,18 @@ CREATE INDEX IF NOT EXISTS idx_iosdist_certificates_workspace ON iosdist_certifi
 CREATE INDEX IF NOT EXISTS idx_iosdist_profiles_workspace     ON iosdist_profiles(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iosdist_asc_configs_workspace  ON iosdist_asc_configs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_llm_configs_workspace          ON llm_configs(workspace_id, updated_at DESC);
+
+-- T6-B: iosdist_asc_configs flips from per-user to per-workspace.
+-- Drop the legacy PK on owner_user_id (which prevented a user from
+-- having ASC configs in multiple workspaces) and replace with a
+-- partial unique index on workspace_id (one ASC config per
+-- workspace). owner_user_id stays as audit only; T6-D will rename
+-- it to creator_user_id. Partial unique because legacy rows
+-- pre-T6-A backfill may still have NULL workspace_id; NULLs aren't
+-- constrained by UNIQUE.
+ALTER TABLE iosdist_asc_configs DROP CONSTRAINT IF EXISTS iosdist_asc_configs_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_iosdist_asc_configs_workspace
+	ON iosdist_asc_configs(workspace_id) WHERE workspace_id IS NOT NULL;
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
