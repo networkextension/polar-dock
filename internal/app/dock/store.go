@@ -233,6 +233,7 @@ type SystemInfo struct {
 type LLMConfig struct {
 	ID           int64           `json:"id"`
 	OwnerUserID  string          `json:"owner_user_id"`
+	WorkspaceID  string          `json:"workspace_id"`
 	ShareID      string          `json:"share_id"`
 	Shared       bool            `json:"shared"`
 	Name         string          `json:"name"`
@@ -1846,13 +1847,13 @@ func (s *Server) getUserByUsername(username string) (*User, error) {
 	return &user, nil
 }
 
-func (s *Server) listLLMConfigs(ownerUserID string) ([]LLMConfig, error) {
+func (s *Server) listLLMConfigs(workspaceID string) ([]LLMConfig, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
-		  WHERE owner_user_id = $1
+		  WHERE workspace_id = $1
 		  ORDER BY updated_at DESC, id DESC`,
-		ownerUserID,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -1862,7 +1863,7 @@ func (s *Server) listLLMConfigs(ownerUserID string) ([]LLMConfig, error) {
 	items := make([]LLMConfig, 0)
 	for rows.Next() {
 		var item LLMConfig
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -1870,16 +1871,16 @@ func (s *Server) listLLMConfigs(ownerUserID string) ([]LLMConfig, error) {
 	return items, rows.Err()
 }
 
-func (s *Server) getLLMConfigForOwner(ownerUserID string, id int64) (*LLMConfig, string, error) {
+func (s *Server) getLLMConfigForOwner(workspaceID string, id int64) (*LLMConfig, string, error) {
 	var item LLMConfig
 	var apiKey string
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
-		  WHERE id = $1 AND owner_user_id = $2`,
+		  WHERE id = $1 AND workspace_id = $2`,
 		id,
-		ownerUserID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+		workspaceID,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", nil
@@ -1893,12 +1894,12 @@ func (s *Server) getLLMConfigForBot(botUserID string) (*LLMConfig, string, error
 	var item LLMConfig
 	var apiKey string
 	err := s.db.QueryRow(
-		`SELECT c.id, c.owner_user_id, c.share_id, c.shared, c.name, c.base_url, c.model, c.api_key, c.system_prompt, c.streaming, (c.api_key <> '') AS has_api_key, c.created_at, c.updated_at
+		`SELECT c.id, c.owner_user_id, COALESCE(c.workspace_id, ''), c.share_id, c.shared, c.name, c.base_url, c.model, c.api_key, c.system_prompt, c.streaming, (c.api_key <> '') AS has_api_key, c.created_at, c.updated_at
 		   FROM bot_users b
 		   JOIN llm_configs c ON c.id = b.llm_config_id
 		  WHERE b.bot_user_id = $1`,
 		botUserID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", nil
@@ -1908,22 +1909,24 @@ func (s *Server) getLLMConfigForBot(botUserID string) (*LLMConfig, string, error
 	return &item, apiKey, nil
 }
 
-// getAvailableLLMConfigWithAPIKey resolves a chat-side LLM config the user
-// can use. Filters out video-kind rows so a forged config_id (e.g. someone
-// pasting a Seedance video config id into chat-start) can't bypass the
-// list-side filtering and end up calling a video provider as a chat bot.
-func (s *Server) getAvailableLLMConfigWithAPIKey(ownerUserID string, id int64) (*LLMConfig, string, error) {
+// getAvailableLLMConfigWithAPIKey resolves a chat-side LLM config the
+// caller can use. The workspace-scope filter is "your workspace's
+// configs OR any shared config" — `shared = TRUE` rows cross workspace
+// boundaries (matches the legacy cross-user sharing semantic). Also
+// filters out video-kind rows so a forged config_id (someone pasting a
+// Seedance id into chat-start) can't bypass list-side filtering.
+func (s *Server) getAvailableLLMConfigWithAPIKey(workspaceID string, id int64) (*LLMConfig, string, error) {
 	var item LLMConfig
 	var apiKey string
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
 		  WHERE id = $1
-		    AND (owner_user_id = $2 OR shared = TRUE)
+		    AND (workspace_id = $2 OR shared = TRUE)
 		    AND (provider_kind = 'text' OR provider_kind = '' OR provider_kind IS NULL)`,
 		id,
-		ownerUserID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+		workspaceID,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", nil
@@ -1933,21 +1936,21 @@ func (s *Server) getAvailableLLMConfigWithAPIKey(ownerUserID string, id int64) (
 	return &item, apiKey, nil
 }
 
-func (s *Server) createLLMConfig(ownerUserID, name, baseURL, model, apiKey, systemPrompt, shareID string, shared, streaming bool, now time.Time) (*LLMConfig, error) {
+func (s *Server) createLLMConfig(workspaceID, ownerUserID, name, baseURL, model, apiKey, systemPrompt, shareID string, shared, streaming bool, now time.Time) (*LLMConfig, error) {
 	var item LLMConfig
 	err := s.db.QueryRow(
-		`INSERT INTO llm_configs (owner_user_id, share_id, shared, name, base_url, model, api_key, system_prompt, streaming, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
-		 RETURNING id, owner_user_id, share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at`,
-		ownerUserID, shareID, shared, name, baseURL, model, apiKey, systemPrompt, streaming, now,
-	).Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+		`INSERT INTO llm_configs (owner_user_id, workspace_id, share_id, shared, name, base_url, model, api_key, system_prompt, streaming, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+		 RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at`,
+		ownerUserID, workspaceID, shareID, shared, name, baseURL, model, apiKey, systemPrompt, streaming, now,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &item, nil
 }
 
-func (s *Server) updateLLMConfig(ownerUserID string, id int64, name, baseURL, model, apiKey, systemPrompt string, shared, streaming, replaceAPIKey bool, now time.Time) (*LLMConfig, error) {
+func (s *Server) updateLLMConfig(workspaceID string, id int64, name, baseURL, model, apiKey, systemPrompt string, shared, streaming, replaceAPIKey bool, now time.Time) (*LLMConfig, error) {
 	query := `UPDATE llm_configs
 	             SET name = $3,
 	                 base_url = $4,
@@ -1956,15 +1959,15 @@ func (s *Server) updateLLMConfig(ownerUserID string, id int64, name, baseURL, mo
 	                 shared = $7,
 	                 streaming = $8,
 	                 updated_at = $9`
-	args := []any{id, ownerUserID, name, baseURL, model, systemPrompt, shared, streaming, now}
+	args := []any{id, workspaceID, name, baseURL, model, systemPrompt, shared, streaming, now}
 	if replaceAPIKey {
 		query += `, api_key = $10`
 		args = append(args, apiKey)
 	}
-	query += ` WHERE id = $1 AND owner_user_id = $2
-	           RETURNING id, owner_user_id, share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at`
+	query += ` WHERE id = $1 AND workspace_id = $2
+	           RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at`
 	var item LLMConfig
-	err := s.db.QueryRow(query, args...).Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+	err := s.db.QueryRow(query, args...).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -1974,8 +1977,8 @@ func (s *Server) updateLLMConfig(ownerUserID string, id int64, name, baseURL, mo
 	return &item, nil
 }
 
-func (s *Server) deleteLLMConfig(ownerUserID string, id int64) (bool, error) {
-	result, err := s.db.Exec(`DELETE FROM llm_configs WHERE id = $1 AND owner_user_id = $2`, id, ownerUserID)
+func (s *Server) deleteLLMConfig(workspaceID string, id int64) (bool, error) {
+	result, err := s.db.Exec(`DELETE FROM llm_configs WHERE id = $1 AND workspace_id = $2`, id, workspaceID)
 	if err != nil {
 		return false, err
 	}
@@ -1986,19 +1989,19 @@ func (s *Server) deleteLLMConfig(ownerUserID string, id int64) (bool, error) {
 	return affected > 0, nil
 }
 
-// listAvailableLLMConfigs returns the user's own configs + shared configs
-// from other users, but **only text-kind** ones — chat / bot pickers must
-// not surface video providers (Seedance et al.) or the user gets confused
-// when their bot can't reply. Empty provider_kind is treated as 'text' so
-// existing rows pre-migration keep working.
-func (s *Server) listAvailableLLMConfigs(ownerUserID string) ([]LLMConfig, error) {
+// listAvailableLLMConfigs returns the workspace's own configs + shared
+// configs from any workspace, but **only text-kind** ones — chat / bot
+// pickers must not surface video providers (Seedance et al.) or the
+// user gets confused when their bot can't reply. Empty provider_kind
+// is treated as 'text' so existing rows pre-migration keep working.
+func (s *Server) listAvailableLLMConfigs(workspaceID string) ([]LLMConfig, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
-		  WHERE (owner_user_id = $1 OR shared = TRUE)
+		  WHERE (workspace_id = $1 OR shared = TRUE)
 		    AND (provider_kind = 'text' OR provider_kind = '' OR provider_kind IS NULL)
-		  ORDER BY (owner_user_id = $1) DESC, updated_at DESC, id DESC`,
-		ownerUserID,
+		  ORDER BY (workspace_id = $1) DESC, updated_at DESC, id DESC`,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -2007,7 +2010,7 @@ func (s *Server) listAvailableLLMConfigs(ownerUserID string) ([]LLMConfig, error
 	items := make([]LLMConfig, 0)
 	for rows.Next() {
 		var item LLMConfig
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -2018,11 +2021,11 @@ func (s *Server) listAvailableLLMConfigs(ownerUserID string) ([]LLMConfig, error
 func (s *Server) getLLMConfigByShareID(shareID string) (*LLMConfig, error) {
 	var item LLMConfig
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
 		  WHERE share_id = $1 AND share_id <> ''`,
 		shareID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil

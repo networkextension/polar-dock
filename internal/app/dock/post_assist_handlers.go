@@ -80,7 +80,7 @@ func (s *Server) handlePostAssistWithBot(c *gin.Context) {
 		return
 	}
 
-	runtimeConfig, bot, llmConfig, err := s.resolveAssistBot(userIDStr, req.BotID, req.LLMConfigID)
+	runtimeConfig, bot, llmConfig, err := s.resolveAssistBot(userIDStr, c.GetString("workspace_id"), req.BotID, req.LLMConfigID)
 	if err != nil {
 		writeAssistError(c, err)
 		return
@@ -178,7 +178,7 @@ func (s *Server) handleReplyAssistWithBot(c *gin.Context) {
 		return
 	}
 
-	runtimeConfig, bot, llmConfig, err := s.resolveAssistBot(userIDStr, req.BotID, req.LLMConfigID)
+	runtimeConfig, bot, llmConfig, err := s.resolveAssistBot(userIDStr, c.GetString("workspace_id"), req.BotID, req.LLMConfigID)
 	if err != nil {
 		writeAssistError(c, err)
 		return
@@ -239,10 +239,12 @@ type assistError struct {
 
 func (e *assistError) Error() string { return e.message }
 
-// resolveAssistBot loads the bot and its LLM config for the given owner.
-// It returns a ready-to-use aiRuntimeConfig (with SystemPrompt empty — the
-// caller sets it based on the specific task).
-func (s *Server) resolveAssistBot(ownerUserID string, botID, llmConfigID int64) (aiRuntimeConfig, *BotUser, *LLMConfig, error) {
+// resolveAssistBot loads the bot and its LLM config. ownerUserID is the
+// caller's user id (still used to scope bot ownership — bots stay
+// per-user for now); workspaceID gates the LLM config visibility, so a
+// shared config from any workspace plus the workspace's own configs are
+// reachable.
+func (s *Server) resolveAssistBot(ownerUserID, workspaceID string, botID, llmConfigID int64) (aiRuntimeConfig, *BotUser, *LLMConfig, error) {
 	bot, err := s.getBotUserForOwner(ownerUserID, botID)
 	if err != nil {
 		return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
@@ -256,7 +258,7 @@ func (s *Server) resolveAssistBot(ownerUserID string, botID, llmConfigID int64) 
 		apiKey    string
 	)
 	if llmConfigID > 0 {
-		llmConfig, apiKey, err = s.getAvailableLLMConfigWithAPIKey(ownerUserID, llmConfigID)
+		llmConfig, apiKey, err = s.getAvailableLLMConfigWithAPIKey(workspaceID, llmConfigID)
 		if err != nil {
 			return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
 		}

@@ -10,9 +10,11 @@ import (
 )
 
 func (s *Server) handleLLMConfigList(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	userIDStr, _ := userID.(string)
-	items, err := s.listLLMConfigs(userIDStr)
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	items, err := s.listLLMConfigs(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -50,6 +52,10 @@ func (s *Server) handleLLMConfigTest(c *gin.Context) {
 }
 
 func (s *Server) handleLLMConfigCreate(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
 	var req struct {
@@ -80,6 +86,7 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 		streaming = *req.Streaming
 	}
 	item, err := s.createLLMConfig(
+		workspaceID,
 		userIDStr,
 		name,
 		baseURL,
@@ -100,7 +107,7 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 		if extras == "" {
 			extras = "{}"
 		}
-		if err := s.upsertLLMConfigKindAndExtras(userIDStr, item.ID, kind, []byte(extras), now); err != nil {
+		if err := s.upsertLLMConfigKindAndExtras(workspaceID, item.ID, kind, []byte(extras), now); err != nil {
 			// Soft failure: the row exists, just without the kind/extras
 			// override. Worth logging but don't fail the create.
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存 provider 类型失败"})
@@ -111,8 +118,10 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 }
 
 func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	userIDStr, _ := userID.(string)
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效配置"})
@@ -143,7 +152,7 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 	}
 	now := time.Now()
 	item, err := s.updateLLMConfig(
-		userIDStr, id,
+		workspaceID, id,
 		name,
 		baseURL,
 		model,
@@ -167,7 +176,7 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 		if extras == "" {
 			extras = "{}"
 		}
-		if err := s.upsertLLMConfigKindAndExtras(userIDStr, item.ID, kind, []byte(extras), now); err != nil {
+		if err := s.upsertLLMConfigKindAndExtras(workspaceID, item.ID, kind, []byte(extras), now); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存 provider 类型失败"})
 			return
 		}
@@ -176,19 +185,21 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 }
 
 func (s *Server) handleLLMConfigDelete(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	userIDStr, _ := userID.(string)
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效配置"})
 		return
 	}
-	ok, err := s.deleteLLMConfig(userIDStr, id)
+	deleted, err := s.deleteLLMConfig(workspaceID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
 		return
 	}
-	if !ok {
+	if !deleted {
 		c.JSON(http.StatusNotFound, gin.H{"error": "配置不存在"})
 		return
 	}
@@ -296,9 +307,11 @@ func (s *Server) handleBotUserDelete(c *gin.Context) {
 }
 
 func (s *Server) handleAvailableLLMConfigList(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	userIDStr, _ := userID.(string)
-	items, err := s.listAvailableLLMConfigs(userIDStr)
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	items, err := s.listAvailableLLMConfigs(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
