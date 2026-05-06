@@ -773,3 +773,61 @@ func (s *Server) handleProjectTaskUpdate(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
+
+// ---- task bulk status -------------------------------------------
+
+type projectTaskBulkStatusRequest struct {
+	// Status to apply to matched tasks. Required, must be one of
+	// the canonical task statuses.
+	Status string `json:"status" binding:"required"`
+	// FromStatuses (optional): only update tasks whose current
+	// status is in this list. Empty = update every task in the
+	// project. Common patterns:
+	//   ["todo", "in_progress"] → "✗ 取消所有未完成"
+	//   ["in_progress", "review"] → "✓ 完成所有进行中"
+	FromStatuses []string `json:"from_statuses"`
+}
+
+// handleProjectTaskBulkStatus updates the status of many tasks in
+// one query. Mirrors the per-task handleProjectTaskUpdate
+// validation but does the work in a single SQL pass instead of N
+// round-trips from the FE.
+func (s *Server) handleProjectTaskBulkStatus(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	projectID := strings.TrimSpace(c.Param("id"))
+	if _, err := s.getProject(projectID, workspaceID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	var req projectTaskBulkStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	target := strings.TrimSpace(req.Status)
+	switch target {
+	case ProjectTaskStatusTodo, ProjectTaskStatusInProgress, ProjectTaskStatusReview, ProjectTaskStatusDone, ProjectTaskStatusBlocked:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "状态值无效"})
+		return
+	}
+	// Validate the optional filter list — same enum check, prevents
+	// clients from passing arbitrary strings into the SQL ANY().
+	for _, st := range req.FromStatuses {
+		switch strings.TrimSpace(st) {
+		case ProjectTaskStatusTodo, ProjectTaskStatusInProgress, ProjectTaskStatusReview, ProjectTaskStatusDone, ProjectTaskStatusBlocked:
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "from_statuses 包含无效值: " + st})
+			return
+		}
+	}
+	count, err := s.bulkUpdateProjectTaskStatus(projectID, target, req.FromStatuses)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "updated": count})
+}

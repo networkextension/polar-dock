@@ -8,6 +8,7 @@
 
 import { fetchAvailableLLMConfigs, fetchBotUsers } from "./api/dashboard.js";
 import {
+  bulkUpdateProjectTaskStatus,
   createAgentToken,
   createProject,
   decomposeProject,
@@ -71,6 +72,8 @@ const tasksListEl = byId<HTMLElement>("projectsTasksList");
 const tasksCountEl = byId<HTMLElement>("projectsTasksCount");
 const dispatchAllBotSelect = byId<HTMLSelectElement>("projectsDispatchAllBot");
 const dispatchAllBtn = byId<HTMLButtonElement>("projectsDispatchAllBtn");
+const finishAllBtn = byId<HTMLButtonElement>("projectsFinishAllBtn");
+const cancelAllBtn = byId<HTMLButtonElement>("projectsCancelAllBtn");
 const dispatchAllStatusEl = byId<HTMLElement>("projectsDispatchAllStatus");
 
 const newBtn = byId<HTMLButtonElement>("projectsNewBtn");
@@ -349,6 +352,15 @@ function renderTasks(): void {
         (s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${TASK_STATUS_LABEL[s]}</option>`,
       ).join("");
       const isPickerOpen = pickerOpenForTaskID === t.id;
+      // Quick-action buttons next to the status select. Hidden
+      // when the task is already in the corresponding terminal
+      // state to avoid no-op clicks.
+      const finishBtn = t.status !== "done"
+        ? `<button type="button" class="btn-inline btn-secondary" data-task-finish="${escapeHTML(t.id)}" title="标记为完成" style="font-size:11px; padding:3px 6px;">✓</button>`
+        : "";
+      const cancelBtn = t.status !== "blocked" && t.status !== "done"
+        ? `<button type="button" class="btn-inline btn-secondary" data-task-cancel="${escapeHTML(t.id)}" title="标记为阻塞 / 取消" style="font-size:11px; padding:3px 6px;">✗</button>`
+        : "";
       return `
         <div style="padding:10px; background:#fff; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:10px; align-items:flex-start;">
           <div style="flex:1; min-width:0;">
@@ -358,7 +370,10 @@ function renderTasks(): void {
               ${renderTaskBotSlot(t, isPickerOpen)}
             </div>
           </div>
-          <select class="input" style="font-size:12px; padding:4px 6px; width:auto;" data-task-status="${escapeHTML(t.id)}">${opts}</select>
+          <div style="display:flex; gap:4px; align-items:center;">
+            ${finishBtn}${cancelBtn}
+            <select class="input" style="font-size:12px; padding:4px 6px; width:auto;" data-task-status="${escapeHTML(t.id)}">${opts}</select>
+          </div>
         </div>`;
     })
     .join("");
@@ -366,6 +381,18 @@ function renderTasks(): void {
     sel.addEventListener("change", () => {
       const id = sel.getAttribute("data-task-status");
       if (id) void changeTaskStatus(id, sel.value as TaskStatus);
+    });
+  });
+  tasksListEl.querySelectorAll<HTMLElement>("[data-task-finish]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-task-finish");
+      if (id) void changeTaskStatus(id, "done");
+    });
+  });
+  tasksListEl.querySelectorAll<HTMLElement>("[data-task-cancel]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-task-cancel");
+      if (id) void changeTaskStatus(id, "blocked");
     });
   });
   tasksListEl.querySelectorAll<HTMLElement>("[data-task-pickup]").forEach((btn) => {
@@ -655,6 +682,65 @@ async function dispatchAllTodos(): Promise<void> {
   );
 }
 
+// finishAll / cancelAll wrap the bulk-status endpoint with a
+// confirm prompt + status text. Sourced from one helper to keep
+// behavior consistent — the only difference is the target status
+// and the from_statuses filter.
+async function bulkSetTaskStatus(
+  target: "done" | "blocked",
+  fromStatuses: string[],
+  confirmMsg: string,
+  successPrefix: string,
+): Promise<void> {
+  if (!activeProject) return;
+  const matched = activeTasks.filter((t) => fromStatuses.includes(t.status));
+  if (matched.length === 0) {
+    setStatus(dispatchAllStatusEl, "没有符合条件的任务", true);
+    return;
+  }
+  if (!window.confirm(confirmMsg.replace("{n}", String(matched.length)))) {
+    return;
+  }
+  finishAllBtn.disabled = true;
+  cancelAllBtn.disabled = true;
+  try {
+    const { response, data } = await bulkUpdateProjectTaskStatus(
+      activeProject.id,
+      target,
+      fromStatuses,
+    );
+    if (!response.ok) {
+      setStatus(dispatchAllStatusEl, ((data as { error?: string }).error || "失败"), true);
+      return;
+    }
+    setStatus(dispatchAllStatusEl, `${successPrefix} ${data.updated} 个任务`, false);
+    // Re-fetch to surface server-side timestamp updates (started_at
+    // / completed_at) which we don't recompute client-side.
+    await openProject(activeProject.id);
+  } finally {
+    finishAllBtn.disabled = false;
+    cancelAllBtn.disabled = false;
+  }
+}
+
+async function finishAllTasks(): Promise<void> {
+  await bulkSetTaskStatus(
+    "done",
+    ["todo", "in_progress", "review", "blocked"],
+    "把全部 {n} 个未完成任务标记为「完成」？",
+    "✓ 已完成",
+  );
+}
+
+async function cancelAllTasks(): Promise<void> {
+  await bulkSetTaskStatus(
+    "blocked",
+    ["todo", "in_progress", "review"],
+    "把全部 {n} 个未完成任务标记为「阻塞 / 取消」？",
+    "✗ 已取消",
+  );
+}
+
 async function loadBots(): Promise<void> {
   const { response, data } = await fetchBotUsers();
   if (response.ok) {
@@ -880,6 +966,8 @@ decomposeBtn.addEventListener("click", () => void decompose());
 generatePlanBtn.addEventListener("click", () => void generatePlan());
 deleteBtn.addEventListener("click", () => void doDeleteProject());
 dispatchAllBtn.addEventListener("click", () => void dispatchAllTodos());
+finishAllBtn.addEventListener("click", () => void finishAllTasks());
+cancelAllBtn.addEventListener("click", () => void cancelAllTasks());
 filterSearchEl.addEventListener("input", renderProjectList);
 filterStatusEl.addEventListener("change", renderProjectList);
 filterCodeProviderEl.addEventListener("change", renderProjectList);
