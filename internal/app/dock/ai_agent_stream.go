@@ -166,7 +166,7 @@ func (a *aiAgent) startStreamingRequest(ctx context.Context, providerLabel, reqU
 		req.Header.Set(k, v)
 	}
 
-	log.Printf("ai agent stream open: provider=%s url=%s body=%s", providerLabel, reqURL, compactLogJSON(body))
+	log.Printf("ai agent stream open: provider=%s url=%s proxy=%q body=%s", providerLabel, reqURL, proxyURL, compactLogJSON(body))
 
 	resp, err := a.streamClientFor(proxyURL).Do(req)
 	if err != nil {

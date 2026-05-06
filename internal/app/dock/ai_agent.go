@@ -774,7 +774,7 @@ func (a *aiAgent) requestOpenAICompatibleChatCompletion(runtimeConfig aiRuntimeC
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("ai agent request: url=%s model=%s payload=%s", runtimeConfig.BaseURL, runtimeConfig.Model, compactLogJSON(body))
+	log.Printf("ai agent request: url=%s model=%s proxy=%q payload=%s", runtimeConfig.BaseURL, runtimeConfig.Model, runtimeConfig.ProxyURL, compactLogJSON(body))
 
 	req, err := http.NewRequest(http.MethodPost, runtimeConfig.BaseURL, bytes.NewReader(body))
 	if err != nil {
@@ -835,7 +835,7 @@ func (a *aiAgent) requestGeminiContent(runtimeConfig aiRuntimeConfig, payload ai
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("ai agent request: provider=gemini url=%s model=%s payload=%s", reqURL, runtimeConfig.Model, compactLogJSON(body))
+	log.Printf("ai agent request: provider=gemini url=%s model=%s proxy=%q payload=%s", reqURL, runtimeConfig.Model, runtimeConfig.ProxyURL, compactLogJSON(body))
 
 	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(body))
 	if err != nil {
@@ -890,7 +890,7 @@ func (a *aiAgent) requestXAIResponses(runtimeConfig aiRuntimeConfig, payload aiC
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("ai agent request: provider=xai url=%s model=%s payload=%s", reqURL, runtimeConfig.Model, compactLogJSON(body))
+	log.Printf("ai agent request: provider=xai url=%s model=%s proxy=%q payload=%s", reqURL, runtimeConfig.Model, runtimeConfig.ProxyURL, compactLogJSON(body))
 
 	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(body))
 	if err != nil {
@@ -951,7 +951,7 @@ func (a *aiAgent) requestVolcesResponses(runtimeConfig aiRuntimeConfig, payload 
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("ai agent request: provider=volces url=%s model=%s payload=%s", reqURL, runtimeConfig.Model, compactLogJSON(body))
+	log.Printf("ai agent request: provider=volces url=%s model=%s proxy=%q payload=%s", reqURL, runtimeConfig.Model, runtimeConfig.ProxyURL, compactLogJSON(body))
 
 	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(body))
 	if err != nil {
@@ -1031,7 +1031,7 @@ func (a *aiAgent) requestAnthropicMessages(runtimeConfig aiRuntimeConfig, payloa
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("ai agent request: provider=anthropic url=%s model=%s payload=%s", reqURL, runtimeConfig.Model, compactLogJSON(body))
+	log.Printf("ai agent request: provider=anthropic url=%s model=%s proxy=%q payload=%s", reqURL, runtimeConfig.Model, runtimeConfig.ProxyURL, compactLogJSON(body))
 
 	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(body))
 	if err != nil {
