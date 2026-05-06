@@ -95,16 +95,12 @@ type teamInvitationCreateRequest struct {
 }
 
 func (s *Server) handleTeamInvitationCreate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	teamID, _, ok := requireTeamRoleFromCtx(c)
 	if !ok {
 		return
 	}
-	teamID := strings.TrimSpace(c.Param("id"))
-	if teamID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
-		return
-	}
-	if _, ok := s.requireTeamMember(c, teamID, userID, TeamRoleAdmin); !ok {
+	userID, ok := requireUserID(c)
+	if !ok {
 		return
 	}
 	team, err := s.getTeam(teamID)
@@ -193,16 +189,8 @@ func (s *Server) handleTeamInvitationCreate(c *gin.Context) {
 }
 
 func (s *Server) handleTeamInvitationList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	teamID, _, ok := requireTeamRoleFromCtx(c)
 	if !ok {
-		return
-	}
-	teamID := strings.TrimSpace(c.Param("id"))
-	if teamID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
-		return
-	}
-	if _, ok := s.requireTeamMember(c, teamID, userID, TeamRoleAdmin); !ok {
 		return
 	}
 	invs, err := s.listPendingInvitationsForTeam(teamID)
@@ -238,17 +226,13 @@ func (s *Server) handleTeamInvitationList(c *gin.Context) {
 }
 
 func (s *Server) handleTeamInvitationRevoke(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	teamID, _, ok := requireTeamRoleFromCtx(c)
 	if !ok {
 		return
 	}
-	teamID := strings.TrimSpace(c.Param("id"))
 	invID := strings.TrimSpace(c.Param("inv_id"))
-	if teamID == "" || invID == "" {
+	if invID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
-		return
-	}
-	if _, ok := s.requireTeamMember(c, teamID, userID, TeamRoleAdmin); !ok {
 		return
 	}
 	// Light cross-check: ensure the invitation belongs to this team.

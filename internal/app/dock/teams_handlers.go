@@ -70,6 +70,12 @@ func workspaceRole(c *gin.Context) string {
 // requireTeamMember resolves the caller's role on team teamID and
 // enforces minRole. Writes the matching JSON error to c on failure.
 // On success returns (role, true).
+//
+// Most team-scoped routes now use the RequireTeamRole middleware
+// (see teams_middleware.go) which resolves and stores the role in
+// ctx before the handler runs. This helper is kept for the rare
+// case where the team id isn't on the path (e.g., resolved from a
+// resource id at handler time).
 func (s *Server) requireTeamMember(c *gin.Context, teamID, userID, minRole string) (string, bool) {
 	member, err := s.getTeamMember(teamID, userID)
 	if err != nil {
@@ -113,16 +119,7 @@ func (s *Server) handleTeamList(c *gin.Context) {
 }
 
 func (s *Server) handleTeamDetail(c *gin.Context) {
-	userID, ok := requireUserID(c)
-	if !ok {
-		return
-	}
-	teamID := strings.TrimSpace(c.Param("id"))
-	if teamID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
-		return
-	}
-	role, ok := s.requireTeamMember(c, teamID, userID, TeamRoleViewer)
+	teamID, role, ok := requireTeamRoleFromCtx(c)
 	if !ok {
 		return
 	}
@@ -201,16 +198,8 @@ type teamUpdateRequest struct {
 }
 
 func (s *Server) handleTeamUpdate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	teamID, _, ok := requireTeamRoleFromCtx(c)
 	if !ok {
-		return
-	}
-	teamID := strings.TrimSpace(c.Param("id"))
-	if teamID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
-		return
-	}
-	if _, ok := s.requireTeamMember(c, teamID, userID, TeamRoleAdmin); !ok {
 		return
 	}
 	var req teamUpdateRequest
@@ -252,16 +241,8 @@ func (s *Server) handleTeamUpdate(c *gin.Context) {
 // ---- delete --------------------------------------------------------
 
 func (s *Server) handleTeamDelete(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	teamID, _, ok := requireTeamRoleFromCtx(c)
 	if !ok {
-		return
-	}
-	teamID := strings.TrimSpace(c.Param("id"))
-	if teamID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
-		return
-	}
-	if _, ok := s.requireTeamMember(c, teamID, userID, TeamRoleOwner); !ok {
 		return
 	}
 	team, err := s.getTeam(teamID)
@@ -291,16 +272,8 @@ func (s *Server) handleTeamDelete(c *gin.Context) {
 // ---- members -------------------------------------------------------
 
 func (s *Server) handleTeamMembers(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	teamID, _, ok := requireTeamRoleFromCtx(c)
 	if !ok {
-		return
-	}
-	teamID := strings.TrimSpace(c.Param("id"))
-	if teamID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
-		return
-	}
-	if _, ok := s.requireTeamMember(c, teamID, userID, TeamRoleViewer); !ok {
 		return
 	}
 	members, err := s.listTeamMembersWithUser(teamID)
