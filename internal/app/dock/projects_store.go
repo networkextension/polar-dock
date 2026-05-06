@@ -50,9 +50,14 @@ type Project struct {
 	// 0 = no sprint yet (just-created project). 1 = first decompose.
 	// Features and tasks tag themselves with this number on insert
 	// so the UI can group by sprint.
-	CurrentSprint int       `json:"current_sprint"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	CurrentSprint int `json:"current_sprint"`
+	// GitRemoteURL: optional git remote (ssh or https) where the
+	// polar-agent pushes whatever the coder tool produced. Empty
+	// disables the agent's git logic entirely. Phase 1 assumes the
+	// agent host has its own git auth (SSH key or credential helper).
+	GitRemoteURL string    `json:"git_remote_url"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type ProjectFeature struct {
@@ -101,21 +106,21 @@ func (s *Server) createProject(p *Project) error {
 	p.CreatedAt = now
 	p.UpdatedAt = now
 	_, err := s.db.Exec(
-		`INSERT INTO projects (id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, current_sprint, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
+		`INSERT INTO projects (id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, current_sprint, git_remote_url, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)`,
 		p.ID, p.WorkspaceID, p.CreatorUserID, p.Name, p.Description, p.Status, p.Template,
-		p.RuntimeEnv, p.BusinessScenario, p.CodeProvider, p.CurrentSprint, now,
+		p.RuntimeEnv, p.BusinessScenario, p.CodeProvider, p.CurrentSprint, p.GitRemoteURL, now,
 	)
 	return err
 }
 
 // projectSelectColumns is the canonical SELECT list for projects.
 // Centralized so adding a column means touching one place.
-const projectSelectColumns = `id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, COALESCE(current_sprint, 0), created_at, updated_at`
+const projectSelectColumns = `id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, COALESCE(current_sprint, 0), COALESCE(git_remote_url, ''), created_at, updated_at`
 
 func scanProject(scanFn func(...any) error) (*Project, error) {
 	var p Project
-	if err := scanFn(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CurrentSprint, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := scanFn(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CurrentSprint, &p.GitRemoteURL, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -168,6 +173,7 @@ type ProjectMetaUpdate struct {
 	RuntimeEnv       *string
 	BusinessScenario *string
 	CodeProvider     *string
+	GitRemoteURL     *string
 }
 
 func (s *Server) updateProjectMetadata(id, workspaceID string, u ProjectMetaUpdate) error {
@@ -200,6 +206,10 @@ func (s *Server) updateProjectMetadata(id, workspaceID string, u ProjectMetaUpda
 	if u.CodeProvider != nil {
 		args = append(args, *u.CodeProvider)
 		sets = append(sets, "code_provider = $"+itoa(len(args)))
+	}
+	if u.GitRemoteURL != nil {
+		args = append(args, *u.GitRemoteURL)
+		sets = append(sets, "git_remote_url = $"+itoa(len(args)))
 	}
 	if len(args) == 0 {
 		return nil

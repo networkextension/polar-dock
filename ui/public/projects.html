@@ -132,6 +132,10 @@
                   <div style="font-weight:600; font-size:14px;">产品描述</div>
                   <textarea id="projectsDescription" class="input textarea" rows="6" placeholder="一句话描述这个 app 想做什么；越具体越好（题材、目标人群、核心交互、预期最终形态）"></textarea>
                   <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <input id="projectsGitRemoteUrl" class="input" type="text" maxlength="500" placeholder="Git 远端 URL（可选，留空则任务结束不 push）" style="flex:1; min-width:240px; font-size:12px;" />
+                    <button id="projectsSaveGitRemoteBtn" class="btn-inline" type="button" style="font-size:12px;">保存 git 远端</button>
+                  </div>
+                  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <button id="projectsSaveDescBtn" class="btn-inline btn-secondary" type="button">保存描述</button>
                     <select id="projectsDecomposeBotSelect" class="input" style="width:auto; padding:6px 8px; font-size:12px;" title="用 bot 拆解会带上它的 system_prompt 作为人格（可在 bots 页编辑），覆盖 LLM 选择">
                       <option value="">Bot 角色（可选）</option>
@@ -231,6 +235,12 @@
             <option value="claude">claude</option>
             <option value="codex">codex</option>
           </select>
+
+          <label class="form-label" for="projectsCreateGitRemoteUrl">Git 远端 URL（可选）</label>
+          <input id="projectsCreateGitRemoteUrl" class="input" type="text" maxlength="500" placeholder="git@github.com:foo/bar.git 或 https://github.com/foo/bar.git" />
+          <div style="font-size:11px; color:var(--text-muted,#888); margin:-6px 0 8px 0;">
+            ⓘ 留空则任务结束后不 push。设置后 polar-agent 会在每个 task 之后 commit + push 编码工具产生的改动。需要 host 已配好 git 认证（SSH key 或 credential helper）。
+          </div>
 
           <div id="projectsCreateStatus" class="status-text"></div>
           <div class="modal-actions">

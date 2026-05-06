@@ -22,6 +22,9 @@ export type Project = {
   business_scenario: string;
   code_provider: string;
   current_sprint: number;
+  // git_remote_url: optional remote where polar-agent pushes
+  // coder output after each task completes. Empty disables push.
+  git_remote_url: string;
   created_at: string;
   updated_at: string;
 };
@@ -92,6 +95,7 @@ export type ProjectCreatePayload = {
   runtime_env?: string;
   business_scenario?: string;
   code_provider?: string;
+  git_remote_url?: string;
 };
 
 export type ProjectUpdatePayload = {
@@ -102,6 +106,7 @@ export type ProjectUpdatePayload = {
   runtime_env?: string;
   business_scenario?: string;
   code_provider?: string;
+  git_remote_url?: string;
 };
 
 export type ProjectFeatureUpdatePayload = {

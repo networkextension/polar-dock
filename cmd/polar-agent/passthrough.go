@@ -28,16 +28,21 @@ import (
 )
 
 type chatMessage struct {
-	Kind           string `json:"kind"`
-	ID             string `json:"id"`
-	ThreadID       int64  `json:"thread_id"`
-	Content        string `json:"content"`
+	Kind     string `json:"kind"`
+	ID       string `json:"id"`
+	ThreadID int64  `json:"thread_id"`
+	Content  string `json:"content"`
 	// WorkdirSubpath, if non-empty, scopes the tool's cwd to
 	// $workdir/<subpath> instead of $workdir. The platform sets
 	// this from project pickup so each project's code lives in
 	// its own subdir. Empty = use the agent's pinned root workdir.
 	// We mkdir -p the subdir at spawn time.
 	WorkdirSubpath string `json:"workdir_subpath,omitempty"`
+	// GitRemoteURL, if non-empty, asks the agent to do pre/post
+	// git plumbing around the tool run: ensure repo + remote, then
+	// commit + push. Empty = skip git work. Phase 1 of project
+	// pipeline Stage 5 (push code).
+	GitRemoteURL string `json:"git_remote_url,omitempty"`
 }
 
 type chatReply struct {

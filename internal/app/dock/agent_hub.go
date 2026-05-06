@@ -132,6 +132,11 @@ type agentChatMessage struct {
 	ThreadID       int64  `json:"thread_id"`
 	Content        string `json:"content"`
 	WorkdirSubpath string `json:"workdir_subpath,omitempty"`
+	// GitRemoteURL, when non-empty, tells the agent to do pre/post
+	// git plumbing around the tool run: ensure repo + remote, then
+	// commit + push everything the tool wrote, surface SHAs in the
+	// reply. Phase 1 of the project pipeline Stage 5 (push code).
+	GitRemoteURL string `json:"git_remote_url,omitempty"`
 }
 
 type agentChatReply struct {
@@ -243,7 +248,9 @@ func (h *agentHub) dispatchToolCall(botUserID, callID, tool string, args map[str
 // timeout — kimi can take a few minutes on big tasks.
 // workdirSubpath, if non-empty, tells the agent to scope the tool's
 // cwd to $workdir/<subpath>; pickup uses this for project isolation.
-func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content, workdirSubpath string) (*agentChatReply, error) {
+// gitRemoteURL, if non-empty, asks the agent to do pre/post git
+// plumbing around the tool run (commit + push coder output).
+func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content, workdirSubpath, gitRemoteURL string) (*agentChatReply, error) {
 	conn := h.lookup(botUserID)
 	if conn == nil {
 		return nil, errAgentNotAttached
@@ -258,6 +265,7 @@ func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content
 		ThreadID:       threadID,
 		Content:        content,
 		WorkdirSubpath: workdirSubpath,
+		GitRemoteURL:   gitRemoteURL,
 	})
 	if err != nil {
 		return nil, err

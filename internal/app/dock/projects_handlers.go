@@ -27,6 +27,7 @@ type projectCreateRequest struct {
 	RuntimeEnv       string `json:"runtime_env"`
 	BusinessScenario string `json:"business_scenario"`
 	CodeProvider     string `json:"code_provider"`
+	GitRemoteURL     string `json:"git_remote_url"`
 }
 
 func (s *Server) handleProjectCreate(c *gin.Context) {
@@ -57,6 +58,7 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		RuntimeEnv:       strings.TrimSpace(req.RuntimeEnv),
 		BusinessScenario: strings.TrimSpace(req.BusinessScenario),
 		CodeProvider:     strings.TrimSpace(req.CodeProvider),
+		GitRemoteURL:     strings.TrimSpace(req.GitRemoteURL),
 		Status:           ProjectStatusDraft,
 	}
 	if err := s.createProject(p); err != nil {
@@ -115,6 +117,7 @@ type projectUpdateRequest struct {
 	RuntimeEnv       *string `json:"runtime_env"`
 	BusinessScenario *string `json:"business_scenario"`
 	CodeProvider     *string `json:"code_provider"`
+	GitRemoteURL     *string `json:"git_remote_url"`
 }
 
 func (s *Server) handleProjectUpdate(c *gin.Context) {
@@ -165,6 +168,10 @@ func (s *Server) handleProjectUpdate(c *gin.Context) {
 	if req.CodeProvider != nil {
 		v := strings.TrimSpace(*req.CodeProvider)
 		u.CodeProvider = &v
+	}
+	if req.GitRemoteURL != nil {
+		v := strings.TrimSpace(*req.GitRemoteURL)
+		u.GitRemoteURL = &v
 	}
 	if err := s.updateProjectMetadata(id, workspaceID, u); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -765,6 +772,9 @@ func (s *Server) handleProjectTaskPickup(c *gin.Context) {
 			// (e.g. ~/work/myrepo/<project_id>/) so two concurrent
 			// projects on one agent don't fight over the same files.
 			WorkdirSubpath: project.ID,
+			// Phase 1 of Stage 5 push: agent commits+pushes whatever
+			// the coder wrote when this is set. Empty = no git work.
+			GitRemoteURL: project.GitRemoteURL,
 		})
 	}
 

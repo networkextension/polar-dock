@@ -31,7 +31,7 @@ func (a *aiAgent) generateReplyWithPassthrough(task aiAgentTask, conn *agentConn
 	if content == "" {
 		return fmt.Sprintf("（空消息，未触发 %s）", tool), nil
 	}
-	reply, err := a.server.agentHub.dispatchChatMessage(conn.botUserID, task.ThreadID, content, task.WorkdirSubpath)
+	reply, err := a.server.agentHub.dispatchChatMessage(conn.botUserID, task.ThreadID, content, task.WorkdirSubpath, task.GitRemoteURL)
 	if err != nil {
 		switch {
 		case errors.Is(err, errAgentNotAttached):

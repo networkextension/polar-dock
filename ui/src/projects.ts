@@ -57,6 +57,8 @@ const deleteBtn = byId<HTMLButtonElement>("projectsDeleteBtn");
 
 const descEl = byId<HTMLTextAreaElement>("projectsDescription");
 const saveDescBtn = byId<HTMLButtonElement>("projectsSaveDescBtn");
+const gitRemoteUrlEl = byId<HTMLInputElement>("projectsGitRemoteUrl");
+const saveGitRemoteBtn = byId<HTMLButtonElement>("projectsSaveGitRemoteBtn");
 const decomposeBtn = byId<HTMLButtonElement>("projectsDecomposeBtn");
 const decomposeStatusEl = byId<HTMLElement>("projectsDecomposeStatus");
 const decomposeLLMSelect = byId<HTMLSelectElement>("projectsDecomposeLLMSelect");
@@ -98,6 +100,7 @@ const createDesc = byId<HTMLTextAreaElement>("projectsCreateDescription");
 const createRuntimeEnv = byId<HTMLSelectElement>("projectsCreateRuntimeEnv");
 const createBusinessScenario = byId<HTMLSelectElement>("projectsCreateBusinessScenario");
 const createCodeProvider = byId<HTMLSelectElement>("projectsCreateCodeProvider");
+const createGitRemoteUrl = byId<HTMLInputElement>("projectsCreateGitRemoteUrl");
 const createStatusEl = byId<HTMLElement>("projectsCreateStatus");
 
 const RUNTIME_ENV_LABELS: Record<string, string> = {
@@ -287,6 +290,7 @@ function renderProjectPanel(): void {
   statusPillEl.innerHTML = `${STATUS_LABEL[activeProject.status] ?? activeProject.status} ${constraintChips.join(" ")}`;
   createdAtEl.textContent = `创建于 ${new Date(activeProject.created_at).toLocaleString()}`;
   descEl.value = activeProject.description;
+  gitRemoteUrlEl.value = activeProject.git_remote_url || "";
   clearStatus(decomposeStatusEl);
   clearStatus(planStatusEl);
   // Decompose button text reflects whether this is the first
@@ -536,6 +540,25 @@ async function openProject(id: string): Promise<void> {
   activeFeatures = data.features;
   activeTasks = data.tasks;
   renderProjectPanel();
+}
+
+async function saveGitRemoteUrl(): Promise<void> {
+  if (!activeProject) return;
+  const url = gitRemoteUrlEl.value.trim();
+  if (url === (activeProject.git_remote_url || "")) {
+    setStatus(decomposeStatusEl, "未修改", false);
+    return;
+  }
+  saveGitRemoteBtn.disabled = true;
+  setStatus(decomposeStatusEl, "保存中...", false);
+  const { response, data } = await updateProject(activeProject.id, { git_remote_url: url });
+  saveGitRemoteBtn.disabled = false;
+  if (!response.ok) {
+    setStatus(decomposeStatusEl, "保存失败", true);
+    return;
+  }
+  activeProject = data.project;
+  setStatus(decomposeStatusEl, url ? "已保存（任务结束会 push）" : "已清空（不再 push）", false);
 }
 
 async function saveDescription(): Promise<void> {
@@ -896,6 +919,7 @@ function openCreateModal(): void {
   createRuntimeEnv.value = "";
   createBusinessScenario.value = "";
   createCodeProvider.value = "";
+  createGitRemoteUrl.value = "";
   clearStatus(createStatusEl);
   setModalOpen(createModal, true);
   setTimeout(() => createName.focus(), 0);
@@ -919,6 +943,7 @@ async function submitCreate(e: Event): Promise<void> {
     runtime_env: createRuntimeEnv.value,
     business_scenario: createBusinessScenario.value,
     code_provider: createCodeProvider.value,
+    git_remote_url: createGitRemoteUrl.value.trim(),
   });
   if (!response.ok) {
     setStatus(createStatusEl, "创建失败", true);
@@ -1032,6 +1057,7 @@ createModal.addEventListener("click", (e) => {
 });
 createForm.addEventListener("submit", (e) => void submitCreate(e));
 saveDescBtn.addEventListener("click", () => void saveDescription());
+saveGitRemoteBtn.addEventListener("click", () => void saveGitRemoteUrl());
 decomposeBtn.addEventListener("click", () => void decompose());
 
 // ── Section collapse ────────────────────────────────────────────
