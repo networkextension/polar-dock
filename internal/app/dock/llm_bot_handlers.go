@@ -68,6 +68,7 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 		Streaming    *bool  `json:"streaming,omitempty"`
 		ProviderKind string `json:"provider_kind"`
 		Extras       string `json:"extras"`
+		ProxyURL     string `json:"proxy_url"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
@@ -94,6 +95,7 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 		strings.TrimSpace(req.APIKey),
 		strings.TrimSpace(req.SystemPrompt),
 		generateSessionID()[:24],
+		strings.TrimSpace(req.ProxyURL),
 		req.Shared,
 		streaming,
 		now,
@@ -138,6 +140,7 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 		UpdateAPIKey bool   `json:"update_api_key"`
 		ProviderKind string `json:"provider_kind"`
 		Extras       string `json:"extras"`
+		ProxyURL     string `json:"proxy_url"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
@@ -158,6 +161,7 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 		model,
 		strings.TrimSpace(req.APIKey),
 		strings.TrimSpace(req.SystemPrompt),
+		strings.TrimSpace(req.ProxyURL),
 		req.Shared,
 		req.Streaming,
 		req.UpdateAPIKey,

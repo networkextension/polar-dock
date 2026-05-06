@@ -246,8 +246,15 @@ type LLMConfig struct {
 	ProviderKind string          `json:"provider_kind,omitempty"`
 	IsPlatform   bool            `json:"is_platform,omitempty"`
 	Extras       json.RawMessage `json:"extras,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	// ProxyURL: optional HTTP(S) proxy used by dock when calling
+	// this provider's API. Empty = use the default Go transport
+	// (which respects HTTP_PROXY / HTTPS_PROXY env on the dock
+	// machine). Non-empty = override per-config. Useful when one
+	// provider needs a proxy (e.g. xAI from CN) but another is
+	// reachable directly (local Ollama).
+	ProxyURL  string    `json:"proxy_url,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // LLMConfigKind discriminator values for the provider_kind column.
@@ -1002,6 +1009,11 @@ ALTER TABLE llm_configs
 	ADD COLUMN IF NOT EXISTS is_platform BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_llm_configs_platform
 	ON llm_configs(is_platform) WHERE is_platform = TRUE;
+-- proxy_url: dock's HTTP client uses this when calling the
+-- provider's API. Empty = inherit dock's default Go transport
+-- (HTTP_PROXY / HTTPS_PROXY env). Non-empty overrides per config.
+ALTER TABLE llm_configs
+	ADD COLUMN IF NOT EXISTS proxy_url TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS packtunnel_profiles (
 	id TEXT PRIMARY KEY,
@@ -2146,7 +2158,7 @@ func (s *Server) getUserByUsername(username string) (*User, error) {
 
 func (s *Server) listLLMConfigs(workspaceID string) ([]LLMConfig, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at
 		   FROM llm_configs
 		  WHERE workspace_id = $1
 		  ORDER BY updated_at DESC, id DESC`,
@@ -2160,7 +2172,7 @@ func (s *Server) listLLMConfigs(workspaceID string) ([]LLMConfig, error) {
 	items := make([]LLMConfig, 0)
 	for rows.Next() {
 		var item LLMConfig
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -2172,12 +2184,12 @@ func (s *Server) getLLMConfigForOwner(workspaceID string, id int64) (*LLMConfig,
 	var item LLMConfig
 	var apiKey string
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at
 		   FROM llm_configs
 		  WHERE id = $1 AND workspace_id = $2`,
 		id,
 		workspaceID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", nil
@@ -2191,12 +2203,12 @@ func (s *Server) getLLMConfigForBot(botUserID string) (*LLMConfig, string, error
 	var item LLMConfig
 	var apiKey string
 	err := s.db.QueryRow(
-		`SELECT c.id, c.owner_user_id, COALESCE(c.workspace_id, ''), c.share_id, c.shared, c.name, c.base_url, c.model, c.api_key, c.system_prompt, c.streaming, (c.api_key <> '') AS has_api_key, c.created_at, c.updated_at
+		`SELECT c.id, c.owner_user_id, COALESCE(c.workspace_id, ''), c.share_id, c.shared, c.name, c.base_url, c.model, c.api_key, c.system_prompt, c.streaming, (c.api_key <> '') AS has_api_key, COALESCE(c.proxy_url, ''), c.created_at, c.updated_at
 		   FROM bot_users b
 		   JOIN llm_configs c ON c.id = b.llm_config_id
 		  WHERE b.bot_user_id = $1`,
 		botUserID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", nil
@@ -2216,14 +2228,14 @@ func (s *Server) getAvailableLLMConfigWithAPIKey(workspaceID string, id int64) (
 	var item LLMConfig
 	var apiKey string
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at
 		   FROM llm_configs
 		  WHERE id = $1
 		    AND (workspace_id = $2 OR shared = TRUE OR is_platform = TRUE)
 		    AND (provider_kind = 'text' OR provider_kind = '' OR provider_kind IS NULL)`,
 		id,
 		workspaceID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", nil
@@ -2233,21 +2245,21 @@ func (s *Server) getAvailableLLMConfigWithAPIKey(workspaceID string, id int64) (
 	return &item, apiKey, nil
 }
 
-func (s *Server) createLLMConfig(workspaceID, ownerUserID, name, baseURL, model, apiKey, systemPrompt, shareID string, shared, streaming bool, now time.Time) (*LLMConfig, error) {
+func (s *Server) createLLMConfig(workspaceID, ownerUserID, name, baseURL, model, apiKey, systemPrompt, shareID, proxyURL string, shared, streaming bool, now time.Time) (*LLMConfig, error) {
 	var item LLMConfig
 	err := s.db.QueryRow(
-		`INSERT INTO llm_configs (owner_user_id, workspace_id, share_id, shared, name, base_url, model, api_key, system_prompt, streaming, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
-		 RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at`,
-		ownerUserID, workspaceID, shareID, shared, name, baseURL, model, apiKey, systemPrompt, streaming, now,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+		`INSERT INTO llm_configs (owner_user_id, workspace_id, share_id, shared, name, base_url, model, api_key, system_prompt, streaming, proxy_url, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+		 RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at`,
+		ownerUserID, workspaceID, shareID, shared, name, baseURL, model, apiKey, systemPrompt, streaming, proxyURL, now,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &item, nil
 }
 
-func (s *Server) updateLLMConfig(workspaceID string, id int64, name, baseURL, model, apiKey, systemPrompt string, shared, streaming, replaceAPIKey bool, now time.Time) (*LLMConfig, error) {
+func (s *Server) updateLLMConfig(workspaceID string, id int64, name, baseURL, model, apiKey, systemPrompt, proxyURL string, shared, streaming, replaceAPIKey bool, now time.Time) (*LLMConfig, error) {
 	query := `UPDATE llm_configs
 	             SET name = $3,
 	                 base_url = $4,
@@ -2255,16 +2267,17 @@ func (s *Server) updateLLMConfig(workspaceID string, id int64, name, baseURL, mo
 	                 system_prompt = $6,
 	                 shared = $7,
 	                 streaming = $8,
-	                 updated_at = $9`
-	args := []any{id, workspaceID, name, baseURL, model, systemPrompt, shared, streaming, now}
+	                 proxy_url = $9,
+	                 updated_at = $10`
+	args := []any{id, workspaceID, name, baseURL, model, systemPrompt, shared, streaming, proxyURL, now}
 	if replaceAPIKey {
-		query += `, api_key = $10`
+		query += `, api_key = $11`
 		args = append(args, apiKey)
 	}
 	query += ` WHERE id = $1 AND workspace_id = $2
-	           RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at`
+	           RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at`
 	var item LLMConfig
-	err := s.db.QueryRow(query, args...).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+	err := s.db.QueryRow(query, args...).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -2298,7 +2311,7 @@ func (s *Server) listAvailableLLMConfigs(workspaceID string) ([]LLMConfig, error
 	// the bot picker surfaces my-team's first, falling back to the
 	// platform default below.
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, is_platform, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, is_platform, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at
 		   FROM llm_configs
 		  WHERE (workspace_id = $1 OR shared = TRUE OR is_platform = TRUE)
 		    AND (provider_kind = 'text' OR provider_kind = '' OR provider_kind IS NULL)
@@ -2312,7 +2325,7 @@ func (s *Server) listAvailableLLMConfigs(workspaceID string) ([]LLMConfig, error
 	items := make([]LLMConfig, 0)
 	for rows.Next() {
 		var item LLMConfig
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.IsPlatform, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.IsPlatform, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -2323,11 +2336,11 @@ func (s *Server) listAvailableLLMConfigs(workspaceID string) ([]LLMConfig, error
 func (s *Server) getLLMConfigByShareID(shareID string) (*LLMConfig, error) {
 	var item LLMConfig
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at
 		   FROM llm_configs
 		  WHERE share_id = $1 AND share_id <> ''`,
 		shareID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -3027,7 +3040,7 @@ func (s *Server) getLLMConfigForThread(chatThreadID, llmThreadID int64, botUserI
 	var item LLMConfig
 	var apiKey string
 	err := s.db.QueryRow(
-		`SELECT c.id, c.owner_user_id, c.name, c.base_url, c.model, c.api_key, c.system_prompt, c.streaming, (c.api_key <> '') AS has_api_key, c.created_at, c.updated_at
+		`SELECT c.id, c.owner_user_id, c.name, c.base_url, c.model, c.api_key, c.system_prompt, c.streaming, (c.api_key <> '') AS has_api_key, COALESCE(c.proxy_url, ''), c.created_at, c.updated_at
 		   FROM llm_threads t
 		   LEFT JOIN bot_users b ON b.bot_user_id = t.bot_user_id
 		   JOIN llm_configs c ON c.id = COALESCE(t.llm_config_id, b.llm_config_id)
@@ -3035,7 +3048,7 @@ func (s *Server) getLLMConfigForThread(chatThreadID, llmThreadID int64, botUserI
 		llmThreadID,
 		chatThreadID,
 		botUserID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.OwnerUserID, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", nil

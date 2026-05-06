@@ -98,6 +98,9 @@
                   <label class="form-label" for="llmConfigApiKeyInput" data-i18n="dashboard.llmConfigApiKeyLabel">API Key</label>
                   <input id="llmConfigApiKeyInput" class="input" type="password" maxlength="300" data-i18n-placeholder="dashboard.llmConfigApiKeyPlaceholder" placeholder="Recommended on create; leave empty when editing to keep current value" />
 
+                  <label class="form-label" for="llmConfigProxyUrlInput">Proxy URL（可选）</label>
+                  <input id="llmConfigProxyUrlInput" class="input" type="text" maxlength="300" placeholder="http://127.0.0.1:10082（留空 = 用 dock 默认网络）" />
+
                   <label class="form-label" for="llmConfigSystemPromptInput" data-i18n="dashboard.llmConfigSystemPromptLabel">Test Prompt (optional)</label>
                   <textarea id="llmConfigSystemPromptInput" class="input textarea" rows="4" maxlength="5000" data-i18n-placeholder="dashboard.llmConfigSystemPromptPlaceholder" placeholder="Only for testing config connectivity, not used as Bot runtime prompt"></textarea>
 

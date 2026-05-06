@@ -133,6 +133,10 @@ export type LLMConfigPayload = {
   base_url: string;
   model: string;
   api_key?: string;
+  // Optional HTTP(S) proxy used by dock when calling this provider.
+  // Empty / undefined = inherit dock's default Go transport
+  // (HTTP_PROXY / HTTPS_PROXY env on dock host).
+  proxy_url?: string;
   system_prompt: string;
   shared?: boolean;
   // Optional discriminator + extras blob. Defaults to "text" / "{}" on the
@@ -152,6 +156,7 @@ export type LLMConfig = {
   model: string;
   system_prompt: string;
   has_api_key: boolean;
+  proxy_url?: string;
   provider_kind?: string;
   extras?: unknown;
   created_at: string;
