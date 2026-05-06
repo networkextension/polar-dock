@@ -41,6 +41,32 @@ func teamRoleAllows(actorRole, minRole string) bool {
 	return rank(actorRole) >= rank(minRole)
 }
 
+// requireWorkspaceID returns the active workspace ID from gin
+// context (set by AuthMiddleware → resolveActiveWorkspace). If the
+// middleware hasn't run or workspace lookup soft-failed, returns
+// ("", false) and writes a 500 to c. Modules that have migrated to
+// team_id ownership should call this instead of falling back to
+// user_id.
+func requireWorkspaceID(c *gin.Context) (string, bool) {
+	v, _ := c.Get("workspace_id")
+	id, ok := v.(string)
+	if !ok || id == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return "", false
+	}
+	return id, true
+}
+
+// workspaceRole returns the caller's role in the active workspace, or
+// the empty string if not set. Useful for handlers that need to gate
+// by role on the active workspace specifically (the common case for
+// migrated modules).
+func workspaceRole(c *gin.Context) string {
+	v, _ := c.Get("workspace_role")
+	role, _ := v.(string)
+	return role
+}
+
 // requireTeamMember resolves the caller's role on team teamID and
 // enforces minRole. Writes the matching JSON error to c on failure.
 // On success returns (role, true).

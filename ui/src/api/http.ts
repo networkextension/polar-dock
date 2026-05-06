@@ -1,5 +1,7 @@
 const API_BASE = "";
 
+const WORKSPACE_KEY = "polar_active_workspace_id";
+
 type JsonRequestInit = Omit<RequestInit, "body" | "headers"> & {
   body?: BodyInit | Record<string, unknown> | unknown[] | null;
   headers?: HeadersInit;
@@ -9,8 +11,32 @@ function buildApiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
 
+// readActiveWorkspaceID is duplicated from lib/workspace.ts on
+// purpose: http.ts is imported by every page (login/register/index
+// included) and we want zero coupling between this transport layer
+// and the switcher feature.
+function readActiveWorkspaceID(): string {
+  try {
+    return localStorage.getItem(WORKSPACE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
 function mergeHeaders(headers?: HeadersInit): Headers {
-  return new Headers(headers);
+  const merged = new Headers(headers);
+  // Inject X-Workspace-Id on every request unless explicitly
+  // overridden. The backend's AuthMiddleware reads this; if it
+  // ever doesn't validate (stale id pointing at a team the user
+  // got removed from), the middleware silently falls back to the
+  // personal team — no client-side handling needed.
+  if (!merged.has("X-Workspace-Id")) {
+    const ws = readActiveWorkspaceID();
+    if (ws) {
+      merged.set("X-Workspace-Id", ws);
+    }
+  }
+  return merged;
 }
 
 // --- 401 → refresh → retry interceptor ---------------------------------
