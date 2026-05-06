@@ -47,6 +47,19 @@ type TeamMember struct {
 	JoinedAt time.Time `json:"joined_at"`
 }
 
+// TeamMemberWithUser is a TeamMember enriched with user-level fields
+// for the members list UI. Email is included so admins can verify
+// invitation targets resolved correctly.
+type TeamMemberWithUser struct {
+	TeamID   string    `json:"team_id"`
+	UserID   string    `json:"user_id"`
+	Username string    `json:"username"`
+	Email    string    `json:"email"`
+	IconURL  string    `json:"icon_url"`
+	Role     string    `json:"role"`
+	JoinedAt time.Time `json:"joined_at"`
+}
+
 type TeamInvitation struct {
 	ID             string     `json:"id"`
 	TeamID         string     `json:"team_id"`
@@ -260,6 +273,91 @@ func (s *Server) ensurePersonalTeam(userID string) (*Team, error) {
 		return nil, err
 	}
 	return team, nil
+}
+
+// updateTeamMetadata patches the editable team fields. Slug, kind and
+// owner are not touched here — those go through dedicated APIs (slug
+// is immutable post-create; ownership transfer + kind change have
+// their own paths).
+func (s *Server) updateTeamMetadata(teamID, name, description, avatarURL string) error {
+	if teamID == "" {
+		return errors.New("teamID is empty")
+	}
+	res, err := s.db.Exec(
+		`UPDATE teams SET name = $1, description = $2, avatar_url = $3, updated_at = $4 WHERE id = $5`,
+		name, description, avatarURL, time.Now().UTC(), teamID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// deleteTeam removes the team and cascades to team_members /
+// team_invitations via ON DELETE CASCADE. Caller is responsible for
+// pre-flight checks (kind != 'personal'; no resources still attached;
+// caller is owner). Once T6 lands and other modules carry team_id,
+// add a cross-table emptiness check here.
+func (s *Server) deleteTeam(teamID string) error {
+	if teamID == "" {
+		return errors.New("teamID is empty")
+	}
+	res, err := s.db.Exec(`DELETE FROM teams WHERE id = $1`, teamID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// listTeamMembersWithUser returns members joined with the users table
+// so the admin UI can show name + email + avatar for each member. Sort
+// owners first, then admins, then by join time, so the team owner is
+// always at the top.
+func (s *Server) listTeamMembersWithUser(teamID string) ([]TeamMemberWithUser, error) {
+	rows, err := s.db.Query(
+		`SELECT tm.team_id, tm.user_id, u.username, u.email, u.icon_url, tm.role, tm.joined_at
+		 FROM team_members tm
+		 JOIN users u ON u.id = tm.user_id
+		 WHERE tm.team_id = $1
+		 ORDER BY
+		   CASE tm.role
+		     WHEN 'owner' THEN 0
+		     WHEN 'admin' THEN 1
+		     WHEN 'member' THEN 2
+		     WHEN 'viewer' THEN 3
+		     ELSE 4
+		   END,
+		   tm.joined_at ASC`,
+		teamID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []TeamMemberWithUser{}
+	for rows.Next() {
+		var m TeamMemberWithUser
+		if err := rows.Scan(&m.TeamID, &m.UserID, &m.Username, &m.Email, &m.IconURL, &m.Role, &m.JoinedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // backfillPersonalTeams ensures every user has a personal team. Called

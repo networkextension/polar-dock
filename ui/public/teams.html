@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n-title="teams.title">工作区</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/polaris-logo.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="lp-page">
+    <div class="lp-app">
+      <aside class="lp-sidebar">
+        <a class="lp-brand" href="/dashboard.html" data-site-brand>
+          <img data-site-icon alt="" />
+          <span class="lp-brand-name" data-site-name>Polar-</span>
+        </a>
+        <nav class="lp-nav">
+          <a class="lp-nav-item" href="/dashboard.html">
+            <span class="lp-nav-icon">⊞</span><span>Dashboard</span>
+          </a>
+          <a class="lp-nav-item active" href="/teams.html">
+            <span class="lp-nav-icon">⌂</span><span data-i18n="nav.teams">工作区</span>
+          </a>
+          <a class="lp-nav-item" href="/posts.html">
+            <span class="lp-nav-icon">◎</span><span>Posts</span>
+          </a>
+          <a class="lp-nav-item" href="/markdowns.html">
+            <span class="lp-nav-icon">◈</span><span>Markdowns</span>
+          </a>
+          <a class="lp-nav-item" href="/chat.html">
+            <span class="lp-nav-icon">◉</span><span>Chat</span>
+          </a>
+          <a class="lp-nav-item" href="/creation.html">
+            <span class="lp-nav-icon">✍</span><span data-i18n="nav.creation">Creation</span>
+          </a>
+          <a class="lp-nav-item" href="/video-studio.html">
+            <span class="lp-nav-icon">▶</span><span data-i18n="nav.videoStudio">Video Studio</span>
+          </a>
+          <a class="lp-nav-item" href="/iosdist.html">
+            <span class="lp-nav-icon">⬇</span><span data-i18n="nav.iosDist">iOS 分发</span>
+          </a>
+          <a class="lp-nav-item" href="/editor.html">
+            <span class="lp-nav-icon">✎</span><span>Editor</span>
+          </a>
+          <a class="lp-nav-item" href="/latch.html" hidden data-admin-nav>
+            <span class="lp-nav-icon">⚙</span><span data-i18n="nav.latch">Latch</span>
+          </a>
+          <a class="lp-nav-item" href="/bots.html" hidden data-admin-nav>
+            <span class="lp-nav-icon">◉</span><span data-i18n="nav.bots">Bot Management</span>
+          </a>
+          <a class="lp-nav-item" href="/admin.html" hidden data-admin-nav>
+            <span class="lp-nav-icon">☍</span><span data-i18n="nav.userAdmin">用户管理</span>
+          </a>
+        </nav>
+        <div class="lp-sidebar-foot">
+          <div class="lp-foot-avatar" id="lpFootAvatar">U</div>
+          <div class="lp-foot-info">
+            <div class="lp-foot-name" id="lpFootName">—</div>
+            <div class="lp-foot-role" id="lpFootRole">—</div>
+          </div>
+          <div class="lp-sidebar-foot-actions">
+            <button class="lp-foot-icon-btn" type="button" data-open-settings-center data-settings-target="personalization" title="Settings" data-i18n-tooltip="nav.settings">⚙</button>
+            <button id="logoutBtn" class="lp-foot-icon-btn" type="button" title="Log out">⏻</button>
+          </div>
+        </div>
+      </aside>
+
+      <div class="lp-main" style="overflow:hidden;">
+        <div class="lp-topbar">
+          <span class="lp-topbar-title" data-i18n="teams.title">工作区</span>
+          <div class="lp-topbar-end" style="display:flex; align-items:center; gap:8px;">
+            <button id="teamsCreateBtn" class="btn-inline btn-secondary" type="button">＋ 新建工作区</button>
+            <a class="lp-topbar-back" href="/dashboard.html">Dashboard</a>
+          </div>
+        </div>
+
+        <div class="lp-content" style="padding:0; overflow:hidden; flex:1; display:flex;">
+          <div class="video-studio-layout">
+
+            <!-- Left: team list -->
+            <aside class="video-studio-projects">
+              <div class="video-studio-projects-head">
+                <span class="badge" data-i18n="teams.workspaces">工作区</span>
+              </div>
+              <div id="teamsList" class="video-studio-project-list">
+                <div class="chat-empty">加载中...</div>
+              </div>
+            </aside>
+
+            <!-- Right: team detail -->
+            <section class="video-studio-detail" id="teamsDetail">
+              <div class="video-studio-empty" id="teamsEmpty">
+                <div class="chat-empty">从左侧选择一个工作区</div>
+              </div>
+
+              <div id="teamsPanel" hidden style="padding:20px; display:flex; flex-direction:column; gap:16px; overflow:auto;">
+                <header style="display:flex; align-items:center; gap:16px;">
+                  <div id="teamsAvatarWrap" style="position:relative; width:64px; height:64px; flex-shrink:0;">
+                    <div id="teamsAvatarPlaceholder" style="width:64px; height:64px; border-radius:14px; background:linear-gradient(135deg,#e9e9ef,#cfd0d6); display:flex; align-items:center; justify-content:center; font-size:24px; color:#666;">⌂</div>
+                    <img id="teamsAvatar" alt="" style="width:64px; height:64px; border-radius:14px; object-fit:cover; display:none;" />
+                  </div>
+                  <div style="flex:1; min-width:0;">
+                    <h2 id="teamsName" style="margin:0 0 4px 0; font-size:20px; font-weight:600;">—</h2>
+                    <div style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-muted,#888); flex-wrap:wrap;">
+                      <span id="teamsKindBadge" class="settings-value-pill" style="font-size:11px;">—</span>
+                      <span id="teamsRoleBadge" class="settings-value-pill" style="font-size:11px;">—</span>
+                      <span id="teamsSlug" style="font-family:monospace;">—</span>
+                    </div>
+                  </div>
+                </header>
+
+                <!-- Tabs -->
+                <nav class="lp-subnav" style="display:flex; gap:4px; border-bottom:1px solid var(--border,#eee);">
+                  <button class="lp-subnav-item active" type="button" data-teams-tab="info">基本信息</button>
+                  <button class="lp-subnav-item" type="button" data-teams-tab="members">成员</button>
+                  <button class="lp-subnav-item" type="button" data-teams-tab="danger">危险区</button>
+                </nav>
+
+                <!-- Tab: basic info -->
+                <section data-teams-pane="info" style="display:flex; flex-direction:column; gap:12px;">
+                  <label class="form-label">名称</label>
+                  <input id="teamsInfoName" class="input" type="text" maxlength="120" />
+
+                  <label class="form-label">描述</label>
+                  <textarea id="teamsInfoDescription" class="input textarea" rows="3" maxlength="500" placeholder="这个工作区是做什么的？"></textarea>
+
+                  <label class="form-label">头像 URL（可选）</label>
+                  <input id="teamsInfoAvatarURL" class="input" type="url" maxlength="500" placeholder="https://..." />
+
+                  <div id="teamsInfoStatus" class="status-text"></div>
+                  <div style="display:flex; gap:8px;">
+                    <button id="teamsInfoSaveBtn" class="btn-inline btn-secondary" type="button">保存</button>
+                    <span id="teamsInfoReadonlyHint" class="status-text" style="align-self:center;" hidden>（仅 admin / owner 能修改）</span>
+                  </div>
+                </section>
+
+                <!-- Tab: members -->
+                <section data-teams-pane="members" hidden style="display:flex; flex-direction:column; gap:12px;">
+                  <div style="font-size:13px; color:var(--text-muted,#888);">成员管理（邀请、角色编辑、踢出）将在 T3 上线，本页当前仅展示</div>
+                  <div id="teamsMembersList" class="video-studio-project-list">
+                    <div class="chat-empty">加载中...</div>
+                  </div>
+                </section>
+
+                <!-- Tab: danger -->
+                <section data-teams-pane="danger" hidden style="display:flex; flex-direction:column; gap:12px;">
+                  <div id="teamsDangerPersonal" hidden class="status-text">个人工作区不能删除。所有上层模块的资源迁移完成后，可在这里转让 owner 或归档资源。</div>
+                  <div id="teamsDangerTeam" hidden style="display:flex; flex-direction:column; gap:12px;">
+                    <div class="status-text">删除工作区不可恢复。该工作区的所有成员、邀请将被一同清除（T6 之后还会校验所属资源已归档）。</div>
+                    <button id="teamsDeleteBtn" class="btn-inline" type="button" style="background:#c33; color:#fff; border-color:#a22; align-self:flex-start;">删除工作区</button>
+                  </div>
+                </section>
+              </div>
+            </section>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create modal -->
+    <div id="teamsCreateModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="teamsCreateModalTitle">
+        <div class="modal-header">
+          <h3 id="teamsCreateModalTitle">新建工作区</h3>
+          <button id="teamsCreateModalCloseBtn" class="btn-inline btn-secondary" type="button">关闭</button>
+        </div>
+        <form id="teamsCreateForm" class="modal-body">
+          <label class="form-label" for="teamsCreateName">名称</label>
+          <input id="teamsCreateName" class="input" type="text" required maxlength="120" placeholder="例如：Acme Mobile" />
+
+          <label class="form-label" for="teamsCreateDescription">描述（可选）</label>
+          <textarea id="teamsCreateDescription" class="input textarea" rows="3" maxlength="500" placeholder="一句话说明这个工作区的用途"></textarea>
+
+          <label class="form-label" for="teamsCreateAvatarURL">头像 URL（可选）</label>
+          <input id="teamsCreateAvatarURL" class="input" type="url" maxlength="500" placeholder="https://..." />
+
+          <div id="teamsCreateStatus" class="status-text"></div>
+          <div class="modal-actions">
+            <button id="teamsCreateSubmitBtn" class="btn-secondary" type="submit">创建</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script type="module" src="/scripts/teams.js"></script>
+  </body>
+</html>

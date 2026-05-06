@@ -605,6 +605,14 @@ func (s *Server) registerRoutes() {
 		api.GET("/video-projects/:id/download", s.AuthMiddleware(), s.handleVideoProjectDownload)
 		api.GET("/video-projects/:id/shots.zip", s.AuthMiddleware(), s.handleVideoProjectShotsZip)
 		api.GET("/system-agent", s.AuthMiddleware(), s.handleSystemAgentStatus)
+		// teams (collaboration workspaces). T2 = CRUD + read-only members
+		// list. Invitations land in T3, role middleware in T5.
+		api.GET("/teams", s.AuthMiddleware(), s.handleTeamList)
+		api.POST("/teams", s.AuthMiddleware(), s.handleTeamCreate)
+		api.GET("/teams/:id", s.AuthMiddleware(), s.handleTeamDetail)
+		api.PUT("/teams/:id", s.AuthMiddleware(), s.handleTeamUpdate)
+		api.DELETE("/teams/:id", s.AuthMiddleware(), s.handleTeamDelete)
+		api.GET("/teams/:id/members", s.AuthMiddleware(), s.handleTeamMembers)
 		// iOS distribution module (M1 — owner-scoped CRUD + IPA upload + OTA token).
 		// Signing pipeline lands in M2, see DEV_PLAN.md.
 		api.GET("/iosdist/apps", s.AuthMiddleware(), s.handleIOSAppList)
