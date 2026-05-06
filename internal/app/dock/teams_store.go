@@ -360,6 +360,45 @@ func (s *Server) listTeamMembersWithUser(teamID string) ([]TeamMemberWithUser, e
 	return out, rows.Err()
 }
 
+// backfillResourceWorkspaceIDs populates the workspace_id column on
+// migrated module tables (T6-A). Each row's workspace_id is set to
+// the personal team of its owner_user_id. Idempotent — only touches
+// rows where workspace_id IS NULL.
+//
+// This runs at startup after backfillPersonalTeams so the personal
+// teams referenced here are guaranteed to exist for every legacy
+// owner_user_id value. Failures on individual tables are logged but
+// don't abort the sweep — partial progress is fine because the
+// function is idempotent on subsequent restarts.
+func (s *Server) backfillResourceWorkspaceIDs() error {
+	tables := []string{
+		"iosdist_apps",
+		"iosdist_certificates",
+		"iosdist_profiles",
+		"iosdist_asc_configs",
+		"llm_configs",
+	}
+	for _, table := range tables {
+		// Single SQL statement per table. The personal team for each
+		// owner_user_id is unique (kind='personal' + ON DELETE CASCADE
+		// invariants from teams.go), so the subquery resolves to one
+		// row at most.
+		query := `
+			UPDATE ` + table + ` AS r
+			SET workspace_id = (
+				SELECT t.id
+				FROM teams t
+				WHERE t.owner_user_id = r.owner_user_id AND t.kind = 'personal'
+				LIMIT 1
+			)
+			WHERE r.workspace_id IS NULL`
+		if _, err := s.db.Exec(query); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // backfillPersonalTeams ensures every user has a personal team. Called
 // at server startup; idempotent. Runs in batches so an outage mid-loop
 // doesn't lock the table for long.
