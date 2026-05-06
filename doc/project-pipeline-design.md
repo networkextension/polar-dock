@@ -95,15 +95,53 @@ fetch + vision pre-processing).** Concretely:
    YouTube URLs → markdown. Add to the standard polar-agent image
    (see [`agent-container-design.md`](agent-container-design.md))
    so every agent host can convert without server-side processing
-   pipeline. Heavy / image-only PDFs fall back to vision LLM via
-   the agent's configured LLM (still produces markdown).
-4. **Just-in-time fetch**: when polar-agent dispatches a task on
+   pipeline.
+   - **Text-extractable formats** (PDF with text layer, Office
+     docs, HTML, CSV) — markitdown handles in one shot, no LLM
+     needed.
+   - **Image / vision-heavy formats** (PNG/JPG mockups, scanned
+     PDFs, screenshots) — markitdown only produces useful md *if*
+     it has a vision-capable LLM configured. This is the routing
+     question handled in step 4 below.
+4. **Capability-aware routing for vision** — the part that actually
+   matters. An agent attaches 1-N bots; not every bot has a vision
+   path. We must not dispatch a "拆设计稿" task to a bot whose
+   tool/model can't read images, or it'll silently produce garbage.
+
+   Concrete rule: **design / image-heavy attachments are routed to
+   the project's `vision_llm_config_id` (see "Per-stage LLM
+   selection" cross-cut)** — a workspace-level Claude (or whichever
+   vision model wins the bake-off) does the design → markdown
+   conversion *once*, server-side or in a dedicated agent slot.
+   Output `summary_md` is then reused by every downstream bot
+   regardless of its own vision capability.
+
+   Per-tool capability matrix (**TODO: verify before relying on
+   this — need a small bake-off**):
+
+   | Tool / CLI | Vision in CLI? | Notes |
+   |---|---|---|
+   | `claude` (claude-code) | yes | Native image input; `claude` accepts image paths in prompts. Recommended default for design 拆稿. |
+   | `codex` (OpenAI codex CLI) | unverified | Underlying model (gpt-5 / o3) supports vision but CLI piping needs confirmation. Don't assume — test. |
+   | `kimi-cli` | unverified | Moonshot has multimodal models; kimi-cli's image flag/argv is unclear. Don't assume — test. |
+   | `markitdown` image mode | yes (via configured LLM) | Drives any OpenAI-compatible vision endpoint. Cleanest path for "convert PNG/JPG to md without involving the coder tool". |
+
+   Until the bake-off is done, default to: design files → Claude via
+   markitdown's image-mode (markitdown configured with the
+   workspace's vision LLM endpoint), output `summary_md` cached and
+   handed to *every* bot. Don't mix design 拆稿 into a kimi/codex
+   task even if those bots are otherwise the project's preferred
+   coder.
+
+5. **Just-in-time fetch**: when polar-agent dispatches a task on
    this project, server hands over the original attachment URLs
-   (signed, short-TTL). polar-agent downloads them, runs
-   `markitdown <file> > _refs/<file>.md` per file, drops both
-   the source and the rendered `.md` into `<workdir>/_refs/` —
-   `.gitignore`'d, never committed. Coder tool's prompt mentions
-   the path: "参考资料在 `_refs/`，需要时读 `.md` 即可"。
+   (signed, short-TTL) *plus* the cached `summary_md` if vision
+   pre-processing has run. polar-agent runs
+   `markitdown <file> > _refs/<file>.md` for any text-extractable
+   file that doesn't yet have a cached md, drops both the source
+   and the rendered `.md` into `<workdir>/_refs/` — `.gitignore`'d,
+   never committed. Coder tool's prompt mentions the path:
+   "参考资料在 `_refs/`，需要时读 `.md` 即可"。
 
 **Why hybrid** (not "stick it in git" and not "platform-only"):
 - Git: design files are 30-50 MB binaries; git-lfs is workable
@@ -372,6 +410,27 @@ Implementation note: design 稿 → markdown 用 Claude vision 一次
 理解结果固化成 `summary_md` / `decompose_prompt` 等中间产物，
 后续步骤复用而不重算。
 
+**Capability is per-bot, not per-agent.** An agent host attaches
+1-N bots, and the bots can be on completely different tools
+(claude / codex / kimi) with different vision support. The
+pipeline must *not* dispatch a vision task to a bot whose tool
+can't see images — that produces silent garbage, not a useful
+fallback. Instead:
+
+- The vision LLM (Claude vision is the working default) is a
+  *separate slot* on the project, not a bot. It runs once,
+  produces `summary_md`, caches it.
+- `bot_users` table gets a `capabilities` JSON column tracking
+  what each bot's tool supports (`{vision: true|false|"unknown"}`).
+  Server checks this before routing — if a task is image-heavy
+  and the assigned bot has no vision, server runs the vision
+  pre-processor first and hands the bot the `summary_md`.
+- Initial `capabilities` values come from a one-time bake-off
+  (see capability matrix in Stage 1 sub-concern §4 above).
+  Marked `"unknown"` until then; default routing assumes no
+  vision so we never blindly pass design files to a tool that
+  can't read them.
+
 UI implication: project settings should expose more than one LLM
 choice — at minimum a "vision LLM" slot for attachment
 pre-processing, plus the existing per-decompose LLM config.
@@ -382,9 +441,11 @@ Schema implication: project row gets `vision_llm_config_id` (and
 later, `summarization_llm_config_id`). All nullable, all
 falling back to workspace defaults.
 
-**Estimate**: 0.5 wk to add the slots + UI + plumbing; the
-actual benefit is realized as Stages 1, 6, 7 land and start
-needing their own LLM choice.
+**Estimate**: 0.5 wk to add the slots + UI + plumbing; +0.5 wk
+for `bot_users.capabilities` column + capability-aware routing
++ the small bake-off to fill in initial values; the actual
+benefit is realized as Stages 1, 6, 7 land and start needing
+their own LLM choice.
 
 ### Auth & credential lifecycle
 - Project-scoped: git deploy key, CI provider token, signing
