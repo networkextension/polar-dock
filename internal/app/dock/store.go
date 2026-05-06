@@ -6416,12 +6416,22 @@ func (s *Server) createLLMThread(chatThreadID int64, ownerUserID, botUserID, tit
 	if botUser == nil {
 		return nil, nil
 	}
+	// Passthrough bots have no LLM config; BotUser.LLMConfigID
+	// scans 0 in that case. Inserting 0 into llm_threads.llm_config_id
+	// triggers an FK violation (no such row). Write NULL instead so
+	// the column matches the bot's nullable state.
+	var llmConfigArg any
+	if botUser.LLMConfigID > 0 {
+		llmConfigArg = botUser.LLMConfigID
+	} else {
+		llmConfigArg = nil
+	}
 	var itemID int64
 	err = s.db.QueryRow(
 		`INSERT INTO llm_threads (chat_thread_id, owner_user_id, bot_user_id, llm_config_id, title, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $6)
 		 RETURNING id`,
-		chatThreadID, ownerUserID, botUserID, botUser.LLMConfigID, title, now,
+		chatThreadID, ownerUserID, botUserID, llmConfigArg, title, now,
 	).Scan(&itemID)
 	if err != nil {
 		return nil, err
