@@ -877,6 +877,56 @@ CREATE TABLE IF NOT EXISTS invite_codes (
 
 CREATE INDEX IF NOT EXISTS idx_invite_codes_created_at ON invite_codes(created_at DESC);
 
+-- teams: top-level collaboration workspace. Every user gets a personal
+-- team auto-created on first relevant action (kind='personal'); explicit
+-- collaboration teams are kind='team'. Resources across modules
+-- (iosdist, macapp, ascpool, ...) reference teams.id for ownership.
+CREATE TABLE IF NOT EXISTS teams (
+	id TEXT PRIMARY KEY,
+	slug TEXT NOT NULL UNIQUE,
+	name TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	avatar_url TEXT NOT NULL DEFAULT '',
+	kind TEXT NOT NULL DEFAULT 'team',
+	owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_at TIMESTAMPTZ NOT NULL,
+	updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_teams_owner ON teams(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_teams_kind ON teams(kind);
+
+-- team_members: (team, user) -> role. role is 'owner'|'admin'|'member'|'viewer'.
+-- A team always has exactly one row with role='owner', matching teams.owner_user_id.
+-- Personal teams have exactly one member, the owner.
+CREATE TABLE IF NOT EXISTS team_members (
+	team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	role TEXT NOT NULL,
+	joined_at TIMESTAMPTZ NOT NULL,
+	PRIMARY KEY (team_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
+
+-- team_invitations: pending/accepted/declined/revoked/expired. token is
+-- the unguessable URL component. Same (team_id, lower(email)) at most one
+-- 'pending' record at a time; second invite reuses the row and refreshes
+-- token + expires_at.
+CREATE TABLE IF NOT EXISTS team_invitations (
+	id TEXT PRIMARY KEY,
+	team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	email TEXT NOT NULL,
+	role TEXT NOT NULL,
+	inviter_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	token TEXT NOT NULL UNIQUE,
+	status TEXT NOT NULL DEFAULT 'pending',
+	expires_at TIMESTAMPTZ NOT NULL,
+	accepted_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+	accepted_at TIMESTAMPTZ,
+	created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_team_invitations_team ON team_invitations(team_id, status);
+CREATE INDEX IF NOT EXISTS idx_team_invitations_email ON team_invitations(LOWER(email), status);
+
 CREATE TABLE IF NOT EXISTS llm_configs (
 	id BIGSERIAL PRIMARY KEY,
 	owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

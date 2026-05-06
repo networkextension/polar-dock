@@ -206,6 +206,14 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
+	// Every user must have a personal team. Cheap and idempotent: scans
+	// users without one and creates them. Failure is logged but not fatal
+	// — the server can still come up; missing personal teams will get
+	// created on demand by handlers that touch teams.
+	if err := server.backfillPersonalTeams(); err != nil {
+		log.Printf("teams: personal team backfill failed: %v", err)
+	}
+
 	// Backfill public slugs for legacy iosdist apps. Cheap, idempotent.
 	if err := server.backfillIOSAppSlugs(); err != nil {
 		log.Printf("iosdist: slug backfill failed: %v", err)
