@@ -27,11 +27,11 @@ import (
 // ---- Config CRUD ---------------------------------------------------------
 
 func (s *Server) handleIOSASCConfigGet(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
-	cfg, err := s.getIOSASCConfig(userID)
+	cfg, err := s.getIOSASCConfig(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -51,6 +51,10 @@ func (s *Server) handleIOSASCConfigGet(c *gin.Context) {
 }
 
 func (s *Server) handleIOSASCConfigUpsert(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, ok := requireUserID(c)
 	if !ok {
 		return
@@ -118,6 +122,7 @@ func (s *Server) handleIOSASCConfigUpsert(c *gin.Context) {
 
 	cfg := &IOSASCConfig{
 		OwnerUserID: userID,
+		WorkspaceID: workspaceID,
 		IssuerID:    issuer,
 		KeyID:       keyID,
 		P8Filename:  file.Filename,
@@ -135,25 +140,25 @@ func (s *Server) handleIOSASCConfigUpsert(c *gin.Context) {
 	// and the operator can re-trigger via re-upload.
 	if users, err := s.ascListUsers(c.Request.Context(), cfg); err == nil {
 		email := ascAccountHolderEmail(users)
-		log.Printf("[iosdist asc-config] user=%s saved config; resolved account holder email=%q (%d users total)", userID, email, len(users))
+		log.Printf("[iosdist asc-config] workspace=%s saved config; resolved account holder email=%q (%d users total)", workspaceID, email, len(users))
 		if email != "" {
-			if dbErr := s.setIOSASCConfigAccountInfo(userID, email, ""); dbErr == nil {
+			if dbErr := s.setIOSASCConfigAccountInfo(workspaceID, email, ""); dbErr == nil {
 				cfg.AccountHolderEmail = email
 			}
 		}
 	} else {
-		log.Printf("[iosdist asc-config] user=%s saved config but ascListUsers failed: %v", userID, err)
+		log.Printf("[iosdist asc-config] workspace=%s saved config but ascListUsers failed: %v", workspaceID, err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"config": cfg})
 }
 
 func (s *Server) handleIOSASCConfigDelete(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
-	if err := s.deleteIOSASCConfig(userID); err != nil {
+	if err := s.deleteIOSASCConfig(workspaceID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
@@ -163,32 +168,32 @@ func (s *Server) handleIOSASCConfigDelete(c *gin.Context) {
 // ---- Discovery helpers ---------------------------------------------------
 
 func (s *Server) handleIOSASCAppList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
-	cfg, _ := s.requireASCConfig(c, userID)
+	cfg, _ := s.requireASCConfig(c, workspaceID)
 	if cfg == nil {
 		return
 	}
 	bundleID := strings.TrimSpace(c.Query("bundle_id"))
-	log.Printf("[iosdist asc-apps] user=%s issuer=%s key_id=%s bundle_id=%q", userID, cfg.IssuerID, cfg.KeyID, bundleID)
+	log.Printf("[iosdist asc-apps] workspace=%s issuer=%s key_id=%s bundle_id=%q", workspaceID, cfg.IssuerID, cfg.KeyID, bundleID)
 	apps, err := s.ascListApps(c.Request.Context(), cfg, bundleID)
 	if err != nil {
-		log.Printf("[iosdist asc-apps] user=%s ascListApps failed: %v", userID, err)
+		log.Printf("[iosdist asc-apps] workspace=%s ascListApps failed: %v", workspaceID, err)
 		s.respondASCError(c, err)
 		return
 	}
-	log.Printf("[iosdist asc-apps] user=%s ascListApps ok: %d match(es)", userID, len(apps))
+	log.Printf("[iosdist asc-apps] workspace=%s ascListApps ok: %d match(es)", workspaceID, len(apps))
 	c.JSON(http.StatusOK, gin.H{"apps": apps})
 }
 
 func (s *Server) handleIOSASCBetaGroupList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
-	cfg, _ := s.requireASCConfig(c, userID)
+	cfg, _ := s.requireASCConfig(c, workspaceID)
 	if cfg == nil {
 		return
 	}
@@ -208,7 +213,7 @@ type iosASCBindingRequest struct {
 }
 
 func (s *Server) handleIOSAppASCBindingUpdate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -216,7 +221,7 @@ func (s *Server) handleIOSAppASCBindingUpdate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -226,11 +231,11 @@ func (s *Server) handleIOSAppASCBindingUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
 		return
 	}
-	if err := s.setIOSAppASCBinding(app.ID, userID, strings.TrimSpace(req.ASCAppID), strings.TrimSpace(req.ASCBetaGroupID)); err != nil {
+	if err := s.setIOSAppASCBinding(app.ID, workspaceID, strings.TrimSpace(req.ASCAppID), strings.TrimSpace(req.ASCBetaGroupID)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	updated, _ := s.getIOSApp(app.ID, userID)
+	updated, _ := s.getIOSApp(app.ID, workspaceID)
 	c.JSON(http.StatusOK, gin.H{"app": updated})
 }
 
@@ -241,7 +246,7 @@ type iosASCInviteRequest struct {
 }
 
 func (s *Server) handleIOSAppInviteTester(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -249,7 +254,7 @@ func (s *Server) handleIOSAppInviteTester(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil || app == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
@@ -258,7 +263,7 @@ func (s *Server) handleIOSAppInviteTester(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "尚未绑定 ASC Beta Group，请先在「App Store Connect 集成」配置"})
 		return
 	}
-	cfg, _ := s.requireASCConfig(c, userID)
+	cfg, _ := s.requireASCConfig(c, workspaceID)
 	if cfg == nil {
 		return
 	}
@@ -293,7 +298,7 @@ func (s *Server) handleIOSAppInviteTester(c *gin.Context) {
 // Group. This lets users skip the "选 ASC App / 保存绑定" step entirely
 // for the common case.
 func (s *Server) handleIOSAppASCSyncMeta(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -301,19 +306,19 @@ func (s *Server) handleIOSAppASCSyncMeta(c *gin.Context) {
 	if !ok {
 		return
 	}
-	app, err := s.getIOSApp(id, userID)
+	app, err := s.getIOSApp(id, workspaceID)
 	if err != nil || app == nil {
-		log.Printf("[iosdist asc-sync] app %d not found for user %s: %v", id, userID, err)
+		log.Printf("[iosdist asc-sync] app %d not found in workspace %s: %v", id, workspaceID, err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
 		return
 	}
-	cfg, _ := s.requireASCConfig(c, userID)
+	cfg, _ := s.requireASCConfig(c, workspaceID)
 	if cfg == nil {
-		log.Printf("[iosdist asc-sync] app %d (bundle %s): no ASC config for user %s — aborting", app.ID, app.BundleID, userID)
+		log.Printf("[iosdist asc-sync] app %d (bundle %s): no ASC config for workspace %s — aborting", app.ID, app.BundleID, workspaceID)
 		return
 	}
-	log.Printf("[iosdist asc-sync] app=%d bundle=%q name=%q owner=%s asc_app_id=%q asc_beta_group_id=%q icon_source=%q",
-		app.ID, app.BundleID, app.Name, userID, app.ASCAppID, app.ASCBetaGroupID, app.IconSource)
+	log.Printf("[iosdist asc-sync] app=%d bundle=%q name=%q workspace=%s asc_app_id=%q asc_beta_group_id=%q icon_source=%q",
+		app.ID, app.BundleID, app.Name, workspaceID, app.ASCAppID, app.ASCBetaGroupID, app.IconSource)
 	log.Printf("[iosdist asc-sync] using ASC config issuer=%s key_id=%s p8_encrypted=%v", cfg.IssuerID, cfg.KeyID, cfg.P8Encrypted)
 
 	ctx := c.Request.Context()
@@ -345,7 +350,7 @@ func (s *Server) handleIOSAppASCSyncMeta(c *gin.Context) {
 		app.ASCAppID = ascApps[0].ID
 		autoBound = true
 		log.Printf("[iosdist asc-sync] app=%d auto-bound to asc_app_id=%s (name=%q)", app.ID, app.ASCAppID, ascApps[0].Name)
-		if err := s.setIOSAppASCBinding(app.ID, userID, app.ASCAppID, app.ASCBetaGroupID); err != nil {
+		if err := s.setIOSAppASCBinding(app.ID, workspaceID, app.ASCAppID, app.ASCBetaGroupID); err != nil {
 			log.Printf("[iosdist asc-sync] app=%d setIOSAppASCBinding failed: %v", app.ID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 			return
@@ -454,7 +459,7 @@ func (s *Server) handleIOSAppASCSyncMeta(c *gin.Context) {
 		}
 		if hasMetaChange {
 			log.Printf("[iosdist asc-sync] app=%d writing meta updated_fields=%v", app.ID, updatedFields)
-			if err := s.setIOSAppMeta(app.ID, userID, meta); err != nil {
+			if err := s.setIOSAppMeta(app.ID, workspaceID, meta); err != nil {
 				log.Printf("[iosdist asc-sync] app=%d setIOSAppMeta failed: %v", app.ID, err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 				return
@@ -495,7 +500,7 @@ func (s *Server) handleIOSAppASCSyncMeta(c *gin.Context) {
 					if persistErr != nil {
 						log.Printf("[iosdist asc-sync] app=%d persistIOSDownloadedIcon failed: %v", app.ID, persistErr)
 					} else {
-						if err := s.setIOSAppIcon(app.ID, userID, persistedURL, "asc"); err != nil {
+						if err := s.setIOSAppIcon(app.ID, workspaceID, persistedURL, "asc"); err != nil {
 							log.Printf("[iosdist asc-sync] app=%d setIOSAppIcon failed: %v", app.ID, err)
 						} else {
 							log.Printf("[iosdist asc-sync] app=%d icon updated → %s", app.ID, persistedURL)
@@ -508,7 +513,7 @@ func (s *Server) handleIOSAppASCSyncMeta(c *gin.Context) {
 	}
 
 	log.Printf("[iosdist asc-sync] app=%d done updated_fields=%v", app.ID, updatedFields)
-	updated, _ := s.getIOSApp(app.ID, userID)
+	updated, _ := s.getIOSApp(app.ID, workspaceID)
 	c.JSON(http.StatusOK, gin.H{"app": updated, "updated_fields": updatedFields})
 }
 
@@ -569,8 +574,8 @@ func sanitizeASCIDInput(s string) string {
 
 // ---- shared helpers ------------------------------------------------------
 
-func (s *Server) requireASCConfig(c *gin.Context, userID string) (*IOSASCConfig, error) {
-	cfg, err := s.getIOSASCConfig(userID)
+func (s *Server) requireASCConfig(c *gin.Context, workspaceID string) (*IOSASCConfig, error) {
+	cfg, err := s.getIOSASCConfig(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return nil, err

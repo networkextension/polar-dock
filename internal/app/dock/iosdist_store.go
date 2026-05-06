@@ -12,6 +12,7 @@ import (
 type IOSApp struct {
 	ID              int64     `json:"id"`
 	OwnerUserID     string    `json:"owner_user_id"`
+	WorkspaceID     string    `json:"workspace_id"`
 	Name            string    `json:"name"`
 	BundleID        string    `json:"bundle_id"`
 	Description     string    `json:"description"`
@@ -72,6 +73,7 @@ type IOSTestRequest struct {
 // into JSON responses) — see store funcs for read/write helpers.
 type IOSASCConfig struct {
 	OwnerUserID        string    `json:"owner_user_id"`
+	WorkspaceID        string    `json:"workspace_id"`
 	IssuerID           string    `json:"issuer_id"`
 	KeyID              string    `json:"key_id"`
 	P8Filename         string    `json:"p8_filename"`
@@ -113,6 +115,7 @@ type IOSVersion struct {
 type IOSCertificate struct {
 	ID                int64      `json:"id"`
 	OwnerUserID       string     `json:"owner_user_id"`
+	WorkspaceID       string     `json:"workspace_id"`
 	Name              string     `json:"name"`
 	Kind              string     `json:"kind"` // distribution|development|enterprise|adhoc
 	FileURL           string     `json:"file_url"`
@@ -139,6 +142,7 @@ type IOSCertificate struct {
 type IOSProvisioningProfile struct {
 	ID           int64      `json:"id"`
 	OwnerUserID  string     `json:"owner_user_id"`
+	WorkspaceID  string     `json:"workspace_id"`
 	Name         string     `json:"name"`
 	Kind         string     `json:"kind"` // app_store|ad_hoc|enterprise|development
 	FileURL      string     `json:"file_url"`
@@ -178,9 +182,9 @@ func (s *Server) createIOSApp(app *IOSApp) error {
 		app.PublicSlug = slug
 	}
 	return s.db.QueryRow(
-		`INSERT INTO iosdist_apps (owner_user_id, name, bundle_id, description, icon_url, public_slug, is_public, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING id`,
-		app.OwnerUserID, app.Name, app.BundleID, app.Description, app.IconURL, app.PublicSlug, app.IsPublic, now,
+		`INSERT INTO iosdist_apps (owner_user_id, workspace_id, name, bundle_id, description, icon_url, public_slug, is_public, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING id`,
+		app.OwnerUserID, app.WorkspaceID, app.Name, app.BundleID, app.Description, app.IconURL, app.PublicSlug, app.IsPublic, now,
 	).Scan(&app.ID)
 }
 
@@ -257,7 +261,7 @@ func (s *Server) listPublicIOSApps(limit, offset int) ([]IOSApp, error) {
 		offset = 0
 	}
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
 		 FROM iosdist_apps WHERE is_public = TRUE ORDER BY updated_at DESC LIMIT $1 OFFSET $2`,
 		limit, offset,
 	)
@@ -268,7 +272,7 @@ func (s *Server) listPublicIOSApps(limit, offset int) ([]IOSApp, error) {
 	var out []IOSApp
 	for rows.Next() {
 		var a IOSApp
-		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -290,10 +294,10 @@ func (s *Server) getIOSAppBySlug(slug string) (*IOSApp, error) {
 	}
 	var a IOSApp
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
 		 FROM iosdist_apps WHERE public_slug = $1`,
 		slug,
-	).Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt)
+	).Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -306,11 +310,11 @@ func (s *Server) getIOSAppBySlug(slug string) (*IOSApp, error) {
 // setIOSAppNameAndDescription writes name + description without touching
 // other fields. Used by the ASC meta sync. Empty strings overwrite (so
 // caller must guard if it doesn't want that).
-func (s *Server) setIOSAppNameAndDescription(id int64, ownerUserID, name, description string) error {
+func (s *Server) setIOSAppNameAndDescription(id int64, workspaceID, name, description string) error {
 	_, err := s.db.Exec(
 		`UPDATE iosdist_apps SET name = $1, description = $2, updated_at = $3
-		 WHERE id = $4 AND owner_user_id = $5`,
-		name, description, time.Now(), id, ownerUserID,
+		 WHERE id = $4 AND workspace_id = $5`,
+		name, description, time.Now(), id, workspaceID,
 	)
 	return err
 }
@@ -328,32 +332,32 @@ type IOSAppMetaUpdate struct {
 	SupportURL      string
 }
 
-func (s *Server) setIOSAppMeta(id int64, ownerUserID string, m IOSAppMetaUpdate) error {
+func (s *Server) setIOSAppMeta(id int64, workspaceID string, m IOSAppMetaUpdate) error {
 	_, err := s.db.Exec(
 		`UPDATE iosdist_apps
 		 SET name = $1, description = $2, keywords = $3, whats_new = $4, promotional_text = $5,
 		     marketing_url = $6, support_url = $7, updated_at = $8
-		 WHERE id = $9 AND owner_user_id = $10`,
+		 WHERE id = $9 AND workspace_id = $10`,
 		m.Name, m.Description, m.Keywords, m.WhatsNew, m.PromotionalText, m.MarketingURL, m.SupportURL,
-		time.Now(), id, ownerUserID,
+		time.Now(), id, workspaceID,
 	)
 	return err
 }
 
-func (s *Server) setIOSAppPublicVisibility(id int64, ownerUserID string, isPublic bool) error {
+func (s *Server) setIOSAppPublicVisibility(id int64, workspaceID string, isPublic bool) error {
 	_, err := s.db.Exec(
 		`UPDATE iosdist_apps SET is_public = $1, updated_at = $2
-		 WHERE id = $3 AND owner_user_id = $4`,
-		isPublic, time.Now(), id, ownerUserID,
+		 WHERE id = $3 AND workspace_id = $4`,
+		isPublic, time.Now(), id, workspaceID,
 	)
 	return err
 }
 
-func (s *Server) listIOSApps(ownerUserID string) ([]IOSApp, error) {
+func (s *Server) listIOSApps(workspaceID string) ([]IOSApp, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
-		 FROM iosdist_apps WHERE owner_user_id = $1 ORDER BY updated_at DESC`,
-		ownerUserID,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
+		 FROM iosdist_apps WHERE workspace_id = $1 ORDER BY updated_at DESC`,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -362,7 +366,7 @@ func (s *Server) listIOSApps(ownerUserID string) ([]IOSApp, error) {
 	var apps []IOSApp
 	for rows.Next() {
 		var a IOSApp
-		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		apps = append(apps, a)
@@ -370,17 +374,18 @@ func (s *Server) listIOSApps(ownerUserID string) ([]IOSApp, error) {
 	return apps, rows.Err()
 }
 
-// getIOSAppByID fetches an app without an owner check. Only callers that
-// have already authorized via a separate channel (e.g. an install token
-// bound to a specific version) should use this — keep the owner-scoped
-// getIOSApp for the user-facing handlers.
+// getIOSAppByID fetches an app without a workspace check. Only callers
+// that have already authorized via a separate channel (e.g. an install
+// token bound to a specific version, or the public share page using
+// public_slug) should use this — keep the workspace-scoped getIOSApp
+// for the user-facing handlers.
 func (s *Server) getIOSAppByID(id int64) (*IOSApp, error) {
 	var a IOSApp
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
 		 FROM iosdist_apps WHERE id = $1`,
 		id,
-	).Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt)
+	).Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -390,13 +395,13 @@ func (s *Server) getIOSAppByID(id int64) (*IOSApp, error) {
 	return &a, nil
 }
 
-func (s *Server) getIOSApp(id int64, ownerUserID string) (*IOSApp, error) {
+func (s *Server) getIOSApp(id int64, workspaceID string) (*IOSApp, error) {
 	var a IOSApp
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
-		 FROM iosdist_apps WHERE id = $1 AND owner_user_id = $2`,
-		id, ownerUserID,
-	).Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt)
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
+		 FROM iosdist_apps WHERE id = $1 AND workspace_id = $2`,
+		id, workspaceID,
+	).Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -406,8 +411,8 @@ func (s *Server) getIOSApp(id int64, ownerUserID string) (*IOSApp, error) {
 	return &a, nil
 }
 
-func (s *Server) deleteIOSApp(id int64, ownerUserID string) error {
-	_, err := s.db.Exec(`DELETE FROM iosdist_apps WHERE id = $1 AND owner_user_id = $2`, id, ownerUserID)
+func (s *Server) deleteIOSApp(id int64, workspaceID string) error {
+	_, err := s.db.Exec(`DELETE FROM iosdist_apps WHERE id = $1 AND workspace_id = $2`, id, workspaceID)
 	return err
 }
 
@@ -419,46 +424,62 @@ func (s *Server) touchIOSApp(id int64) error {
 // setIOSAppIcon writes the icon URL + source. The source field guards
 // against future IPA uploads silently overwriting a manual icon — see
 // the icon-resolution note on IOSApp.
-func (s *Server) setIOSAppIcon(id int64, ownerUserID, iconURL, source string) error {
+func (s *Server) setIOSAppIcon(id int64, workspaceID, iconURL, source string) error {
 	_, err := s.db.Exec(
 		`UPDATE iosdist_apps SET icon_url = $1, icon_source = $2, updated_at = $3
-		 WHERE id = $4 AND owner_user_id = $5`,
-		iconURL, source, time.Now(), id, ownerUserID,
+		 WHERE id = $4 AND workspace_id = $5`,
+		iconURL, source, time.Now(), id, workspaceID,
 	)
 	return err
 }
 
-func (s *Server) setIOSAppTestFlightURL(id int64, ownerUserID, url string) error {
+func (s *Server) setIOSAppTestFlightURL(id int64, workspaceID, url string) error {
 	_, err := s.db.Exec(
 		`UPDATE iosdist_apps SET testflight_url = $1, updated_at = $2
-		 WHERE id = $3 AND owner_user_id = $4`,
-		url, time.Now(), id, ownerUserID,
+		 WHERE id = $3 AND workspace_id = $4`,
+		url, time.Now(), id, workspaceID,
 	)
 	return err
 }
 
-func (s *Server) setIOSAppASCBinding(id int64, ownerUserID, ascAppID, ascBetaGroupID string) error {
+func (s *Server) setIOSAppASCBinding(id int64, workspaceID, ascAppID, ascBetaGroupID string) error {
 	_, err := s.db.Exec(
 		`UPDATE iosdist_apps SET asc_app_id = $1, asc_beta_group_id = $2, updated_at = $3
-		 WHERE id = $4 AND owner_user_id = $5`,
-		ascAppID, ascBetaGroupID, time.Now(), id, ownerUserID,
+		 WHERE id = $4 AND workspace_id = $5`,
+		ascAppID, ascBetaGroupID, time.Now(), id, workspaceID,
 	)
 	return err
 }
 
 // ---- ASC config ---------------------------------------------------------
 
+// upsertIOSASCConfig writes the per-workspace ASC API key. T6-B
+// flipped the conflict target from owner_user_id (legacy per-user)
+// to workspace_id (team-scoped: one ASC config per workspace).
+// owner_user_id is still required by the table's PRIMARY KEY but
+// downgrades semantically to "who uploaded this".
+//
+// Important: existing rows whose owner_user_id collides with
+// cfg.OwnerUserID will be hit by the PK first, even if their
+// workspace_id differs. T6-D will rename owner_user_id to
+// creator_user_id and drop its PK status, fully decoupling. For
+// now upserts that come from a different user in the same
+// workspace will fail on PK collision — surface as an error.
 func (s *Server) upsertIOSASCConfig(cfg *IOSASCConfig) error {
 	if cfg == nil {
 		return errors.New("asc config is nil")
 	}
+	if cfg.WorkspaceID == "" {
+		return errors.New("asc config workspace_id is empty")
+	}
 	now := time.Now()
 	cfg.UpdatedAt = now
 	_, err := s.db.Exec(
-		`INSERT INTO iosdist_asc_configs (owner_user_id, issuer_id, key_id, p8_cipher, p8_filename, p8_encrypted, account_holder_email, team_name, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
-		 ON CONFLICT (owner_user_id) DO UPDATE
-		   SET issuer_id            = EXCLUDED.issuer_id,
+		`INSERT INTO iosdist_asc_configs (owner_user_id, workspace_id, issuer_id, key_id, p8_cipher, p8_filename, p8_encrypted, account_holder_email, team_name, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+		 ON CONFLICT (workspace_id) WHERE workspace_id IS NOT NULL DO UPDATE
+		   SET owner_user_id        = EXCLUDED.owner_user_id,
+		       issuer_id            = EXCLUDED.issuer_id,
 		       key_id               = EXCLUDED.key_id,
 		       p8_cipher            = EXCLUDED.p8_cipher,
 		       p8_filename          = EXCLUDED.p8_filename,
@@ -466,7 +487,7 @@ func (s *Server) upsertIOSASCConfig(cfg *IOSASCConfig) error {
 		       account_holder_email = EXCLUDED.account_holder_email,
 		       team_name            = EXCLUDED.team_name,
 		       updated_at           = EXCLUDED.updated_at`,
-		cfg.OwnerUserID, cfg.IssuerID, cfg.KeyID, cfg.p8Cipher, cfg.P8Filename, cfg.P8Encrypted, cfg.AccountHolderEmail, cfg.TeamName, now,
+		cfg.OwnerUserID, cfg.WorkspaceID, cfg.IssuerID, cfg.KeyID, cfg.p8Cipher, cfg.P8Filename, cfg.P8Encrypted, cfg.AccountHolderEmail, cfg.TeamName, now,
 	)
 	if err == nil && cfg.CreatedAt.IsZero() {
 		cfg.CreatedAt = now
@@ -474,22 +495,22 @@ func (s *Server) upsertIOSASCConfig(cfg *IOSASCConfig) error {
 	return err
 }
 
-func (s *Server) setIOSASCConfigAccountInfo(ownerUserID, email, teamName string) error {
+func (s *Server) setIOSASCConfigAccountInfo(workspaceID, email, teamName string) error {
 	_, err := s.db.Exec(
 		`UPDATE iosdist_asc_configs SET account_holder_email = $1, team_name = $2, updated_at = $3
-		 WHERE owner_user_id = $4`,
-		email, teamName, time.Now(), ownerUserID,
+		 WHERE workspace_id = $4`,
+		email, teamName, time.Now(), workspaceID,
 	)
 	return err
 }
 
-func (s *Server) getIOSASCConfig(ownerUserID string) (*IOSASCConfig, error) {
+func (s *Server) getIOSASCConfig(workspaceID string) (*IOSASCConfig, error) {
 	var c IOSASCConfig
 	err := s.db.QueryRow(
-		`SELECT owner_user_id, issuer_id, key_id, p8_cipher, p8_filename, p8_encrypted, account_holder_email, team_name, created_at, updated_at
-		 FROM iosdist_asc_configs WHERE owner_user_id = $1`,
-		ownerUserID,
-	).Scan(&c.OwnerUserID, &c.IssuerID, &c.KeyID, &c.p8Cipher, &c.P8Filename, &c.P8Encrypted, &c.AccountHolderEmail, &c.TeamName, &c.CreatedAt, &c.UpdatedAt)
+		`SELECT owner_user_id, COALESCE(workspace_id, ''), issuer_id, key_id, p8_cipher, p8_filename, p8_encrypted, account_holder_email, team_name, created_at, updated_at
+		 FROM iosdist_asc_configs WHERE workspace_id = $1`,
+		workspaceID,
+	).Scan(&c.OwnerUserID, &c.WorkspaceID, &c.IssuerID, &c.KeyID, &c.p8Cipher, &c.P8Filename, &c.P8Encrypted, &c.AccountHolderEmail, &c.TeamName, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -715,8 +736,8 @@ func (s *Server) countIOSTestRequestsByEmail(appID int64, email string, since ti
 	return n, err
 }
 
-func (s *Server) deleteIOSASCConfig(ownerUserID string) error {
-	_, err := s.db.Exec(`DELETE FROM iosdist_asc_configs WHERE owner_user_id = $1`, ownerUserID)
+func (s *Server) deleteIOSASCConfig(workspaceID string) error {
+	_, err := s.db.Exec(`DELETE FROM iosdist_asc_configs WHERE workspace_id = $1`, workspaceID)
 	return err
 }
 
@@ -835,21 +856,21 @@ func (s *Server) createIOSCertificate(c *IOSCertificate) error {
 	c.UpdatedAt = now
 	return s.db.QueryRow(
 		`INSERT INTO iosdist_certificates
-			(owner_user_id, name, kind, file_url, file_filename, file_size, password_cipher, password_encrypted, team_id, common_name, notes, expires_at, created_at, updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
+			(owner_user_id, workspace_id, name, kind, file_url, file_filename, file_size, password_cipher, password_encrypted, team_id, common_name, notes, expires_at, created_at, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
 		 RETURNING id`,
-		c.OwnerUserID, c.Name, c.Kind, c.FileURL, c.FileFilename, c.FileSize,
+		c.OwnerUserID, c.WorkspaceID, c.Name, c.Kind, c.FileURL, c.FileFilename, c.FileSize,
 		c.passwordCipher, c.PasswordEncrypted,
 		c.TeamID, c.CommonName, c.Notes, c.ExpiresAt, now,
 	).Scan(&c.ID)
 }
 
-func (s *Server) listIOSCertificates(ownerUserID string) ([]IOSCertificate, error) {
+func (s *Server) listIOSCertificates(workspaceID string) ([]IOSCertificate, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, name, kind, file_url, file_filename, file_size,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, kind, file_url, file_filename, file_size,
 			password_cipher, password_encrypted, team_id, common_name, notes, expires_at, created_at, updated_at
-		 FROM iosdist_certificates WHERE owner_user_id = $1 ORDER BY updated_at DESC`,
-		ownerUserID,
+		 FROM iosdist_certificates WHERE workspace_id = $1 ORDER BY updated_at DESC`,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -859,7 +880,7 @@ func (s *Server) listIOSCertificates(ownerUserID string) ([]IOSCertificate, erro
 	for rows.Next() {
 		var c IOSCertificate
 		if err := rows.Scan(
-			&c.ID, &c.OwnerUserID, &c.Name, &c.Kind, &c.FileURL, &c.FileFilename, &c.FileSize,
+			&c.ID, &c.OwnerUserID, &c.WorkspaceID, &c.Name, &c.Kind, &c.FileURL, &c.FileFilename, &c.FileSize,
 			&c.passwordCipher, &c.PasswordEncrypted, &c.TeamID, &c.CommonName, &c.Notes, &c.ExpiresAt, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -870,15 +891,15 @@ func (s *Server) listIOSCertificates(ownerUserID string) ([]IOSCertificate, erro
 	return out, rows.Err()
 }
 
-func (s *Server) getIOSCertificate(id int64, ownerUserID string) (*IOSCertificate, error) {
+func (s *Server) getIOSCertificate(id int64, workspaceID string) (*IOSCertificate, error) {
 	var c IOSCertificate
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, name, kind, file_url, file_filename, file_size,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, kind, file_url, file_filename, file_size,
 			password_cipher, password_encrypted, team_id, common_name, notes, expires_at, created_at, updated_at
-		 FROM iosdist_certificates WHERE id = $1 AND owner_user_id = $2`,
-		id, ownerUserID,
+		 FROM iosdist_certificates WHERE id = $1 AND workspace_id = $2`,
+		id, workspaceID,
 	).Scan(
-		&c.ID, &c.OwnerUserID, &c.Name, &c.Kind, &c.FileURL, &c.FileFilename, &c.FileSize,
+		&c.ID, &c.OwnerUserID, &c.WorkspaceID, &c.Name, &c.Kind, &c.FileURL, &c.FileFilename, &c.FileSize,
 		&c.passwordCipher, &c.PasswordEncrypted, &c.TeamID, &c.CommonName, &c.Notes, &c.ExpiresAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -891,8 +912,8 @@ func (s *Server) getIOSCertificate(id int64, ownerUserID string) (*IOSCertificat
 	return &c, nil
 }
 
-func (s *Server) deleteIOSCertificate(id int64, ownerUserID string) error {
-	_, err := s.db.Exec(`DELETE FROM iosdist_certificates WHERE id = $1 AND owner_user_id = $2`, id, ownerUserID)
+func (s *Server) deleteIOSCertificate(id int64, workspaceID string) error {
+	_, err := s.db.Exec(`DELETE FROM iosdist_certificates WHERE id = $1 AND workspace_id = $2`, id, workspaceID)
 	return err
 }
 
@@ -907,20 +928,20 @@ func (s *Server) createIOSProfile(p *IOSProvisioningProfile) error {
 	p.UpdatedAt = now
 	return s.db.QueryRow(
 		`INSERT INTO iosdist_profiles
-			(owner_user_id, name, kind, file_url, file_filename, file_size, app_id, team_id, udid_count, notes, expires_at, created_at, updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+			(owner_user_id, workspace_id, name, kind, file_url, file_filename, file_size, app_id, team_id, udid_count, notes, expires_at, created_at, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
 		 RETURNING id`,
-		p.OwnerUserID, p.Name, p.Kind, p.FileURL, p.FileFilename, p.FileSize,
+		p.OwnerUserID, p.WorkspaceID, p.Name, p.Kind, p.FileURL, p.FileFilename, p.FileSize,
 		p.AppID, p.TeamID, p.UDIDCount, p.Notes, p.ExpiresAt, now,
 	).Scan(&p.ID)
 }
 
-func (s *Server) listIOSProfiles(ownerUserID string) ([]IOSProvisioningProfile, error) {
+func (s *Server) listIOSProfiles(workspaceID string) ([]IOSProvisioningProfile, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, name, kind, file_url, file_filename, file_size,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, kind, file_url, file_filename, file_size,
 			app_id, team_id, udid_count, notes, expires_at, created_at, updated_at
-		 FROM iosdist_profiles WHERE owner_user_id = $1 ORDER BY updated_at DESC`,
-		ownerUserID,
+		 FROM iosdist_profiles WHERE workspace_id = $1 ORDER BY updated_at DESC`,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -930,7 +951,7 @@ func (s *Server) listIOSProfiles(ownerUserID string) ([]IOSProvisioningProfile, 
 	for rows.Next() {
 		var p IOSProvisioningProfile
 		if err := rows.Scan(
-			&p.ID, &p.OwnerUserID, &p.Name, &p.Kind, &p.FileURL, &p.FileFilename, &p.FileSize,
+			&p.ID, &p.OwnerUserID, &p.WorkspaceID, &p.Name, &p.Kind, &p.FileURL, &p.FileFilename, &p.FileSize,
 			&p.AppID, &p.TeamID, &p.UDIDCount, &p.Notes, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -940,15 +961,15 @@ func (s *Server) listIOSProfiles(ownerUserID string) ([]IOSProvisioningProfile, 
 	return out, rows.Err()
 }
 
-func (s *Server) getIOSProfileForOwner(id int64, ownerUserID string) (*IOSProvisioningProfile, error) {
+func (s *Server) getIOSProfileForOwner(id int64, workspaceID string) (*IOSProvisioningProfile, error) {
 	var p IOSProvisioningProfile
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, name, kind, file_url, file_filename, file_size,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, kind, file_url, file_filename, file_size,
 			app_id, team_id, udid_count, notes, expires_at, created_at, updated_at
-		 FROM iosdist_profiles WHERE id = $1 AND owner_user_id = $2`,
-		id, ownerUserID,
+		 FROM iosdist_profiles WHERE id = $1 AND workspace_id = $2`,
+		id, workspaceID,
 	).Scan(
-		&p.ID, &p.OwnerUserID, &p.Name, &p.Kind, &p.FileURL, &p.FileFilename, &p.FileSize,
+		&p.ID, &p.OwnerUserID, &p.WorkspaceID, &p.Name, &p.Kind, &p.FileURL, &p.FileFilename, &p.FileSize,
 		&p.AppID, &p.TeamID, &p.UDIDCount, &p.Notes, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -960,7 +981,7 @@ func (s *Server) getIOSProfileForOwner(id int64, ownerUserID string) (*IOSProvis
 	return &p, nil
 }
 
-func (s *Server) deleteIOSProfile(id int64, ownerUserID string) error {
-	_, err := s.db.Exec(`DELETE FROM iosdist_profiles WHERE id = $1 AND owner_user_id = $2`, id, ownerUserID)
+func (s *Server) deleteIOSProfile(id int64, workspaceID string) error {
+	_, err := s.db.Exec(`DELETE FROM iosdist_profiles WHERE id = $1 AND workspace_id = $2`, id, workspaceID)
 	return err
 }
