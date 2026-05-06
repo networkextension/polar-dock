@@ -81,15 +81,15 @@ func (s *Server) getVideoLLMConfigWithAPIKey(ownerUserID string, id int64) (*LLM
 // upsertLLMConfigKindAndExtras flips an existing config to a different kind
 // or rewrites its extras blob. Used by the LLM config edit form when the
 // user changes the provider type.
-func (s *Server) upsertLLMConfigKindAndExtras(ownerUserID string, id int64, kind string, extras json.RawMessage, now time.Time) error {
+func (s *Server) upsertLLMConfigKindAndExtras(workspaceID string, id int64, kind string, extras json.RawMessage, now time.Time) error {
 	if extras == nil {
 		extras = json.RawMessage(`{}`)
 	}
 	_, err := s.db.Exec(
 		`UPDATE llm_configs
 		    SET provider_kind = $3, extras = $4, updated_at = $5
-		  WHERE id = $1 AND owner_user_id = $2`,
-		id, ownerUserID, kind, []byte(extras), now,
+		  WHERE id = $1 AND workspace_id = $2`,
+		id, workspaceID, kind, []byte(extras), now,
 	)
 	return err
 }

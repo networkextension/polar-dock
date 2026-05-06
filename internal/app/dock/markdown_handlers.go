@@ -78,7 +78,7 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 		apiKey    string
 	)
 	if req.LLMConfigID > 0 {
-		llmConfig, apiKey, err = s.getAvailableLLMConfigWithAPIKey(userIDStr, req.LLMConfigID)
+		llmConfig, apiKey, err = s.getAvailableLLMConfigWithAPIKey(c.GetString("workspace_id"), req.LLMConfigID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 			return

@@ -152,7 +152,7 @@ func (s *Server) handleChatStart(c *gin.Context) {
 	if strings.HasPrefix(targetID, "bot_") {
 		selectedLLMConfigID := req.LLMConfigID
 		if selectedLLMConfigID <= 0 {
-			configs, cfgErr := s.listAvailableLLMConfigs(userIDStr)
+			configs, cfgErr := s.listAvailableLLMConfigs(c.GetString("workspace_id"))
 			if cfgErr != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 				return
