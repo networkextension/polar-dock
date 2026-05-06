@@ -276,9 +276,10 @@ func (s *Server) resolveAssistBot(ownerUserID, workspaceID string, botID, llmCon
 	}
 
 	return aiRuntimeConfig{
-		APIKey:  strings.TrimSpace(apiKey),
-		BaseURL: strings.TrimSpace(llmConfig.BaseURL),
-		Model:   strings.TrimSpace(llmConfig.Model),
+		APIKey:   strings.TrimSpace(apiKey),
+		BaseURL:  strings.TrimSpace(llmConfig.BaseURL),
+		Model:    strings.TrimSpace(llmConfig.Model),
+		ProxyURL: strings.TrimSpace(llmConfig.ProxyURL),
 	}, bot, llmConfig, nil
 }
 

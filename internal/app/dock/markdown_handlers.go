@@ -104,6 +104,7 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 		BaseURL:      strings.TrimSpace(llmConfig.BaseURL),
 		Model:        strings.TrimSpace(llmConfig.Model),
 		SystemPrompt: buildMarkdownAssistSystemPrompt(bot.SystemPrompt, req.Instruction),
+		ProxyURL:     strings.TrimSpace(llmConfig.ProxyURL),
 	}
 
 	userPrompt := strings.TrimSpace(strings.Join([]string{

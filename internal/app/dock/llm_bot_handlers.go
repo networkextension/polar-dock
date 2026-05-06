@@ -28,6 +28,7 @@ func (s *Server) handleLLMConfigTest(c *gin.Context) {
 		Model        string `json:"model" binding:"required"`
 		APIKey       string `json:"api_key" binding:"required"`
 		SystemPrompt string `json:"system_prompt"`
+		ProxyURL     string `json:"proxy_url"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
@@ -43,6 +44,7 @@ func (s *Server) handleLLMConfigTest(c *gin.Context) {
 		BaseURL:      strings.TrimSpace(req.BaseURL),
 		Model:        strings.TrimSpace(req.Model),
 		SystemPrompt: strings.TrimSpace(req.SystemPrompt),
+		ProxyURL:     strings.TrimSpace(req.ProxyURL),
 	}
 	if err := s.aiAgent.testRuntimeConfig(runtimeConfig); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
