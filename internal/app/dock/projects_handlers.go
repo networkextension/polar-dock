@@ -283,6 +283,23 @@ func buildPickupBody(project *Project, title, description string) string {
 	return body
 }
 
+// buildDecomposePromptWithPersona is the bot-aware variant of
+// buildDecomposePrompt. When the user picks a specific bot for
+// the decompose run, we prepend that bot's system_prompt as a
+// "persona" header so the output reflects the bot's tone /
+// expertise. The structured (JSON shape, runtime / scenario
+// constraints) parts come AFTER the persona so format
+// requirements always win — a chatty persona prompt still has
+// to return JSON.
+func buildDecomposePromptWithPersona(p *Project, persona string) string {
+	base := buildDecomposePrompt(p)
+	persona = strings.TrimSpace(persona)
+	if persona == "" {
+		return base
+	}
+	return persona + "\n\n---\n\n" + base
+}
+
 // buildDecomposePrompt assembles the per-project system prompt by
 // stitching the base prompt + any non-empty runtime_env /
 // business_scenario hints + the closing instruction. When neither
@@ -332,20 +349,48 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 		return
 	}
 
-	// Optional explicit LLM pick (for A/B comparison: same project,
-	// different LLM each click). Body is JSON; missing/0 = auto-pick
-	// the first config with an API key.
+	// Optional explicit picks (for A/B comparison: same project,
+	// different bot/LLM each click). Body is JSON:
+	//   - bot_user_id: use this bot's LLM config + system_prompt
+	//     as a custom decompose persona prefix
+	//   - llm_config_id: use this raw LLM config (no bot persona)
+	//   - both empty = auto-pick first available with API key
+	// bot_user_id wins when both are set.
 	var req struct {
-		LLMConfigID int64 `json:"llm_config_id"`
+		LLMConfigID int64  `json:"llm_config_id"`
+		BotUserID   string `json:"bot_user_id"`
 	}
 	_ = c.ShouldBindJSON(&req)
+
+	var (
+		chosen        *LLMConfig
+		botPersona    string
+	)
+	if bid := strings.TrimSpace(req.BotUserID); bid != "" {
+		bot, err := s.getBotUserByUserID(bid)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if bot == nil || bot.WorkspaceID != workspaceID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "选定的 bot 不在当前工作区"})
+			return
+		}
+		if bot.BotKind == BotKindPassthrough || bot.LLMConfigID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "passthrough bot 不能用于拆解（没有 LLM config）"})
+			return
+		}
+		// Override LLMConfigID with the bot's binding so the rest of
+		// the auto-pick path resolves to the right config row.
+		req.LLMConfigID = bot.LLMConfigID
+		botPersona = strings.TrimSpace(bot.SystemPrompt)
+	}
 
 	configs, err := s.listAvailableLLMConfigs(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	var chosen *LLMConfig
 	if req.LLMConfigID > 0 {
 		for i := range configs {
 			if configs[i].ID == req.LLMConfigID {
@@ -385,7 +430,7 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 		APIKey:       apiKey,
 		BaseURL:      cfg.BaseURL,
 		Model:        cfg.Model,
-		SystemPrompt: buildDecomposePrompt(project),
+		SystemPrompt: buildDecomposePromptWithPersona(project, botPersona),
 		ProxyURL:     cfg.ProxyURL,
 	}
 	payload := aiChatCompletionRequest{
@@ -457,14 +502,21 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 	// Include the LLM that actually produced the result so the FE
 	// can display "拆解 by claude-3.5-sonnet · 12s" — handy when
 	// re-decomposing across providers for A/B comparison.
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"features": features,
 		"llm_used": gin.H{
 			"id":    chosen.ID,
 			"name":  chosen.Name,
 			"model": chosen.Model,
 		},
-	})
+	}
+	if botPersona != "" {
+		resp["bot_used"] = gin.H{
+			"bot_user_id":   strings.TrimSpace(req.BotUserID),
+			"persona_chars": len(botPersona),
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // stripCodeFences removes wrapping ```json ... ``` fences that some
