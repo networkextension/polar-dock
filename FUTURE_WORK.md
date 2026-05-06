@@ -144,3 +144,16 @@ The `StorageBackend` interface wraps local FS and R2, but there are no integrati
 
 ### Microsoft Teams Hybrid Integration
 Researched and rejected for full replacement (free-tier users + app-only-posting restriction + Graph notification SLA each independently kill it). Recommended path: **lightweight hybrid** — Entra ID SSO, outbound Adaptive Card notifications via channel Workflow webhooks, optional sideloadable bot manifest, deep-link "Open in Polar" buttons. Estimate: 2–3 engineer-weeks. Trigger condition: an identifiable enterprise customer with an active M365 tenant asks for it. Full design: [`doc/teams-integration-research.md`](doc/teams-integration-research.md).
+
+### polar-agent Auto-Provision + Cross-Machine Deploy
+Today the operator has to: download the right release tarball, copy `agents/polar-agent_<os>_<arch>` into PATH, generate an agent token in the bots page, run `polar-agent login`, edit `~/.polar/start_agents.env` with the right bot IDs, install kimi-cli/claude/codex separately, log each of those in. Six manual steps × every machine the operator wants to attach from. Targets to automate:
+
+1. **Per-user install script** — a one-liner like `curl https://polar.example.com/install/agent | sh` that detects `uname -sm`, pulls the matching `polar-agent_<os>_<arch>` from the latest release, writes `~/.polar/agent.toml` with a one-time-use enrollment token (claimed via `POST /api/agent/enroll` server-side, returns the long-lived agent token), drops a sane default `tools.json`, and prints next steps.
+2. **Bot ID propagation** — server-side keep a list of "this user's agent-eligible bots." Install script (or an in-app QR code) emits `start_agents.env` pre-filled. New bot created → push update to all attached agents over the existing WS so they refresh their bot bindings without restart.
+3. **Config sync** — when the user edits `tools.json` on one machine (or in a future hosted UI), pubsub the update to every attached `polar-agent` for that user. Today they'd have to scp the file or re-run the install.
+4. **Multi-machine attach manifest** — single command `polar-agent attach --all` that reads remembered bot/workdir mappings from server and starts the right tmux farm. Replaces today's per-machine `start_agents.env` editing.
+5. **Optional: SSH-based fan-out** — `polar-agent deploy <ssh-target>` ships the binary + config to a remote host and starts the attach loop. Useful when the operator wants `--workdir=/path/on/that/machine` rather than copying a repo locally.
+
+Cross-cuts with bigger stories: per-tool API key rotation (claude/codex tokens move with the user, not the machine), enrollment tokens with TTL + scope limits, and security review (the install script downloads + executes a binary — needs HTTPS + sha256 verification + maybe minisign).
+
+Estimate: 1 week for #1 alone (install script + enrollment endpoint), 2-3 weeks for #1+#2+#3 once we know the pubsub story. Trigger: first time we hit "I just want to try Polar from my work laptop without setting up everything again" — that's when the story stops being theoretical.
