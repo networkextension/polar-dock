@@ -88,15 +88,22 @@ fetch + vision pre-processing).** Concretely:
    description: layout, components, copy, behaviors. Store as
    `summary_md`. Original binary stays in storage; LLMs that
    can't see images get the `summary_md` instead.
-3. **PDF extraction**: cheap path is `pdftotext` shelled out
-   server-side; LLM fallback only when the PDF is image-heavy.
-   Same `summary_md` slot.
+3. **Format extraction (PDF / Office / image / HTML)**: handled
+   *agent-side* by [`markitdown`](https://github.com/microsoft/markitdown)
+   (Microsoft's open-source format converter). One Python package
+   covers PDF / .docx / .pptx / .xlsx / images / HTML / CSV /
+   YouTube URLs → markdown. Add to the standard polar-agent image
+   (see [`agent-container-design.md`](agent-container-design.md))
+   so every agent host can convert without server-side processing
+   pipeline. Heavy / image-only PDFs fall back to vision LLM via
+   the agent's configured LLM (still produces markdown).
 4. **Just-in-time fetch**: when polar-agent dispatches a task on
-   this project, server bundles the relevant attachments (or just
-   their `summary_md` for tools without vision) and polar-agent
-   drops them into `<workdir>/_refs/` — `.gitignore`'d, never
-   committed. Coder tool's prompt mentions the path:
-   "参考资料在 `_refs/`，需要时读"。
+   this project, server hands over the original attachment URLs
+   (signed, short-TTL). polar-agent downloads them, runs
+   `markitdown <file> > _refs/<file>.md` per file, drops both
+   the source and the rendered `.md` into `<workdir>/_refs/` —
+   `.gitignore`'d, never committed. Coder tool's prompt mentions
+   the path: "参考资料在 `_refs/`，需要时读 `.md` 即可"。
 
 **Why hybrid** (not "stick it in git" and not "platform-only"):
 - Git: design files are 30-50 MB binaries; git-lfs is workable
@@ -109,7 +116,9 @@ fetch + vision pre-processing).** Concretely:
 
 **Estimate**: 1 wk for upload + storage + just-in-time fetch
 plumbing; +0.5 wk for vision pre-processing job and `summary_md`
-generation. Ship as part of Stage 1 review work.
+generation. (`markitdown` itself is a `uv tool install` line in
+the agent image — see [`agent-container-design.md`](agent-container-design.md);
+no extra estimate.)
 
 **Trigger**: first project where the idea field alone isn't
 enough — typically the first non-trivial project.

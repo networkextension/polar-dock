@@ -52,9 +52,21 @@ docker run -d ... polar/agent:standard
 | Tag | Contains | Size estimate | Use case |
 |---|---|---|---|
 | `polar/agent:slim` | polar-agent + git | ~15 MB | tool-loop mode only (no passthrough) |
-| `polar/agent:standard` | slim + kimi-cli + claude + codex | ~400 MB | typical multi-tool A/B |
+| `polar/agent:standard` | slim + kimi-cli + claude + codex + **markitdown** | ~430 MB | typical multi-tool A/B |
 | `polar/agent:full` | standard + Go + Node + Python + common build chain | ~1.2 GB | running build commands inside the agent |
 | Per-stack variants | standard + one specific stack (e.g. `polar/agent:rust`, `polar/agent:swift-toolchain`) | varies | dedicated CI-style runners |
+
+**`markitdown` rationale**: agent-side reference-material conversion
+(PDF / .docx / .pptx / .xlsx / images / HTML / CSV → markdown) so
+the coder tool reads plain `.md` from `<workdir>/_refs/` instead of
+binary blobs. Microsoft's [`markitdown`](https://github.com/microsoft/markitdown)
+covers all the common formats in one Python package; install via
+`uv tool install markitdown[all]` (~30 MB additional). When a
+project attachment lands and a task is dispatched, the entrypoint
+calls `markitdown <file> > _refs/<file>.md` before handing
+control to the coder tool. Vision-LLM enhancement (image → md)
+uses the *agent's* configured LLM, not platform LLM — keeping
+the platform stateless.
 
 Build base: `debian:bookworm-slim` or `alpine` (alpine fights
 glibc-linked claude binary, so debian is safer). Multi-arch via
@@ -257,6 +269,8 @@ for a SaaS where 100 customers each want a Mac VM.
 - macOS guest with Xcode + Command Line Tools + Homebrew
 - polar-agent (darwin/arm64 binary)
 - kimi-cli, claude, codex installed via brew + uv
+- markitdown (`uv tool install markitdown[all]`) for
+  PDF/Office/image → md conversion in `<workdir>/_refs/`
 - git
 - A first-boot script that reads the same three env vars
   (`POLAR_DOCK_URL`, `POLAR_AGENT_TOKEN`, `POLAR_BOT_IDS`)
