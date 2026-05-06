@@ -99,17 +99,19 @@ CREATE INDEX IF NOT EXISTS idx_team_invitations_token ON team_invitations(token)
 - 接受时校验：`status='pending'` AND `expires_at > now()`
 - 邀请到期 / 撤销 / 接受后 token 失效，复用直接 404
 
-### 3.4 索引：现有模块的 `team_id` 列
+### 3.4 索引：现有模块的 `workspace_id` 列
 
-每个迁到 team_id 的表都加：
+每个迁到 team-owned 的表都加 `workspace_id` 列（FK 到 `teams.id`）：
 
 ```sql
-ALTER TABLE iosdist_apps ADD COLUMN IF NOT EXISTS team_id text;
-CREATE INDEX IF NOT EXISTS idx_iosdist_apps_team ON iosdist_apps(team_id);
--- 同样的模式对 iosdist_certificates / iosdist_asc_configs / macapp_* / 后续 ascpool_*
+ALTER TABLE iosdist_apps ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+CREATE INDEX IF NOT EXISTS idx_iosdist_apps_workspace ON iosdist_apps(workspace_id, updated_at DESC);
+-- 同样的模式对 iosdist_certificates / iosdist_profiles / iosdist_asc_configs / llm_configs / 后续 ascpool_*
 ```
 
-迁移期 `team_id` 可空；统一期之后 `NOT NULL`。具体迁移脚本见 §7。
+> 命名说明：列名用 `workspace_id` 而非 `team_id`，原因有两层 ——（1）`iosdist_certificates` 和 `iosdist_profiles` 已经存在叫 `team_id` 的列（指 Apple Developer Team ID，是 cert/profile 的属性），不能复用；（2）平台层一直用「workspace」作为面向用户的术语（顶部切换器 / X-Workspace-Id header / `polar_active_workspace_id` localStorage key），DB 命名跟它对齐更一致。`workspace_id` 在 schema 里仍然 FK 到 `teams.id` —— 只是字段命名表达了「该资源所属工作区」的语义。
+
+迁移期 `workspace_id` 可空；统一期之后 `NOT NULL`。具体迁移脚本见 §7。
 
 ## 4. 角色与权限
 

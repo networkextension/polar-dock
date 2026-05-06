@@ -1567,6 +1567,26 @@ CREATE TABLE IF NOT EXISTS iosdist_profiles (
 	updated_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_iosdist_profiles_owner ON iosdist_profiles(owner_user_id, updated_at DESC);
+
+-- T6-A workspace migration: add workspace_id (FK -> teams.id) to
+-- module resource tables. Column is nullable in this PR; a startup
+-- backfill (backfillResourceWorkspaceIDs) populates it from each
+-- row's owner_user_id personal team. Phase B (T6-D) flips to NOT
+-- NULL after handler migration is verified. Column is named
+-- workspace_id (not team_id) because iosdist_certificates +
+-- iosdist_profiles already carry an Apple Developer "team_id" that
+-- means something else, and "workspace" matches the user-facing
+-- terminology established by the X-Workspace-Id header in T4.
+ALTER TABLE iosdist_apps         ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+ALTER TABLE iosdist_certificates ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+ALTER TABLE iosdist_profiles     ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+ALTER TABLE iosdist_asc_configs  ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+ALTER TABLE llm_configs          ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+CREATE INDEX IF NOT EXISTS idx_iosdist_apps_workspace         ON iosdist_apps(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_iosdist_certificates_workspace ON iosdist_certificates(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_iosdist_profiles_workspace     ON iosdist_profiles(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_iosdist_asc_configs_workspace  ON iosdist_asc_configs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_llm_configs_workspace          ON llm_configs(workspace_id, updated_at DESC);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

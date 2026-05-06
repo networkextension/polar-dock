@@ -214,6 +214,13 @@ func NewServer(cfg Config) (*Server, error) {
 		log.Printf("teams: personal team backfill failed: %v", err)
 	}
 
+	// T6-A: populate workspace_id on legacy resource rows from each
+	// owner's personal team. Idempotent. Must run after the personal
+	// team backfill above so the lookup never misses.
+	if err := server.backfillResourceWorkspaceIDs(); err != nil {
+		log.Printf("teams: resource workspace_id backfill failed: %v", err)
+	}
+
 	// Mark any pending invitations whose TTL has elapsed as expired.
 	// Idempotent and quick; lazy expiration also happens at access time.
 	if err := server.expireOldInvitations(); err != nil {
