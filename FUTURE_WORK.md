@@ -141,3 +141,6 @@ Ensure the HTTP server and WebSocket hub drain cleanly on `SIGTERM` (use `http.S
 
 ### Attachment Storage Abstraction Test
 The `StorageBackend` interface wraps local FS and R2, but there are no integration tests covering the R2 path. Add a test against a local MinIO instance to verify upload, URL generation, and delete work correctly before deploying to a new environment.
+
+### Microsoft Teams Hybrid Integration
+Researched and rejected for full replacement (free-tier users + app-only-posting restriction + Graph notification SLA each independently kill it). Recommended path: **lightweight hybrid** — Entra ID SSO, outbound Adaptive Card notifications via channel Workflow webhooks, optional sideloadable bot manifest, deep-link "Open in Polar" buttons. Estimate: 2–3 engineer-weeks. Trigger condition: an identifiable enterprise customer with an active M365 tenant asks for it. Full design: [`doc/teams-integration-research.md`](doc/teams-integration-research.md).
