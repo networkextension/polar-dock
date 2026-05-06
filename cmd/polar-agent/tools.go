@@ -80,19 +80,24 @@ func builtinTools() []toolSpec {
 			NoPriorSessionMarker: "No previous session",
 		},
 		{
-			Name:       "claude",
-			Binary:     "claude",
-			ArgsFirst:  []string{"-p", "--add-dir={{workdir}}", "--permission-mode", "bypassPermissions", "{{prompt}}"},
-			ArgsResume: []string{"-p", "--continue", "--add-dir={{workdir}}", "--permission-mode", "bypassPermissions", "{{prompt}}"},
+			Name:   "claude",
+			Binary: "claude",
+			// claude's --add-dir is variadic (<directories...>) and
+			// rejects the --add-dir=X form. Use space-separated args.
+			ArgsFirst:  []string{"-p", "--add-dir", "{{workdir}}", "--permission-mode", "bypassPermissions", "{{prompt}}"},
+			ArgsResume: []string{"-p", "--continue", "--add-dir", "{{workdir}}", "--permission-mode", "bypassPermissions", "{{prompt}}"},
 			// claude resolves --continue against cwd; spec runs
 			// itself in the workdir.
 			CWD: "{{workdir}}",
 		},
 		{
-			Name:       "codex",
-			Binary:     "codex",
-			ArgsFirst:  []string{"exec", "--cd={{workdir}}", "--dangerously-bypass-approvals-and-sandbox", "{{prompt}}"},
-			ArgsResume: []string{"exec", "resume", "--last", "--cd={{workdir}}", "--dangerously-bypass-approvals-and-sandbox", "{{prompt}}"},
+			Name:   "codex",
+			Binary: "codex",
+			// codex (clap-based) rejects --cd=X; needs space-separated.
+			// "unexpected argument '--cd' found" is the error you'll
+			// hit otherwise.
+			ArgsFirst:  []string{"exec", "--cd", "{{workdir}}", "--dangerously-bypass-approvals-and-sandbox", "{{prompt}}"},
+			ArgsResume: []string{"exec", "resume", "--last", "--cd", "{{workdir}}", "--dangerously-bypass-approvals-and-sandbox", "{{prompt}}"},
 		},
 	}
 }
