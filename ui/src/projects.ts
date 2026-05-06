@@ -44,6 +44,10 @@ bindThemeSync();
 const listEl = byId<HTMLElement>("projectsList");
 const emptyEl = byId<HTMLElement>("projectsEmpty");
 const panelEl = byId<HTMLElement>("projectsPanel");
+const filterSearchEl = byId<HTMLInputElement>("projectsFilterSearch");
+const filterStatusEl = byId<HTMLSelectElement>("projectsFilterStatus");
+const filterCodeProviderEl = byId<HTMLSelectElement>("projectsFilterCodeProvider");
+const filterCountEl = byId<HTMLElement>("projectsFilterCount");
 
 const nameEl = byId<HTMLElement>("projectsName");
 const statusPillEl = byId<HTMLElement>("projectsStatusPill");
@@ -180,20 +184,61 @@ function escapeHTML(s: string): string {
 
 // ---- list rendering -----------------------------------------------
 
+// applyProjectFilter applies the search + status + code_provider
+// filters to the loaded `projects` array. Pure client-side; the
+// list endpoint returns everything in the workspace and the
+// filter row narrows the visible subset.
+function applyProjectFilter(): Project[] {
+  const search = filterSearchEl.value.trim().toLowerCase();
+  const status = filterStatusEl.value;
+  const provider = filterCodeProviderEl.value;
+  return projects.filter((p) => {
+    if (search && !p.name.toLowerCase().includes(search)) {
+      return false;
+    }
+    if (status && p.status !== status) {
+      return false;
+    }
+    if (provider) {
+      // Special sentinel: "__none__" matches projects with no
+      // code_provider set (empty string).
+      if (provider === "__none__" && p.code_provider !== "") {
+        return false;
+      }
+      if (provider !== "__none__" && p.code_provider !== provider) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
 function renderProjectList(): void {
   if (projects.length === 0) {
+    filterCountEl.textContent = "";
     listEl.innerHTML = `<div class="chat-empty">还没有项目，点右上角「＋ 新建项目」开始</div>`;
     return;
   }
-  listEl.innerHTML = projects
+  const filtered = applyProjectFilter();
+  filterCountEl.textContent = filtered.length === projects.length
+    ? `${projects.length}`
+    : `${filtered.length}/${projects.length}`;
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="chat-empty">没有符合筛选条件的项目</div>`;
+    return;
+  }
+  listEl.innerHTML = filtered
     .map((p) => {
       const active = p.id === activeProjectID ? "active" : "";
+      const providerTag = p.code_provider
+        ? ` · <span style="color:#3a7;">${escapeHTML(p.code_provider)}</span>`
+        : "";
       return `
         <div class="video-studio-project-item ${active}" data-project-id="${escapeHTML(p.id)}">
           <div style="width:32px; height:32px; border-radius:8px; background:linear-gradient(135deg,#e9e9ef,#cfd0d6); display:flex; align-items:center; justify-content:center; font-size:14px; color:#666; flex-shrink:0;">✦</div>
           <div style="flex:1; min-width:0;">
             <div style="font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(p.name)}</div>
-            <div style="font-size:11px; color:var(--text-muted,#888);">${STATUS_LABEL[p.status] ?? p.status}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888);">${STATUS_LABEL[p.status] ?? p.status}${providerTag}</div>
           </div>
         </div>`;
     })
@@ -824,6 +869,9 @@ decomposeBtn.addEventListener("click", () => void decompose());
 generatePlanBtn.addEventListener("click", () => void generatePlan());
 deleteBtn.addEventListener("click", () => void doDeleteProject());
 dispatchAllBtn.addEventListener("click", () => void dispatchAllTodos());
+filterSearchEl.addEventListener("input", renderProjectList);
+filterStatusEl.addEventListener("change", renderProjectList);
+filterCodeProviderEl.addEventListener("change", renderProjectList);
 dispatchAllBotSelect.addEventListener("change", () => {
   // Re-evaluate disabled state when the bot selection changes
   // without redrawing the whole list.
