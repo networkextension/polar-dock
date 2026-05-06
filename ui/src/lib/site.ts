@@ -1,5 +1,6 @@
 import { makeDefaultAvatar } from "./avatar.js";
 import { applyI18n, t } from "./i18n.js";
+import { installWorkspaceSwitcher } from "./workspace.js";
 
 type SiteSettings = {
   name?: string;
@@ -92,6 +93,10 @@ export async function hydrateSiteBrand(): Promise<void> {
   initSidebarToggle();
   initSettingsButton();
   await hydrateSidebarFoot();
+  // Workspace switcher (T4): runs after the foot hydrate so the
+  // sidebar is fully laid out. No-op on pages without .lp-nav (e.g.,
+  // login / register / public invite preview).
+  void installWorkspaceSwitcher();
 
   if (!document.querySelector("[data-site-brand]")) {
     return;

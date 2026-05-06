@@ -134,8 +134,46 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 			c.Set("role", session.Role)
 		}
 		c.Set("session", session)
+
+		// T4: resolve the active workspace. If X-Workspace-Id is
+		// supplied and the user is a member, use it; otherwise fall
+		// back to the user's personal team so handlers always have
+		// a workspace_id available. Any failure is logged and the
+		// request continues with workspace_id unset — handlers that
+		// haven't migrated to the new ownership model still work.
+		s.resolveActiveWorkspace(c, session.UserID)
+
 		c.Next()
 	}
+}
+
+// resolveActiveWorkspace inspects the X-Workspace-Id header. If
+// present and the caller is a member of that team, set workspace_id
+// + workspace_role in the gin context. Otherwise fall back to the
+// user's personal team (auto-creating it if somehow missing). Soft
+// failure: if anything goes wrong, leave workspace_id unset.
+func (s *Server) resolveActiveWorkspace(c *gin.Context, userID string) {
+	if userID == "" {
+		return
+	}
+	requested := strings.TrimSpace(c.GetHeader("X-Workspace-Id"))
+	if requested != "" {
+		member, err := s.getTeamMember(requested, userID)
+		if err == nil && member != nil {
+			c.Set("workspace_id", requested)
+			c.Set("workspace_role", member.Role)
+			return
+		}
+		// Header present but invalid — fall through to personal team.
+		// This is what should happen if the user gets removed from a
+		// team but their browser still has the old workspace cached.
+	}
+	personal, err := s.ensurePersonalTeam(userID)
+	if err != nil || personal == nil {
+		return
+	}
+	c.Set("workspace_id", personal.ID)
+	c.Set("workspace_role", TeamRoleOwner)
 }
 
 func (s *Server) AdminMiddleware() gin.HandlerFunc {
