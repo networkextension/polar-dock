@@ -8,18 +8,24 @@
 // (X-Workspace-Id header) lands in T4.
 
 import {
+  acceptInvitation,
   createTeam,
+  createTeamInvitation,
+  declineInvitation,
   deleteTeam,
+  fetchMyInvitations,
   fetchTeam,
+  fetchTeamInvitations,
   fetchTeamMembers,
   fetchTeams,
+  revokeTeamInvitation,
   updateTeam,
 } from "./api/teams.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
 import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
-import type { TeamMember, TeamRole, TeamWithRole } from "./types/teams.js";
+import type { AdminInvitation, InboxInvitation, TeamMember, TeamRole, TeamWithRole } from "./types/teams.js";
 
 initStoredTheme();
 bindThemeSync();
@@ -44,6 +50,18 @@ const infoStatusEl = byId<HTMLElement>("teamsInfoStatus");
 const infoReadonlyHintEl = byId<HTMLElement>("teamsInfoReadonlyHint");
 
 const membersListEl = byId<HTMLElement>("teamsMembersList");
+
+const invitationsTabBtn = document.querySelector<HTMLButtonElement>('[data-teams-tab="invitations"]');
+const inviteForm = byId<HTMLFormElement>("teamsInviteForm");
+const inviteEmailEl = byId<HTMLInputElement>("teamsInviteEmail");
+const inviteRoleEl = byId<HTMLSelectElement>("teamsInviteRole");
+const inviteSubmitBtn = byId<HTMLButtonElement>("teamsInviteSubmit");
+const inviteStatusEl = byId<HTMLElement>("teamsInviteStatus");
+const invitationsListEl = byId<HTMLElement>("teamsInvitationsList");
+
+const inboxEl = byId<HTMLElement>("teamsInbox");
+const inboxCountEl = byId<HTMLElement>("teamsInboxCount");
+const inboxListEl = byId<HTMLElement>("teamsInboxList");
 
 const dangerPersonalEl = byId<HTMLElement>("teamsDangerPersonal");
 const dangerTeamEl = byId<HTMLElement>("teamsDangerTeam");
@@ -170,6 +188,10 @@ function renderTeamPanel(team: TeamWithRole): void {
   infoReadonlyHintEl.hidden = editable;
   clearStatus(infoStatusEl);
 
+  // Invitations tab visibility (admin+, non-personal team only).
+  const showInviteTab = canEdit(team.my_role) && team.kind !== "personal";
+  if (invitationsTabBtn) invitationsTabBtn.hidden = !showInviteTab;
+
   // Danger tab
   dangerPersonalEl.hidden = team.kind !== "personal";
   dangerTeamEl.hidden = team.kind === "personal";
@@ -208,6 +230,9 @@ function setActiveTab(name: string): void {
   tabPanes.forEach((pane) => {
     pane.hidden = pane.getAttribute("data-teams-pane") !== name;
   });
+  if (name === "invitations" && activeTeam) {
+    void loadInvitations(activeTeam.id);
+  }
 }
 
 async function loadTeams(): Promise<void> {
@@ -245,6 +270,167 @@ async function loadMembers(id: string): Promise<void> {
     return;
   }
   renderMembers(data.members);
+}
+
+// ---- invitations (admin tab) ------------------------------------
+
+function renderInvitations(invs: AdminInvitation[]): void {
+  if (invs.length === 0) {
+    invitationsListEl.innerHTML = `<div class="chat-empty">没有待处理的邀请</div>`;
+    return;
+  }
+  invitationsListEl.innerHTML = invs
+    .map((inv) => {
+      const expires = new Date(inv.expires_at).toLocaleString();
+      return `
+        <div class="video-studio-project-item" style="cursor:default; flex-direction:column; align-items:stretch; gap:6px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(inv.email)}</div>
+              <div style="font-size:11px; color:var(--text-muted,#888);">
+                ${ROLE_LABEL[inv.role] ?? inv.role} · 由 ${escapeHTML(inv.inviter_name)} 发出 · 到期 ${escapeHTML(expires)}
+              </div>
+            </div>
+            <button type="button" class="btn-inline btn-secondary" data-invite-copy="${escapeHTML(inv.invite_url)}">复制链接</button>
+            <button type="button" class="btn-inline" data-invite-revoke="${escapeHTML(inv.id)}" style="color:#c33;">撤销</button>
+          </div>
+        </div>`;
+    })
+    .join("");
+  invitationsListEl.querySelectorAll<HTMLButtonElement>("[data-invite-copy]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const url = btn.getAttribute("data-invite-copy") || "";
+      try {
+        await navigator.clipboard.writeText(url);
+        const orig = btn.textContent;
+        btn.textContent = "已复制";
+        setTimeout(() => {
+          btn.textContent = orig;
+        }, 1200);
+      } catch {
+        window.prompt("复制下面这个链接：", url);
+      }
+    });
+  });
+  invitationsListEl.querySelectorAll<HTMLButtonElement>("[data-invite-revoke]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-invite-revoke");
+      if (id) void doRevoke(id);
+    });
+  });
+}
+
+async function loadInvitations(teamID: string): Promise<void> {
+  invitationsListEl.innerHTML = `<div class="chat-empty">加载中...</div>`;
+  const { response, data } = await fetchTeamInvitations(teamID);
+  if (!response.ok) {
+    invitationsListEl.innerHTML = `<div class="chat-empty">加载失败</div>`;
+    return;
+  }
+  renderInvitations(data.invitations);
+}
+
+async function submitInvite(e: Event): Promise<void> {
+  e.preventDefault();
+  if (!activeTeam) return;
+  const email = inviteEmailEl.value.trim();
+  const role = inviteRoleEl.value as TeamRole;
+  if (!email) {
+    setStatus(inviteStatusEl, "请填写邮箱", true);
+    return;
+  }
+  inviteSubmitBtn.disabled = true;
+  setStatus(inviteStatusEl, "发送中...", false);
+  const { response, data } = await createTeamInvitation(activeTeam.id, { email, role });
+  inviteSubmitBtn.disabled = false;
+  if (!response.ok) {
+    const err = (data as unknown as { error?: string })?.error || "发送失败";
+    setStatus(inviteStatusEl, err, true);
+    return;
+  }
+  inviteEmailEl.value = "";
+  if (data.email_send_disabled) {
+    setStatus(inviteStatusEl, "邀请已创建，但服务器未配置邮件通道。请手动复制链接发给对方。", false);
+  } else if (!data.email_sent) {
+    setStatus(inviteStatusEl, "邀请已创建，但邮件发送失败。请用「复制链接」手动转发。", true);
+  } else {
+    setStatus(inviteStatusEl, "邀请邮件已发送", false);
+  }
+  await loadInvitations(activeTeam.id);
+}
+
+async function doRevoke(invID: string): Promise<void> {
+  if (!activeTeam) return;
+  if (!window.confirm("确认撤销该邀请？对方点击邀请链接时将看到「邀请已失效」。")) return;
+  const { response } = await revokeTeamInvitation(activeTeam.id, invID);
+  if (!response.ok) {
+    window.alert("撤销失败");
+    return;
+  }
+  await loadInvitations(activeTeam.id);
+}
+
+// ---- inbox ---------------------------------------------------------
+
+function renderInbox(invs: InboxInvitation[]): void {
+  if (invs.length === 0) {
+    inboxEl.hidden = true;
+    return;
+  }
+  inboxEl.hidden = false;
+  inboxCountEl.textContent = String(invs.length);
+  inboxListEl.innerHTML = invs
+    .map((inv) => {
+      const expires = new Date(inv.expires_at).toLocaleString();
+      return `
+        <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:#fff; border:1px solid #f0d597; border-radius:6px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:500; font-size:13px;">${escapeHTML(inv.team_name)} <span style="font-size:11px; color:var(--text-muted,#888);">· ${ROLE_LABEL[inv.role] ?? inv.role}</span></div>
+            <div style="font-size:11px; color:var(--text-muted,#888);">${escapeHTML(inv.inviter_name)} 邀请你 · 到期 ${escapeHTML(expires)}</div>
+          </div>
+          <button type="button" class="btn-inline btn-secondary" data-inbox-accept="${escapeHTML(inv.token)}">接受</button>
+          <button type="button" class="btn-inline" data-inbox-decline="${escapeHTML(inv.token)}" style="color:#c33;">拒绝</button>
+        </div>`;
+    })
+    .join("");
+  inboxListEl.querySelectorAll<HTMLButtonElement>("[data-inbox-accept]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const token = btn.getAttribute("data-inbox-accept");
+      if (token) void doInboxAccept(token);
+    });
+  });
+  inboxListEl.querySelectorAll<HTMLButtonElement>("[data-inbox-decline]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const token = btn.getAttribute("data-inbox-decline");
+      if (token) void doInboxDecline(token);
+    });
+  });
+}
+
+async function loadInbox(): Promise<void> {
+  const { response, data } = await fetchMyInvitations();
+  if (!response.ok) return;
+  renderInbox(data.invitations);
+}
+
+async function doInboxAccept(token: string): Promise<void> {
+  const { response, data } = await acceptInvitation(token);
+  if (!response.ok) {
+    window.alert(data?.error || "接受失败");
+    return;
+  }
+  await Promise.all([loadInbox(), loadTeams()]);
+  if (data?.team_id) void openTeam(data.team_id);
+}
+
+async function doInboxDecline(token: string): Promise<void> {
+  if (!window.confirm("确认拒绝该邀请？")) return;
+  const { response, data } = await declineInvitation(token);
+  if (!response.ok) {
+    window.alert(data?.error || "拒绝失败");
+    return;
+  }
+  await loadInbox();
 }
 
 async function saveInfo(): Promise<void> {
@@ -354,6 +540,7 @@ createModal.addEventListener("click", (e) => {
   if (t.classList.contains("modal-backdrop")) closeCreateModal();
 });
 createForm.addEventListener("submit", (e) => void submitCreate(e));
+inviteForm.addEventListener("submit", (e) => void submitInvite(e));
 
 document.getElementById("logoutBtn")?.addEventListener("click", async () => {
   try {
@@ -373,7 +560,7 @@ async function init(): Promise<void> {
     return;
   }
   renderSidebarFoot(data);
-  await loadTeams();
+  await Promise.all([loadTeams(), loadInbox()]);
   if (teams.length > 0) {
     void openTeam(teams[0].id);
   }
