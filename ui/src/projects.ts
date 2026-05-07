@@ -7,12 +7,15 @@
 // Per-task chat thread (1:1) wiring + bot pickup come in phase 1.3.
 
 import {
+  createAgentToken,
   createProject,
   decomposeProject,
   deleteProject,
+  fetchAgentTokens,
   fetchProject,
   fetchProjects,
   generateProjectPlan,
+  revokeAgentToken,
   updateProject,
   updateProjectFeature,
   updateProjectTask,
@@ -22,6 +25,7 @@ import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import type {
+  AgentToken,
   FeatureComplexity,
   Project,
   ProjectFeature,
@@ -58,6 +62,15 @@ const tasksListEl = byId<HTMLElement>("projectsTasksList");
 const tasksCountEl = byId<HTMLElement>("projectsTasksCount");
 
 const newBtn = byId<HTMLButtonElement>("projectsNewBtn");
+const agentTokensBtn = byId<HTMLButtonElement>("projectsAgentTokensBtn");
+const agentTokensModal = byId<HTMLElement>("agentTokensModal");
+const agentTokensModalCloseBtn = byId<HTMLButtonElement>("agentTokensModalCloseBtn");
+const agentTokenNameInput = byId<HTMLInputElement>("agentTokenName");
+const agentTokenCreateBtn = byId<HTMLButtonElement>("agentTokenCreateBtn");
+const agentTokenJustCreatedEl = byId<HTMLElement>("agentTokenJustCreated");
+const agentTokenJustCreatedRawEl = byId<HTMLElement>("agentTokenJustCreatedRaw");
+const agentTokenCopyBtn = byId<HTMLButtonElement>("agentTokenCopyBtn");
+const agentTokensListEl = byId<HTMLElement>("agentTokensList");
 const createModal = byId<HTMLElement>("projectsCreateModal");
 const createModalCloseBtn = byId<HTMLButtonElement>("projectsCreateModalCloseBtn");
 const createForm = byId<HTMLFormElement>("projectsCreateForm");
@@ -407,6 +420,99 @@ async function submitCreate(e: Event): Promise<void> {
 // ---- wiring -------------------------------------------------------
 
 newBtn.addEventListener("click", openCreateModal);
+agentTokensBtn.addEventListener("click", () => void openAgentTokensModal());
+agentTokensModalCloseBtn.addEventListener("click", () => setModalOpen(agentTokensModal, false));
+agentTokensModal.addEventListener("click", (e) => {
+  const t = e.target as HTMLElement;
+  if (t.classList.contains("modal-backdrop")) setModalOpen(agentTokensModal, false);
+});
+agentTokenCreateBtn.addEventListener("click", () => void doCreateAgentToken());
+agentTokenCopyBtn.addEventListener("click", () => {
+  const raw = agentTokenJustCreatedRawEl.textContent || "";
+  if (raw) {
+    void navigator.clipboard.writeText(raw).then(() => {
+      const orig = agentTokenCopyBtn.textContent;
+      agentTokenCopyBtn.textContent = "已复制";
+      setTimeout(() => {
+        agentTokenCopyBtn.textContent = orig;
+      }, 1200);
+    });
+  }
+});
+
+async function openAgentTokensModal(): Promise<void> {
+  agentTokenJustCreatedEl.hidden = true;
+  agentTokenNameInput.value = "";
+  setModalOpen(agentTokensModal, true);
+  await loadAgentTokens();
+}
+
+async function loadAgentTokens(): Promise<void> {
+  agentTokensListEl.innerHTML = `<div class="chat-empty">加载中...</div>`;
+  const { response, data } = await fetchAgentTokens();
+  if (!response.ok) {
+    agentTokensListEl.innerHTML = `<div class="chat-empty">加载失败</div>`;
+    return;
+  }
+  renderAgentTokens(data.tokens);
+}
+
+function renderAgentTokens(tokens: AgentToken[]): void {
+  if (tokens.length === 0) {
+    agentTokensListEl.innerHTML = `<div class="chat-empty">还没有 token，上面输个名字然后「＋ 新建 token」</div>`;
+    return;
+  }
+  agentTokensListEl.innerHTML = tokens
+    .map((t) => {
+      const created = new Date(t.created_at).toLocaleString();
+      const lastUsed = t.last_used_at ? new Date(t.last_used_at).toLocaleString() : "—";
+      const revoked = t.revoked_at ? `<span style="color:#c33; font-size:11px;">已撤销</span>` : "";
+      return `
+        <div style="padding:8px 10px; background:${t.revoked_at ? "#f7f7f9" : "#fff"}; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:8px; align-items:center;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:500; font-size:13px;">${escapeHTML(t.name || "(no name)")} ${revoked}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888);">创建 ${escapeHTML(created)} · 最后使用 ${escapeHTML(lastUsed)}</div>
+          </div>
+          ${
+            t.revoked_at
+              ? ""
+              : `<button type="button" class="btn-inline" data-revoke-token="${escapeHTML(t.id)}" style="color:#c33; font-size:12px;">撤销</button>`
+          }
+        </div>`;
+    })
+    .join("");
+  agentTokensListEl.querySelectorAll<HTMLButtonElement>("[data-revoke-token]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-revoke-token");
+      if (id) void doRevokeAgentToken(id);
+    });
+  });
+}
+
+async function doCreateAgentToken(): Promise<void> {
+  const name = agentTokenNameInput.value.trim() || "polar-agent";
+  agentTokenCreateBtn.disabled = true;
+  const { response, data } = await createAgentToken(name);
+  agentTokenCreateBtn.disabled = false;
+  if (!response.ok) {
+    window.alert("创建失败");
+    return;
+  }
+  agentTokenJustCreatedRawEl.textContent = data.raw;
+  agentTokenJustCreatedEl.hidden = false;
+  agentTokenNameInput.value = "";
+  await loadAgentTokens();
+}
+
+async function doRevokeAgentToken(id: string): Promise<void> {
+  if (!window.confirm("撤销该 token？已运行的 polar-agent 下次重连时会被拒。")) return;
+  const { response } = await revokeAgentToken(id);
+  if (!response.ok) {
+    window.alert("撤销失败");
+    return;
+  }
+  await loadAgentTokens();
+}
 createModalCloseBtn.addEventListener("click", closeCreateModal);
 createModal.addEventListener("click", (e) => {
   const t = e.target as HTMLElement;

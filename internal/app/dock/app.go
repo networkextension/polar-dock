@@ -40,6 +40,7 @@ type Server struct {
 	passkeySessions     map[string]passkeySession
 	passkeyMu           sync.Mutex
 	wsHub               *wsHub
+	agentHub            *agentHub
 	workDir             string
 	aiAgent             *aiAgent
 	chatStorage         AttachmentStorage
@@ -201,6 +202,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.webAuthn = webAuthn
 	server.passkeySessions = make(map[string]passkeySession)
 	server.wsHub = newWSHub()
+	server.agentHub = newAgentHub()
 	server.wsHub.onPresenceChanged = server.handlePresenceChange
 	server.wsHub.onThreadViewChanged = server.handleThreadViewChange
 	server.wsHub.onConnectionTouched = server.handleConnectionTouch
@@ -518,6 +520,7 @@ func (s *Server) registerRoutes() {
 		})
 	})
 	s.router.GET("/ws/chat", s.handleChatWS)
+	s.router.GET("/ws/agent", s.handleAgentWS)
 
 	// iOS distribution OTA endpoints (no auth — gated by a short-lived,
 	// random install token bound to a single version). The manifest.plist
@@ -709,6 +712,15 @@ func (s *Server) registerRoutes() {
 		api.GET("/video-projects/:id/download", s.AuthMiddleware(), s.handleVideoProjectDownload)
 		api.GET("/video-projects/:id/shots.zip", s.AuthMiddleware(), s.handleVideoProjectShotsZip)
 		api.GET("/system-agent", s.AuthMiddleware(), s.handleSystemAgentStatus)
+		// polar-agent local CLI: long-lived bearer tokens + debug
+		// dispatch endpoint that proves the WS round-trip without
+		// going through the LLM. ai_agent ↔ agent integration is
+		// the next phase.
+		api.POST("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenCreate)
+		api.GET("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenList)
+		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
+		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
+		api.POST("/agent/bots/:bot_id/dispatch", s.AuthMiddleware(), s.handleAgentDispatch)
 		// projects (workspace-scoped product container with AI
 		// requirement decomposition + plan generation).
 		api.GET("/projects", s.AuthMiddleware(), s.handleProjectList)

@@ -1,5 +1,7 @@
 import { requestJson } from "./http.js";
 import type {
+  AgentTokenCreateResponse,
+  AgentTokenListResponse,
   ProjectCreatePayload,
   ProjectCreateResponse,
   ProjectDecomposeResponse,
@@ -63,4 +65,23 @@ export async function updateProjectTask(id: string, taskID: string, payload: Pro
     `/api/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskID)}`,
     { method: "PUT", body: payload },
   );
+}
+
+// ---- agent tokens (polar-agent CLI credentials) ------------------
+
+export async function fetchAgentTokens() {
+  return requestJson<AgentTokenListResponse>("/api/agent/tokens");
+}
+
+export async function createAgentToken(name: string) {
+  return requestJson<AgentTokenCreateResponse>("/api/agent/tokens", {
+    method: "POST",
+    body: { name },
+  });
+}
+
+export async function revokeAgentToken(id: string) {
+  return requestJson<{ ok: boolean }>(`/api/agent/tokens/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }

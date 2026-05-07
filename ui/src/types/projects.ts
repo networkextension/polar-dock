@@ -100,3 +100,22 @@ export type ProjectTaskUpdatePayload = {
   description?: string;
   status?: TaskStatus;
 };
+
+export type AgentToken = {
+  id: string;
+  user_id: string;
+  name: string;
+  last_used_at?: string;
+  revoked_at?: string;
+  created_at: string;
+};
+
+export type AgentTokenCreateResponse = {
+  token: AgentToken;
+  raw: string;
+  hint: string;
+};
+
+export type AgentTokenListResponse = {
+  tokens: AgentToken[];
+};
