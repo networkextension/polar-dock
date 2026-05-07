@@ -65,6 +65,9 @@ const planStatusEl = byId<HTMLElement>("projectsPlanStatus");
 const tasksSection = byId<HTMLElement>("projectsTasksSection");
 const tasksListEl = byId<HTMLElement>("projectsTasksList");
 const tasksCountEl = byId<HTMLElement>("projectsTasksCount");
+const dispatchAllBotSelect = byId<HTMLSelectElement>("projectsDispatchAllBot");
+const dispatchAllBtn = byId<HTMLButtonElement>("projectsDispatchAllBtn");
+const dispatchAllStatusEl = byId<HTMLElement>("projectsDispatchAllStatus");
 
 const newBtn = byId<HTMLButtonElement>("projectsNewBtn");
 const agentTokensBtn = byId<HTMLButtonElement>("projectsAgentTokensBtn");
@@ -286,7 +289,15 @@ function renderTasks(): void {
     return;
   }
   tasksSection.hidden = false;
-  tasksCountEl.textContent = `共 ${activeTasks.length} 个`;
+  const todoCount = activeTasks.filter((t) => t.status === "todo").length;
+  tasksCountEl.textContent = `共 ${activeTasks.length} 个 · ${todoCount} 待办`;
+  // Disable the dispatch-all button when there's nothing to dispatch
+  // OR when no bot is selected. Re-evaluated on each render.
+  dispatchAllBtn.disabled = todoCount === 0 || !dispatchAllBotSelect.value;
+  // Sync the dropdown to the project's preferred provider whenever
+  // the panel opens — saves a click in the common case (project
+  // has code_provider=kimi, agent attached as kimi-bot).
+  syncDispatchAllBotOptions();
   tasksListEl.innerHTML = activeTasks
     .map((t) => {
       const opts = TASK_STATUS_OPTIONS.map(
@@ -497,6 +508,95 @@ async function changeTaskStatus(taskID: string, status: TaskStatus): Promise<voi
   if (!t) return;
   t.status = status;
   await updateProjectTask(activeProject.id, taskID, { status });
+}
+
+// syncDispatchAllBotOptions populates the "派全部" bot dropdown
+// from availableBots. Bots whose attached agent's tool matches
+// the project's code_provider are pre-selected (single-click
+// dispatch in the common case). Re-runnable on each task render
+// since botToolMap fills in async after page load.
+function syncDispatchAllBotOptions(): void {
+  if (availableBots.length === 0) {
+    dispatchAllBotSelect.innerHTML = `<option value="">没有 bot</option>`;
+    return;
+  }
+  const preferred = activeProject?.code_provider || "";
+  const sorted = [...availableBots].sort((a, b) => {
+    const at = botToolMap[a.bot_user_id] || "";
+    const bt = botToolMap[b.bot_user_id] || "";
+    const aMatch = preferred && at === preferred ? 1 : 0;
+    const bMatch = preferred && bt === preferred ? 1 : 0;
+    if (aMatch !== bMatch) return bMatch - aMatch;
+    return (bt ? 1 : 0) - (at ? 1 : 0);
+  });
+  const previous = dispatchAllBotSelect.value;
+  const opts = ['<option value="">选 bot…</option>'];
+  for (const b of sorted) {
+    const tool = botToolMap[b.bot_user_id] || "";
+    const tag = tool ? ` [${tool}]` : "";
+    opts.push(`<option value="${escapeHTML(b.bot_user_id)}">${escapeHTML(b.name)}${tag}</option>`);
+  }
+  dispatchAllBotSelect.innerHTML = opts.join("");
+  // Restore previous selection if still present, else auto-pick
+  // the top-sorted option matching the preferred tool.
+  if (previous && sorted.some((b) => b.bot_user_id === previous)) {
+    dispatchAllBotSelect.value = previous;
+  } else if (preferred) {
+    const match = sorted.find((b) => (botToolMap[b.bot_user_id] || "") === preferred);
+    if (match) {
+      dispatchAllBotSelect.value = match.bot_user_id;
+    }
+  }
+}
+
+// dispatchAllTodos sequentially picks up every todo task to the
+// selected bot. Sequential (not parallel) on purpose: tasks in
+// one project share the workdir under $workdir/<project_id>, so
+// a fan-out would have N kimi-cli processes fighting over the
+// same --continue session. The bot replies async; we don't wait
+// for chat to finish, just wait for the pickup HTTP call to
+// return so each new chat thread is ordered.
+async function dispatchAllTodos(): Promise<void> {
+  if (!activeProject) return;
+  const botID = dispatchAllBotSelect.value;
+  if (!botID) {
+    setStatus(dispatchAllStatusEl, "请先选 bot", true);
+    return;
+  }
+  const todos = activeTasks.filter((t) => t.status === "todo");
+  if (todos.length === 0) {
+    setStatus(dispatchAllStatusEl, "没有 todo 任务", true);
+    return;
+  }
+  if (!window.confirm(`将 ${todos.length} 个 todo 任务全部派给该 bot？\n（顺序派单，每条任务等上一条 pickup 返回再发下一条）`)) {
+    return;
+  }
+  dispatchAllBtn.disabled = true;
+  let done = 0;
+  let failed = 0;
+  for (const t of todos) {
+    setStatus(dispatchAllStatusEl, `派单中 ${done + 1}/${todos.length} · ${escapeHTML(t.title)}`, false);
+    try {
+      const { response, data } = await pickupProjectTask(activeProject.id, t.id, botID);
+      if (response.ok) {
+        const idx = activeTasks.findIndex((x) => x.id === t.id);
+        if (idx >= 0) {
+          activeTasks[idx] = data.task;
+        }
+        done++;
+      } else {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+    renderTasks();
+  }
+  setStatus(
+    dispatchAllStatusEl,
+    failed === 0 ? `✅ 全部 ${done} 条派单完成` : `${done} 条成功 / ${failed} 条失败`,
+    failed > 0,
+  );
 }
 
 async function loadBots(): Promise<void> {
@@ -723,6 +823,13 @@ saveDescBtn.addEventListener("click", () => void saveDescription());
 decomposeBtn.addEventListener("click", () => void decompose());
 generatePlanBtn.addEventListener("click", () => void generatePlan());
 deleteBtn.addEventListener("click", () => void doDeleteProject());
+dispatchAllBtn.addEventListener("click", () => void dispatchAllTodos());
+dispatchAllBotSelect.addEventListener("change", () => {
+  // Re-evaluate disabled state when the bot selection changes
+  // without redrawing the whole list.
+  const todoCount = activeTasks.filter((t) => t.status === "todo").length;
+  dispatchAllBtn.disabled = todoCount === 0 || !dispatchAllBotSelect.value;
+});
 
 document.getElementById("logoutBtn")?.addEventListener("click", async () => {
   try {
