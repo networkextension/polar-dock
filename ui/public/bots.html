@@ -130,14 +130,14 @@
                   <input id="botUserNameInput" class="input" type="text" maxlength="60" data-i18n-placeholder="dashboard.botNamePlaceholder" placeholder="e.g. Translation assistant" />
 
                   <label class="form-label">Bot 类型</label>
-                  <div style="display:flex; gap:14px; align-items:center; padding:6px 0;">
-                    <label style="display:flex; gap:6px; align-items:center; cursor:pointer;">
-                      <input type="radio" name="botKind" value="classic" id="botKindClassic" checked />
+                  <div style="display:flex; gap:14px; align-items:center; padding:6px 0; flex-wrap:wrap;">
+                    <label style="display:flex; gap:6px; align-items:center; cursor:pointer; white-space:nowrap;">
+                      <input type="radio" name="botKind" value="classic" id="botKindClassic" checked style="width:auto; margin:0; padding:0; flex-shrink:0;" />
                       <span>经典 LLM</span>
                       <span style="color:var(--text-muted,#888); font-size:11px;">(用平台的 LLM 配置回复)</span>
                     </label>
-                    <label style="display:flex; gap:6px; align-items:center; cursor:pointer;">
-                      <input type="radio" name="botKind" value="passthrough" id="botKindPassthrough" />
+                    <label style="display:flex; gap:6px; align-items:center; cursor:pointer; white-space:nowrap;">
+                      <input type="radio" name="botKind" value="passthrough" id="botKindPassthrough" style="width:auto; margin:0; padding:0; flex-shrink:0;" />
                       <span>本地工具接管</span>
                       <span style="color:var(--text-muted,#888); font-size:11px;">(只配 polar-agent + kimi/claude/codex)</span>
                     </label>
