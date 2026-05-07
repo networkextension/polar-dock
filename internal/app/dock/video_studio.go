@@ -58,11 +58,11 @@ func parseInt64Param(c *gin.Context, name string) (int64, bool) {
 // The chat module has its own bot picker; this is the parallel path for
 // the video studio so the two don't interfere.
 func (s *Server) handleVideoLLMConfigList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
-	configs, err := s.listVideoLLMConfigsForUser(userID)
+	configs, err := s.listVideoLLMConfigsForUser(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -73,11 +73,11 @@ func (s *Server) handleVideoLLMConfigList(c *gin.Context) {
 // ---- Project CRUD ---------------------------------------------------------
 
 func (s *Server) handleVideoProjectList(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
-	projects, err := s.listVideoProjects(userID)
+	projects, err := s.listVideoProjects(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -91,6 +91,10 @@ type videoProjectCreateRequest struct {
 }
 
 func (s *Server) handleVideoProjectCreate(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, ok := requireUserID(c)
 	if !ok {
 		return
@@ -102,9 +106,9 @@ func (s *Server) handleVideoProjectCreate(c *gin.Context) {
 		title = "Untitled video"
 	}
 	// If a default config was supplied, make sure it's video-kind and
-	// owned/shared with the user before saving.
+	// owned/shared with the workspace before saving.
 	if req.DefaultLLMConfigID != nil && *req.DefaultLLMConfigID > 0 {
-		cfg, _, err := s.getVideoLLMConfigWithAPIKey(userID, *req.DefaultLLMConfigID)
+		cfg, _, err := s.getVideoLLMConfigWithAPIKey(workspaceID, *req.DefaultLLMConfigID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 			return
@@ -114,7 +118,7 @@ func (s *Server) handleVideoProjectCreate(c *gin.Context) {
 			return
 		}
 	}
-	project, err := s.createVideoProject(userID, title, req.DefaultLLMConfigID, time.Now())
+	project, err := s.createVideoProject(workspaceID, userID, title, req.DefaultLLMConfigID, time.Now())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -123,7 +127,7 @@ func (s *Server) handleVideoProjectCreate(c *gin.Context) {
 }
 
 func (s *Server) handleVideoProjectDetail(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -131,7 +135,7 @@ func (s *Server) handleVideoProjectDetail(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, id)
+	project, err := s.getVideoProject(workspaceID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -163,7 +167,7 @@ type videoProjectUpdateRequest struct {
 }
 
 func (s *Server) handleVideoProjectUpdate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -171,7 +175,7 @@ func (s *Server) handleVideoProjectUpdate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	existing, err := s.getVideoProject(userID, id)
+	existing, err := s.getVideoProject(workspaceID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -195,7 +199,7 @@ func (s *Server) handleVideoProjectUpdate(c *gin.Context) {
 	defaultCfg := existing.DefaultLLMConfigID
 	if req.DefaultLLMConfigID != nil {
 		if *req.DefaultLLMConfigID > 0 {
-			cfg, _, err := s.getVideoLLMConfigWithAPIKey(userID, *req.DefaultLLMConfigID)
+			cfg, _, err := s.getVideoLLMConfigWithAPIKey(workspaceID, *req.DefaultLLMConfigID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 				return
@@ -209,7 +213,7 @@ func (s *Server) handleVideoProjectUpdate(c *gin.Context) {
 			defaultCfg = nil
 		}
 	}
-	project, err := s.updateVideoProject(userID, id, title, defaultCfg, time.Now())
+	project, err := s.updateVideoProject(workspaceID, id, title, defaultCfg, time.Now())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -218,7 +222,7 @@ func (s *Server) handleVideoProjectUpdate(c *gin.Context) {
 }
 
 func (s *Server) handleVideoProjectDelete(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -226,7 +230,7 @@ func (s *Server) handleVideoProjectDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	deleted, err := s.deleteVideoProject(userID, id)
+	deleted, err := s.deleteVideoProject(workspaceID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -250,7 +254,7 @@ type videoShotCreateRequest struct {
 }
 
 func (s *Server) handleVideoShotCreate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -258,7 +262,7 @@ func (s *Server) handleVideoShotCreate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, id)
+	project, err := s.getVideoProject(workspaceID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -337,7 +341,7 @@ type videoShotUpdateRequest struct {
 }
 
 func (s *Server) handleVideoShotUpdate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -349,7 +353,7 @@ func (s *Server) handleVideoShotUpdate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -511,7 +515,7 @@ func (s *Server) extractCharacterFrameAsset(ctx context.Context, project *VideoP
 // character's face is clearest and the resulting PNG becomes the next
 // shot's first-frame conditioner — keeping the same actor across shots.
 func (s *Server) handleVideoShotExtractFrame(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -523,7 +527,7 @@ func (s *Server) handleVideoShotExtractFrame(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -562,7 +566,7 @@ func (s *Server) handleVideoShotExtractFrame(c *gin.Context) {
 // and its status is pending so the user must explicitly Submit it before
 // it costs a provider call.
 func (s *Server) handleVideoShotDuplicate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -574,7 +578,7 @@ func (s *Server) handleVideoShotDuplicate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -619,7 +623,7 @@ func (s *Server) handleVideoShotDuplicate(c *gin.Context) {
 }
 
 func (s *Server) handleVideoShotDelete(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -631,7 +635,7 @@ func (s *Server) handleVideoShotDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -650,7 +654,7 @@ func (s *Server) handleVideoShotDelete(c *gin.Context) {
 
 // ---- Shot submission ------------------------------------------------------
 
-func (s *Server) submitShotToProvider(userID string, project *VideoProject, shot *VideoShot) error {
+func (s *Server) submitShotToProvider(workspaceID string, project *VideoProject, shot *VideoShot) error {
 	cfgID := shot.LLMConfigID
 	if cfgID == nil {
 		cfgID = project.DefaultLLMConfigID
@@ -658,7 +662,7 @@ func (s *Server) submitShotToProvider(userID string, project *VideoProject, shot
 	if cfgID == nil || *cfgID <= 0 {
 		return errors.New("未选择视频生成配置")
 	}
-	cfg, apiKey, err := s.getVideoLLMConfigWithAPIKey(userID, *cfgID)
+	cfg, apiKey, err := s.getVideoLLMConfigWithAPIKey(workspaceID, *cfgID)
 	if err != nil {
 		return err
 	}
@@ -707,7 +711,7 @@ func (s *Server) submitShotToProvider(userID string, project *VideoProject, shot
 }
 
 func (s *Server) handleVideoShotSubmit(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -719,7 +723,7 @@ func (s *Server) handleVideoShotSubmit(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -733,7 +737,7 @@ func (s *Server) handleVideoShotSubmit(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "镜头不存在"})
 		return
 	}
-	if err := s.submitShotToProvider(userID, project, shot); err != nil {
+	if err := s.submitShotToProvider(workspaceID, project, shot); err != nil {
 		_ = s.markVideoShotStatus(shot.ID, VideoShotStatusFailed, "", err.Error(), time.Now())
 		s.broadcastVideoShotEvent(project, shot.ID, VideoShotStatusFailed, "", err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -756,7 +760,7 @@ func (s *Server) handleVideoShotRetry(c *gin.Context) {
 // request for ~20s (provider rate-limit pacing × N). Status flows back to
 // the UI via WS broadcasts as each shot lands in the queued state.
 func (s *Server) handleVideoProjectSubmitAll(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -764,7 +768,7 @@ func (s *Server) handleVideoProjectSubmitAll(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -795,7 +799,7 @@ func (s *Server) handleVideoProjectSubmitAll(c *gin.Context) {
 		})
 		return
 	}
-	go s.runSubmitAllInBackground(userID, project.ID, pending)
+	go s.runSubmitAllInBackground(workspaceID, project.ID, pending)
 	c.JSON(http.StatusAccepted, gin.H{
 		"queued":   len(pending),
 		"shot_ids": pendingIDs,
@@ -810,7 +814,7 @@ func (s *Server) handleVideoProjectSubmitAll(c *gin.Context) {
 // in real time without polling. The function takes a fresh copy of the
 // project pointer per shot so a concurrent rename or default-config swap
 // doesn't poison submissions mid-run.
-func (s *Server) runSubmitAllInBackground(userID string, projectID int64, shots []VideoShot) {
+func (s *Server) runSubmitAllInBackground(workspaceID string, projectID int64, shots []VideoShot) {
 	for i := range shots {
 		shot := shots[i]
 		// Re-load the project on every iteration so a default-config swap
@@ -820,10 +824,10 @@ func (s *Server) runSubmitAllInBackground(userID string, projectID int64, shots 
 		if err != nil || project == nil {
 			return
 		}
-		if project.OwnerUserID != userID {
+		if project.WorkspaceID != workspaceID {
 			return
 		}
-		if err := s.submitShotToProvider(userID, project, &shot); err != nil {
+		if err := s.submitShotToProvider(workspaceID, project, &shot); err != nil {
 			_ = s.markVideoShotStatus(shot.ID, VideoShotStatusFailed, "", err.Error(), time.Now())
 			s.broadcastVideoShotEvent(project, shot.ID, VideoShotStatusFailed, "", err.Error())
 		} else {
@@ -840,7 +844,7 @@ func (s *Server) runSubmitAllInBackground(userID string, projectID int64, shots 
 var allowedAudioMimePrefix = "audio/"
 
 func (s *Server) handleVideoAssetUpload(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -848,7 +852,7 @@ func (s *Server) handleVideoAssetUpload(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -913,7 +917,7 @@ type videoAssetUpdateRequest struct {
 }
 
 func (s *Server) handleVideoAssetUpdate(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -925,7 +929,7 @@ func (s *Server) handleVideoAssetUpdate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -948,7 +952,7 @@ func (s *Server) handleVideoAssetUpdate(c *gin.Context) {
 }
 
 func (s *Server) handleVideoAssetDelete(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -960,7 +964,7 @@ func (s *Server) handleVideoAssetDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -980,7 +984,7 @@ func (s *Server) handleVideoAssetDelete(c *gin.Context) {
 // ---- Render ---------------------------------------------------------------
 
 func (s *Server) handleVideoProjectRender(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -988,7 +992,7 @@ func (s *Server) handleVideoProjectRender(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -1023,7 +1027,7 @@ func (s *Server) handleVideoProjectRender(c *gin.Context) {
 }
 
 func (s *Server) handleVideoProjectDownload(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -1031,7 +1035,7 @@ func (s *Server) handleVideoProjectDownload(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil || project == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return

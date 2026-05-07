@@ -259,6 +259,7 @@ const (
 type VideoProject struct {
 	ID                 int64     `json:"id"`
 	OwnerUserID        string    `json:"owner_user_id"`
+	WorkspaceID        string    `json:"workspace_id"`
 	Title              string    `json:"title"`
 	DefaultLLMConfigID *int64    `json:"default_llm_config_id,omitempty"`
 	Status             string    `json:"status"`
@@ -332,9 +333,10 @@ const (
 )
 
 type PackTunnelProfile struct {
-	ID        string                    `json:"id"`
-	UserID    string                    `json:"user_id"`
-	Name      string                    `json:"name"`
+	ID          string                    `json:"id"`
+	UserID      string                    `json:"user_id"`
+	WorkspaceID string                    `json:"workspace_id"`
+	Name        string                    `json:"name"`
 	Type      string                    `json:"type"`
 	Server    PackTunnelServerEndpoint  `json:"server"`
 	Auth      PackTunnelAuth            `json:"auth"`
@@ -394,6 +396,7 @@ type PackTunnelProfileMetadata struct {
 
 type PackTunnelRuleFile struct {
 	UserID      string    `json:"user_id"`
+	WorkspaceID string    `json:"workspace_id"`
 	FileName    string    `json:"file_name"`
 	StoredName  string    `json:"stored_name"`
 	FilePath    string    `json:"file_path"`
@@ -405,6 +408,7 @@ type PackTunnelRuleFile struct {
 type BotUser struct {
 	ID           int64     `json:"id"`
 	OwnerUserID  string    `json:"owner_user_id"`
+	WorkspaceID  string    `json:"workspace_id"`
 	BotUserID    string    `json:"bot_user_id"`
 	Name         string    `json:"name"`
 	Description  string    `json:"description"`
@@ -1601,6 +1605,31 @@ ALTER TABLE iosdist_asc_configs DROP CONSTRAINT IF EXISTS iosdist_asc_configs_pk
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_iosdist_asc_configs_workspace
 	ON iosdist_asc_configs(workspace_id) WHERE workspace_id IS NOT NULL;
 
+-- Misc-migrate: extend workspace ownership to bot_users,
+-- packtunnel_profiles, packtunnel_rule_files, video_projects.
+-- Same pattern as T6-A: nullable column + index, backfill at
+-- startup, NOT NULL enforced post-backfill.
+-- packtunnel_rule_files mirrors iosdist_asc_configs: legacy PK on
+-- owner_user_id is dropped and replaced with a partial unique
+-- index on workspace_id (one rule file per workspace).
+ALTER TABLE bot_users             ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+ALTER TABLE packtunnel_profiles   ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+ALTER TABLE packtunnel_rule_files ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+ALTER TABLE video_projects        ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
+CREATE INDEX IF NOT EXISTS idx_bot_users_workspace             ON bot_users(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_packtunnel_profiles_workspace   ON packtunnel_profiles(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_packtunnel_rule_files_workspace ON packtunnel_rule_files(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_video_projects_workspace        ON video_projects(workspace_id, updated_at DESC);
+ALTER TABLE packtunnel_rule_files DROP CONSTRAINT IF EXISTS packtunnel_rule_files_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_packtunnel_rule_files_workspace
+	ON packtunnel_rule_files(workspace_id) WHERE workspace_id IS NOT NULL;
+
+-- Audit-role comments mirroring the iosdist / llm tables.
+COMMENT ON COLUMN bot_users.owner_user_id             IS 'audit: who created/upserted; not for authorization (use workspace_id)';
+COMMENT ON COLUMN packtunnel_profiles.owner_user_id   IS 'audit: who created/upserted; not for authorization (use workspace_id)';
+COMMENT ON COLUMN packtunnel_rule_files.owner_user_id IS 'audit: who created/upserted; not for authorization (use workspace_id)';
+COMMENT ON COLUMN video_projects.owner_user_id        IS 'audit: who created/upserted; not for authorization (use workspace_id)';
+
 -- T6-D: locking workspace_id to NOT NULL on the migrated tables
 -- happens AFTER backfill, not here. Doing it inline in this
 -- bootstrap string would race the backfill: the schema runs at
@@ -2057,14 +2086,14 @@ func (s *Server) getLLMConfigByShareID(shareID string) (*LLMConfig, error) {
 	return &item, nil
 }
 
-func (s *Server) listPackTunnelProfiles(ownerUserID string) ([]PackTunnelProfile, error) {
+func (s *Server) listPackTunnelProfiles(workspaceID string) ([]PackTunnelProfile, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, name, profile_type, server_config, auth_config, options_config, transport_config,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, profile_type, server_config, auth_config, options_config, transport_config,
 		        priority, enabled, editable, source, country_code, country_flag, is_active, created_at, updated_at
 		   FROM packtunnel_profiles
-		  WHERE owner_user_id = $1
+		  WHERE workspace_id = $1
 		  ORDER BY is_active DESC, priority DESC, updated_at DESC, id DESC`,
-		ownerUserID,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -2082,13 +2111,13 @@ func (s *Server) listPackTunnelProfiles(ownerUserID string) ([]PackTunnelProfile
 	return items, rows.Err()
 }
 
-func (s *Server) getPackTunnelProfile(ownerUserID, id string) (*PackTunnelProfile, error) {
+func (s *Server) getPackTunnelProfile(workspaceID, id string) (*PackTunnelProfile, error) {
 	item, err := scanPackTunnelProfile(s.db.QueryRow(
-		`SELECT id, owner_user_id, name, profile_type, server_config, auth_config, options_config, transport_config,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, profile_type, server_config, auth_config, options_config, transport_config,
 		        priority, enabled, editable, source, country_code, country_flag, is_active, created_at, updated_at
 		   FROM packtunnel_profiles
-		  WHERE owner_user_id = $1 AND id = $2`,
-		ownerUserID,
+		  WHERE workspace_id = $1 AND id = $2`,
+		workspaceID,
 		id,
 	).Scan)
 	if err != nil {
@@ -2100,13 +2129,13 @@ func (s *Server) getPackTunnelProfile(ownerUserID, id string) (*PackTunnelProfil
 	return item, nil
 }
 
-func (s *Server) getActivePackTunnelProfile(ownerUserID string) (*PackTunnelProfile, error) {
+func (s *Server) getActivePackTunnelProfile(workspaceID string) (*PackTunnelProfile, error) {
 	item, err := scanPackTunnelProfile(s.db.QueryRow(
-		`SELECT id, owner_user_id, name, profile_type, server_config, auth_config, options_config, transport_config,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, profile_type, server_config, auth_config, options_config, transport_config,
 		        priority, enabled, editable, source, country_code, country_flag, is_active, created_at, updated_at
 		   FROM packtunnel_profiles
-		  WHERE owner_user_id = $1 AND is_active = TRUE`,
-		ownerUserID,
+		  WHERE workspace_id = $1 AND is_active = TRUE`,
+		workspaceID,
 	).Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2117,7 +2146,7 @@ func (s *Server) getActivePackTunnelProfile(ownerUserID string) (*PackTunnelProf
 	return item, nil
 }
 
-func (s *Server) createPackTunnelProfile(ownerUserID string, item PackTunnelProfile, now time.Time) (*PackTunnelProfile, error) {
+func (s *Server) createPackTunnelProfile(workspaceID, ownerUserID string, item PackTunnelProfile, now time.Time) (*PackTunnelProfile, error) {
 	if strings.TrimSpace(item.ID) == "" {
 		item.ID = generateResourceID()
 	}
@@ -2128,22 +2157,22 @@ func (s *Server) createPackTunnelProfile(ownerUserID string, item PackTunnelProf
 	}
 
 	if item.Metadata.IsActive {
-		if _, err := s.db.Exec(`UPDATE packtunnel_profiles SET is_active = FALSE, updated_at = $2 WHERE owner_user_id = $1 AND is_active = TRUE`, ownerUserID, now); err != nil {
+		if _, err := s.db.Exec(`UPDATE packtunnel_profiles SET is_active = FALSE, updated_at = $2 WHERE workspace_id = $1 AND is_active = TRUE`, workspaceID, now); err != nil {
 			return nil, err
 		}
 	}
 
 	created, err := scanPackTunnelProfile(s.db.QueryRow(
 		`INSERT INTO packtunnel_profiles (
-			id, owner_user_id, name, profile_type, server_config, auth_config, options_config, transport_config,
+			id, owner_user_id, workspace_id, name, profile_type, server_config, auth_config, options_config, transport_config,
 			priority, enabled, editable, source, country_code, country_flag, is_active, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8,
-			$9, $10, $11, $12, $13, $14, $15, $16, $16
+			$1, $2, $3, $4, $5, $6, $7, $8, $9,
+			$10, $11, $12, $13, $14, $15, $16, $17, $17
 		)
-		RETURNING id, owner_user_id, name, profile_type, server_config, auth_config, options_config, transport_config,
+		RETURNING id, owner_user_id, COALESCE(workspace_id, ''), name, profile_type, server_config, auth_config, options_config, transport_config,
 		          priority, enabled, editable, source, country_code, country_flag, is_active, created_at, updated_at`,
-		item.ID, ownerUserID, item.Name, item.Type, serverJSON, authJSON, optionsJSON, transportJSON,
+		item.ID, ownerUserID, workspaceID, item.Name, item.Type, serverJSON, authJSON, optionsJSON, transportJSON,
 		item.Metadata.Priority, item.Metadata.Enabled, item.Metadata.Editable, item.Metadata.Source,
 		item.Metadata.CountryCode, item.Metadata.CountryFlag, item.Metadata.IsActive, now,
 	).Scan)
@@ -2153,7 +2182,7 @@ func (s *Server) createPackTunnelProfile(ownerUserID string, item PackTunnelProf
 	return created, nil
 }
 
-func (s *Server) updatePackTunnelProfile(ownerUserID, id string, item PackTunnelProfile, now time.Time) (*PackTunnelProfile, error) {
+func (s *Server) updatePackTunnelProfile(workspaceID, id string, item PackTunnelProfile, now time.Time) (*PackTunnelProfile, error) {
 	serverJSON, authJSON, optionsJSON, transportJSON, err := marshalPackTunnelProfile(item)
 	if err != nil {
 		return nil, err
@@ -2166,7 +2195,7 @@ func (s *Server) updatePackTunnelProfile(ownerUserID, id string, item PackTunnel
 	defer tx.Rollback()
 
 	if item.Metadata.IsActive {
-		if _, err := tx.Exec(`UPDATE packtunnel_profiles SET is_active = FALSE, updated_at = $2 WHERE owner_user_id = $1 AND id <> $3 AND is_active = TRUE`, ownerUserID, now, id); err != nil {
+		if _, err := tx.Exec(`UPDATE packtunnel_profiles SET is_active = FALSE, updated_at = $2 WHERE workspace_id = $1 AND id <> $3 AND is_active = TRUE`, workspaceID, now, id); err != nil {
 			return nil, err
 		}
 	}
@@ -2187,10 +2216,10 @@ func (s *Server) updatePackTunnelProfile(ownerUserID, id string, item PackTunnel
 		        country_flag = $14,
 		        is_active = $15,
 		        updated_at = $16
-		  WHERE owner_user_id = $1 AND id = $2
-		RETURNING id, owner_user_id, name, profile_type, server_config, auth_config, options_config, transport_config,
+		  WHERE workspace_id = $1 AND id = $2
+		RETURNING id, owner_user_id, COALESCE(workspace_id, ''), name, profile_type, server_config, auth_config, options_config, transport_config,
 		          priority, enabled, editable, source, country_code, country_flag, is_active, created_at, updated_at`,
-		ownerUserID, id, item.Name, item.Type, serverJSON, authJSON, optionsJSON, transportJSON,
+		workspaceID, id, item.Name, item.Type, serverJSON, authJSON, optionsJSON, transportJSON,
 		item.Metadata.Priority, item.Metadata.Enabled, item.Metadata.Editable, item.Metadata.Source,
 		item.Metadata.CountryCode, item.Metadata.CountryFlag, item.Metadata.IsActive, now,
 	).Scan)
@@ -2207,8 +2236,8 @@ func (s *Server) updatePackTunnelProfile(ownerUserID, id string, item PackTunnel
 	return updated, nil
 }
 
-func (s *Server) deletePackTunnelProfile(ownerUserID, id string) (bool, error) {
-	result, err := s.db.Exec(`DELETE FROM packtunnel_profiles WHERE owner_user_id = $1 AND id = $2`, ownerUserID, id)
+func (s *Server) deletePackTunnelProfile(workspaceID, id string) (bool, error) {
+	result, err := s.db.Exec(`DELETE FROM packtunnel_profiles WHERE workspace_id = $1 AND id = $2`, workspaceID, id)
 	if err != nil {
 		return false, err
 	}
@@ -2219,24 +2248,24 @@ func (s *Server) deletePackTunnelProfile(ownerUserID, id string) (bool, error) {
 	return affected > 0, nil
 }
 
-func (s *Server) setActivePackTunnelProfile(ownerUserID, id string, now time.Time) (*PackTunnelProfile, error) {
+func (s *Server) setActivePackTunnelProfile(workspaceID, id string, now time.Time) (*PackTunnelProfile, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`UPDATE packtunnel_profiles SET is_active = FALSE, updated_at = $2 WHERE owner_user_id = $1 AND is_active = TRUE`, ownerUserID, now); err != nil {
+	if _, err := tx.Exec(`UPDATE packtunnel_profiles SET is_active = FALSE, updated_at = $2 WHERE workspace_id = $1 AND is_active = TRUE`, workspaceID, now); err != nil {
 		return nil, err
 	}
 
 	item, err := scanPackTunnelProfile(tx.QueryRow(
 		`UPDATE packtunnel_profiles
 		    SET is_active = TRUE, updated_at = $3
-		  WHERE owner_user_id = $1 AND id = $2
-		RETURNING id, owner_user_id, name, profile_type, server_config, auth_config, options_config, transport_config,
+		  WHERE workspace_id = $1 AND id = $2
+		RETURNING id, owner_user_id, COALESCE(workspace_id, ''), name, profile_type, server_config, auth_config, options_config, transport_config,
 		          priority, enabled, editable, source, country_code, country_flag, is_active, created_at, updated_at`,
-		ownerUserID,
+		workspaceID,
 		id,
 		now,
 	).Scan)
@@ -2253,18 +2282,23 @@ func (s *Server) setActivePackTunnelProfile(ownerUserID, id string, now time.Tim
 	return item, nil
 }
 
+// upsertPackTunnelRuleFile upserts the workspace's single rule file
+// row. T6-style flip: keyed on workspace_id (one rule file per
+// workspace), owner_user_id stays as audit only.
 func (s *Server) upsertPackTunnelRuleFile(item PackTunnelRuleFile) error {
 	_, err := s.db.Exec(
-		`INSERT INTO packtunnel_rule_files (owner_user_id, file_name, stored_name, file_path, file_size, content_type, uploaded_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
-		 ON CONFLICT (owner_user_id) DO UPDATE
-		     SET file_name = EXCLUDED.file_name,
+		`INSERT INTO packtunnel_rule_files (owner_user_id, workspace_id, file_name, stored_name, file_path, file_size, content_type, uploaded_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (workspace_id) WHERE workspace_id IS NOT NULL DO UPDATE
+		     SET owner_user_id = EXCLUDED.owner_user_id,
+		         file_name = EXCLUDED.file_name,
 		         stored_name = EXCLUDED.stored_name,
 		         file_path = EXCLUDED.file_path,
 		         file_size = EXCLUDED.file_size,
 		         content_type = EXCLUDED.content_type,
 		         uploaded_at = EXCLUDED.uploaded_at`,
 		item.UserID,
+		item.WorkspaceID,
 		item.FileName,
 		item.StoredName,
 		item.FilePath,
@@ -2275,15 +2309,16 @@ func (s *Server) upsertPackTunnelRuleFile(item PackTunnelRuleFile) error {
 	return err
 }
 
-func (s *Server) getPackTunnelRuleFile(ownerUserID string) (*PackTunnelRuleFile, error) {
+func (s *Server) getPackTunnelRuleFile(workspaceID string) (*PackTunnelRuleFile, error) {
 	var item PackTunnelRuleFile
 	err := s.db.QueryRow(
-		`SELECT owner_user_id, file_name, stored_name, file_path, file_size, content_type, uploaded_at
+		`SELECT owner_user_id, COALESCE(workspace_id, ''), file_name, stored_name, file_path, file_size, content_type, uploaded_at
 		   FROM packtunnel_rule_files
-		  WHERE owner_user_id = $1`,
-		ownerUserID,
+		  WHERE workspace_id = $1`,
+		workspaceID,
 	).Scan(
 		&item.UserID,
+		&item.WorkspaceID,
 		&item.FileName,
 		&item.StoredName,
 		&item.FilePath,
@@ -2300,8 +2335,8 @@ func (s *Server) getPackTunnelRuleFile(ownerUserID string) (*PackTunnelRuleFile,
 	return &item, nil
 }
 
-func (s *Server) deletePackTunnelRuleFile(ownerUserID string) (bool, error) {
-	result, err := s.db.Exec(`DELETE FROM packtunnel_rule_files WHERE owner_user_id = $1`, ownerUserID)
+func (s *Server) deletePackTunnelRuleFile(workspaceID string) (bool, error) {
+	result, err := s.db.Exec(`DELETE FROM packtunnel_rule_files WHERE workspace_id = $1`, workspaceID)
 	if err != nil {
 		return false, err
 	}
@@ -2323,6 +2358,7 @@ func scanPackTunnelProfile(scan func(dest ...any) error) (*PackTunnelProfile, er
 	err := scan(
 		&item.ID,
 		&item.UserID,
+		&item.WorkspaceID,
 		&item.Name,
 		&item.Type,
 		&serverJSON,
@@ -2396,14 +2432,14 @@ func decodePackTunnelJSON(raw []byte, dest any) error {
 	return json.Unmarshal(raw, dest)
 }
 
-func (s *Server) listBotUsers(ownerUserID string) ([]BotUser, error) {
+func (s *Server) listBotUsers(workspaceID string) ([]BotUser, error) {
 	rows, err := s.db.Query(
-		`SELECT b.id, b.owner_user_id, b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, b.created_at, b.updated_at
+		`SELECT b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, b.created_at, b.updated_at
 		   FROM bot_users b
 		   JOIN llm_configs c ON c.id = b.llm_config_id
-		  WHERE b.owner_user_id = $1
+		  WHERE b.workspace_id = $1
 		  ORDER BY b.updated_at DESC, b.id DESC`,
-		ownerUserID,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -2412,7 +2448,7 @@ func (s *Server) listBotUsers(ownerUserID string) ([]BotUser, error) {
 	items := make([]BotUser, 0)
 	for rows.Next() {
 		var item BotUser
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.ConfigName, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.ConfigName, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -2420,8 +2456,8 @@ func (s *Server) listBotUsers(ownerUserID string) ([]BotUser, error) {
 	return items, rows.Err()
 }
 
-func (s *Server) ensureBuiltinBotUsers(ownerUserID string, now time.Time) error {
-	configs, err := s.listAvailableLLMConfigs(ownerUserID)
+func (s *Server) ensureBuiltinBotUsers(workspaceID, ownerUserID string, now time.Time) error {
+	configs, err := s.listAvailableLLMConfigs(workspaceID)
 	if err != nil {
 		return err
 	}
@@ -2430,7 +2466,7 @@ func (s *Server) ensureBuiltinBotUsers(ownerUserID string, now time.Time) error 
 	}
 	defaultLLMConfigID := configs[0].ID
 
-	rows, err := s.db.Query(`SELECT name FROM bot_users WHERE owner_user_id = $1`, ownerUserID)
+	rows, err := s.db.Query(`SELECT name FROM bot_users WHERE workspace_id = $1`, workspaceID)
 	if err != nil {
 		return err
 	}
@@ -2453,6 +2489,7 @@ func (s *Server) ensureBuiltinBotUsers(ownerUserID string, now time.Time) error 
 			continue
 		}
 		if _, err := s.createBotUser(
+			workspaceID,
 			ownerUserID,
 			preset.Name,
 			preset.Description,
@@ -2466,15 +2503,15 @@ func (s *Server) ensureBuiltinBotUsers(ownerUserID string, now time.Time) error 
 	return nil
 }
 
-func (s *Server) getBotUserForOwner(ownerUserID string, id int64) (*BotUser, error) {
+func (s *Server) getBotUserForOwner(workspaceID string, id int64) (*BotUser, error) {
 	var item BotUser
 	err := s.db.QueryRow(
-		`SELECT b.id, b.owner_user_id, b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, b.created_at, b.updated_at
+		`SELECT b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, b.created_at, b.updated_at
 		   FROM bot_users b
 		   JOIN llm_configs c ON c.id = b.llm_config_id
-		  WHERE b.id = $1 AND b.owner_user_id = $2`,
-		id, ownerUserID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.ConfigName, &item.CreatedAt, &item.UpdatedAt)
+		  WHERE b.id = $1 AND b.workspace_id = $2`,
+		id, workspaceID,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.ConfigName, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -2484,7 +2521,7 @@ func (s *Server) getBotUserForOwner(ownerUserID string, id int64) (*BotUser, err
 	return &item, nil
 }
 
-func (s *Server) createBotUser(ownerUserID, name, description, systemPrompt string, llmConfigID int64, now time.Time) (*BotUser, error) {
+func (s *Server) createBotUser(workspaceID, ownerUserID, name, description, systemPrompt string, llmConfigID int64, now time.Time) (*BotUser, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -2496,7 +2533,7 @@ func (s *Server) createBotUser(ownerUserID, name, description, systemPrompt stri
 	}()
 
 	var configName string
-	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (owner_user_id = $2 OR shared = TRUE)`, llmConfigID, ownerUserID).Scan(&configName)
+	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE)`, llmConfigID, workspaceID).Scan(&configName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -2520,11 +2557,11 @@ func (s *Server) createBotUser(ownerUserID, name, description, systemPrompt stri
 
 	var item BotUser
 	err = tx.QueryRow(
-		`INSERT INTO bot_users (owner_user_id, bot_user_id, name, description, system_prompt, llm_config_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-		 RETURNING id, owner_user_id, bot_user_id, name, description, system_prompt, llm_config_id, created_at, updated_at`,
-		ownerUserID, botUserID, name, description, systemPrompt, llmConfigID, now,
-	).Scan(&item.ID, &item.OwnerUserID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.CreatedAt, &item.UpdatedAt)
+		`INSERT INTO bot_users (owner_user_id, workspace_id, bot_user_id, name, description, system_prompt, llm_config_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+		 RETURNING id, owner_user_id, COALESCE(workspace_id, ''), bot_user_id, name, description, system_prompt, llm_config_id, created_at, updated_at`,
+		ownerUserID, workspaceID, botUserID, name, description, systemPrompt, llmConfigID, now,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2535,7 +2572,7 @@ func (s *Server) createBotUser(ownerUserID, name, description, systemPrompt stri
 	return &item, nil
 }
 
-func (s *Server) updateBotUser(ownerUserID string, id int64, name, description, systemPrompt string, llmConfigID int64, now time.Time) (*BotUser, error) {
+func (s *Server) updateBotUser(workspaceID string, id int64, name, description, systemPrompt string, llmConfigID int64, now time.Time) (*BotUser, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -2547,7 +2584,7 @@ func (s *Server) updateBotUser(ownerUserID string, id int64, name, description, 
 	}()
 
 	var botUserID string
-	err = tx.QueryRow(`SELECT bot_user_id FROM bot_users WHERE id = $1 AND owner_user_id = $2`, id, ownerUserID).Scan(&botUserID)
+	err = tx.QueryRow(`SELECT bot_user_id FROM bot_users WHERE id = $1 AND workspace_id = $2`, id, workspaceID).Scan(&botUserID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -2555,7 +2592,7 @@ func (s *Server) updateBotUser(ownerUserID string, id int64, name, description, 
 		return nil, err
 	}
 	var configName string
-	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (owner_user_id = $2 OR shared = TRUE)`, llmConfigID, ownerUserID).Scan(&configName)
+	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE)`, llmConfigID, workspaceID).Scan(&configName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -2569,10 +2606,10 @@ func (s *Server) updateBotUser(ownerUserID string, id int64, name, description, 
 	err = tx.QueryRow(
 		`UPDATE bot_users
 		    SET name = $3, description = $4, system_prompt = $5, llm_config_id = $6, updated_at = $7
-		  WHERE id = $1 AND owner_user_id = $2
-		  RETURNING id, owner_user_id, bot_user_id, name, description, system_prompt, llm_config_id, created_at, updated_at`,
-		id, ownerUserID, name, description, systemPrompt, llmConfigID, now,
-	).Scan(&item.ID, &item.OwnerUserID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.CreatedAt, &item.UpdatedAt)
+		  WHERE id = $1 AND workspace_id = $2
+		  RETURNING id, owner_user_id, COALESCE(workspace_id, ''), bot_user_id, name, description, system_prompt, llm_config_id, created_at, updated_at`,
+		id, workspaceID, name, description, systemPrompt, llmConfigID, now,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -2586,7 +2623,7 @@ func (s *Server) updateBotUser(ownerUserID string, id int64, name, description, 
 	return &item, nil
 }
 
-func (s *Server) deleteBotUser(ownerUserID string, id int64) (bool, error) {
+func (s *Server) deleteBotUser(workspaceID string, id int64) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
@@ -2597,14 +2634,14 @@ func (s *Server) deleteBotUser(ownerUserID string, id int64) (bool, error) {
 		}
 	}()
 	var botUserID string
-	err = tx.QueryRow(`SELECT bot_user_id FROM bot_users WHERE id = $1 AND owner_user_id = $2`, id, ownerUserID).Scan(&botUserID)
+	err = tx.QueryRow(`SELECT bot_user_id FROM bot_users WHERE id = $1 AND workspace_id = $2`, id, workspaceID).Scan(&botUserID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return false, err
 	}
-	if _, err = tx.Exec(`DELETE FROM bot_users WHERE id = $1 AND owner_user_id = $2`, id, ownerUserID); err != nil {
+	if _, err = tx.Exec(`DELETE FROM bot_users WHERE id = $1 AND workspace_id = $2`, id, workspaceID); err != nil {
 		return false, err
 	}
 	if _, err = tx.Exec(`DELETE FROM users WHERE id = $1`, botUserID); err != nil {

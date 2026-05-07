@@ -83,7 +83,7 @@ func (s *Server) pollOneVideoShot(ctx context.Context, shot *VideoShot) error {
 		// defensive so a corrupted row doesn't churn forever.
 		return s.markVideoShotStatus(shot.ID, VideoShotStatusFailed, "", "shot has no llm_config_id", time.Now())
 	}
-	cfg, apiKey, err := s.getVideoLLMConfigWithAPIKey(project.OwnerUserID, *cfgID)
+	cfg, apiKey, err := s.getVideoLLMConfigWithAPIKey(project.WorkspaceID, *cfgID)
 	if err != nil {
 		return err
 	}

@@ -63,7 +63,7 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 		return
 	}
 
-	bot, err := s.getBotUserForOwner(userIDStr, req.BotID)
+	bot, err := s.getBotUserForOwner(c.GetString("workspace_id"), req.BotID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return

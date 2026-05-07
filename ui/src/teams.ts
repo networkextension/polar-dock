@@ -587,6 +587,10 @@ async function doDelete(): Promise<void> {
     if (c.profiles > 0) parts.push(`${c.profiles} 个 Profile`);
     if (c.asc_configs > 0) parts.push(`${c.asc_configs} 个 ASC config`);
     if (c.llm_configs > 0) parts.push(`${c.llm_configs} 个 LLM config`);
+    if (c.bot_users > 0) parts.push(`${c.bot_users} 个 Bot`);
+    if (c.packtunnel_profiles > 0) parts.push(`${c.packtunnel_profiles} 个网络配置`);
+    if (c.packtunnel_rules > 0) parts.push(`${c.packtunnel_rules} 份规则文件`);
+    if (c.video_projects > 0) parts.push(`${c.video_projects} 个视频项目`);
     setStatus(deleteStatusEl, `工作区还有：${parts.join("、")}。请先归档或迁走再删除。`, true);
     return;
   }

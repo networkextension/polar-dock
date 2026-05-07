@@ -52,7 +52,7 @@ func (s *Server) handlePackTunnelRuleUpload(c *gin.Context) {
 		return
 	}
 
-	existing, err := s.getPackTunnelRuleFile(systemUserID)
+	existing, err := s.getPackTunnelRuleFile(s.mustSystemWorkspaceID(c))
 	if err != nil {
 		log.Printf("packtunnel rules get existing failed: %v", err)
 		_ = os.Remove(dstPath)
@@ -67,6 +67,7 @@ func (s *Server) handlePackTunnelRuleUpload(c *gin.Context) {
 	now := time.Now()
 	item := PackTunnelRuleFile{
 		UserID:      systemUserID,
+		WorkspaceID: s.mustSystemWorkspaceID(c),
 		FileName:    file.Filename,
 		StoredName:  storedName,
 		FilePath:    dstPath,
@@ -97,7 +98,7 @@ func (s *Server) handlePackTunnelRuleDownload(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	item, err := s.getPackTunnelRuleFile(systemUserID)
+	item, err := s.getPackTunnelRuleFile(s.mustSystemWorkspaceID(c))
 	if err != nil {
 		log.Printf("packtunnel rules download lookup failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -124,7 +125,7 @@ func (s *Server) handlePackTunnelRuleDelete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	item, err := s.getPackTunnelRuleFile(systemUserID)
+	item, err := s.getPackTunnelRuleFile(s.mustSystemWorkspaceID(c))
 	if err != nil {
 		log.Printf("packtunnel rules delete lookup failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -138,7 +139,7 @@ func (s *Server) handlePackTunnelRuleDelete(c *gin.Context) {
 	if _, err := os.Stat(item.FilePath); err == nil {
 		_ = os.Remove(item.FilePath)
 	}
-	ok, err := s.deletePackTunnelRuleFile(systemUserID)
+	ok, err := s.deletePackTunnelRuleFile(s.mustSystemWorkspaceID(c))
 	if err != nil {
 		log.Printf("packtunnel rules delete failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})

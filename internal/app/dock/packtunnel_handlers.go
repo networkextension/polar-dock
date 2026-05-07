@@ -9,6 +9,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// mustSystemWorkspaceID is the packtunnel-specific shortcut to the
+// system user's personal team. packtunnel data is platform-wide
+// (a single proxy config drives the network agent regardless of
+// who's logged in), but the schema still wants a workspace_id —
+// so we route it through the system user's stable personal team.
+// Errors are logged + 500'd via gin context; in practice the system
+// user is created at startup so this should never fail.
+func (s *Server) mustSystemWorkspaceID(c *gin.Context) string {
+	id, err := s.systemWorkspaceID()
+	if err != nil {
+		log.Printf("packtunnel: system workspace id lookup failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return ""
+	}
+	return id
+}
+
 type packTunnelProfileRequest struct {
 	ID        string                    `json:"id"`
 	Name      string                    `json:"name" binding:"required"`
@@ -36,13 +53,13 @@ func (s *Server) handlePackTunnelProfileList(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	items, err := s.listPackTunnelProfiles(systemUserID)
+	items, err := s.listPackTunnelProfiles(s.mustSystemWorkspaceID(c))
 	if err != nil {
 		log.Printf("packtunnel list profiles failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	active, err := s.getActivePackTunnelProfile(systemUserID)
+	active, err := s.getActivePackTunnelProfile(s.mustSystemWorkspaceID(c))
 	if err != nil {
 		log.Printf("packtunnel get active profile failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -65,7 +82,7 @@ func (s *Server) handlePackTunnelProfileGet(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效配置"})
 		return
 	}
-	item, err := s.getPackTunnelProfile(systemUserID, id)
+	item, err := s.getPackTunnelProfile(s.mustSystemWorkspaceID(c), id)
 	if err != nil {
 		log.Printf("packtunnel get profile failed id=%s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -84,7 +101,7 @@ func (s *Server) handlePackTunnelActiveProfileGet(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	item, err := s.getActivePackTunnelProfile(systemUserID)
+	item, err := s.getActivePackTunnelProfile(s.mustSystemWorkspaceID(c))
 	if err != nil {
 		log.Printf("packtunnel active get failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -108,7 +125,7 @@ func (s *Server) handlePackTunnelProfileCreate(c *gin.Context) {
 		return
 	}
 
-	created, err := s.createPackTunnelProfile(systemUserID, item, time.Now())
+	created, err := s.createPackTunnelProfile(s.mustSystemWorkspaceID(c), systemUserID, item, time.Now())
 	if err != nil {
 		log.Printf("packtunnel create failed name=%s type=%s: %v", item.Name, item.Type, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
@@ -135,7 +152,7 @@ func (s *Server) handlePackTunnelProfileUpdate(c *gin.Context) {
 	}
 	item.ID = id
 
-	updated, err := s.updatePackTunnelProfile(systemUserID, id, item, time.Now())
+	updated, err := s.updatePackTunnelProfile(s.mustSystemWorkspaceID(c), id, item, time.Now())
 	if err != nil {
 		log.Printf("packtunnel update failed id=%s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
@@ -159,7 +176,7 @@ func (s *Server) handlePackTunnelProfileDelete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效配置"})
 		return
 	}
-	ok, err := s.deletePackTunnelProfile(systemUserID, id)
+	ok, err := s.deletePackTunnelProfile(s.mustSystemWorkspaceID(c), id)
 	if err != nil {
 		log.Printf("packtunnel delete failed id=%s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
@@ -184,7 +201,7 @@ func (s *Server) handlePackTunnelProfileActivate(c *gin.Context) {
 		return
 	}
 
-	item, err := s.setActivePackTunnelProfile(systemUserID, id, time.Now())
+	item, err := s.setActivePackTunnelProfile(s.mustSystemWorkspaceID(c), id, time.Now())
 	if err != nil {
 		log.Printf("packtunnel activate failed id=%s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "启用失败"})

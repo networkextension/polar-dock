@@ -17,18 +17,19 @@ import (
 
 // ---- LLMConfig: video-kind helpers ---------------------------------------
 
-// listVideoLLMConfigsForUser returns the user's own video-kind configs plus
-// any shared video-kind configs from other users. Used by the video-studio
-// config picker.
-func (s *Server) listVideoLLMConfigsForUser(ownerUserID string) ([]LLMConfig, error) {
+// listVideoLLMConfigsForUser returns the workspace's own video-kind
+// configs plus any shared video-kind configs from any workspace. Used
+// by the video-studio config picker. Name kept for back-compat; the
+// scope is workspace not user post-T6-misc.
+func (s *Server) listVideoLLMConfigsForUser(workspaceID string) ([]LLMConfig, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, share_id, shared, name, base_url, model, system_prompt,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt,
 		        provider_kind, extras, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
 		  WHERE provider_kind LIKE 'video.%'
-		    AND (owner_user_id = $1 OR shared = TRUE)
-		  ORDER BY (owner_user_id = $1) DESC, updated_at DESC, id DESC`,
-		ownerUserID,
+		    AND (workspace_id = $1 OR shared = TRUE)
+		  ORDER BY (workspace_id = $1) DESC, updated_at DESC, id DESC`,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -38,7 +39,7 @@ func (s *Server) listVideoLLMConfigsForUser(ownerUserID string) ([]LLMConfig, er
 	for rows.Next() {
 		var item LLMConfig
 		var extras []byte
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.ProviderKind, &extras, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.ProviderKind, &extras, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if len(extras) > 0 {
@@ -53,19 +54,19 @@ func (s *Server) listVideoLLMConfigsForUser(ownerUserID string) ([]LLMConfig, er
 // to use (own or shared) along with the decrypted API key and extras blob.
 // Returns (nil, "", nil, nil) if the config doesn't exist or is the wrong
 // kind.
-func (s *Server) getVideoLLMConfigWithAPIKey(ownerUserID string, id int64) (*LLMConfig, string, error) {
+func (s *Server) getVideoLLMConfigWithAPIKey(workspaceID string, id int64) (*LLMConfig, string, error) {
 	var item LLMConfig
 	var apiKey string
 	var extras []byte
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, share_id, shared, name, base_url, model, api_key, system_prompt,
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, api_key, system_prompt,
 		        provider_kind, extras, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
 		  WHERE id = $1
 		    AND provider_kind LIKE 'video.%'
-		    AND (owner_user_id = $2 OR shared = TRUE)`,
-		id, ownerUserID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.ProviderKind, &extras, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
+		    AND (workspace_id = $2 OR shared = TRUE)`,
+		id, workspaceID,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.ProviderKind, &extras, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", nil
@@ -99,7 +100,7 @@ func (s *Server) upsertLLMConfigKindAndExtras(workspaceID string, id int64, kind
 func scanVideoProject(scan func(...any) error) (*VideoProject, error) {
 	var p VideoProject
 	var defaultLLMConfigID sql.NullInt64
-	if err := scan(&p.ID, &p.OwnerUserID, &p.Title, &defaultLLMConfigID, &p.Status, &p.FinalVideoURL, &p.FinalRenderError, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := scan(&p.ID, &p.OwnerUserID, &p.WorkspaceID, &p.Title, &defaultLLMConfigID, &p.Status, &p.FinalVideoURL, &p.FinalRenderError, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if defaultLLMConfigID.Valid {
@@ -109,13 +110,13 @@ func scanVideoProject(scan func(...any) error) (*VideoProject, error) {
 	return &p, nil
 }
 
-func (s *Server) listVideoProjects(ownerUserID string) ([]VideoProject, error) {
+func (s *Server) listVideoProjects(workspaceID string) ([]VideoProject, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at
 		   FROM video_projects
-		  WHERE owner_user_id = $1
+		  WHERE workspace_id = $1
 		  ORDER BY updated_at DESC, id DESC`,
-		ownerUserID,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, err
@@ -132,12 +133,12 @@ func (s *Server) listVideoProjects(ownerUserID string) ([]VideoProject, error) {
 	return items, rows.Err()
 }
 
-func (s *Server) getVideoProject(ownerUserID string, id int64) (*VideoProject, error) {
+func (s *Server) getVideoProject(workspaceID string, id int64) (*VideoProject, error) {
 	row := s.db.QueryRow(
-		`SELECT id, owner_user_id, title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at
 		   FROM video_projects
-		  WHERE id = $1 AND owner_user_id = $2`,
-		id, ownerUserID,
+		  WHERE id = $1 AND workspace_id = $2`,
+		id, workspaceID,
 	)
 	p, err := scanVideoProject(row.Scan)
 	if err != nil {
@@ -149,11 +150,11 @@ func (s *Server) getVideoProject(ownerUserID string, id int64) (*VideoProject, e
 	return p, nil
 }
 
-// getVideoProjectByID skips the owner check; used by background workers
+// getVideoProjectByID skips the workspace check; used by background workers
 // that already validated ownership at submit time.
 func (s *Server) getVideoProjectByID(id int64) (*VideoProject, error) {
 	row := s.db.QueryRow(
-		`SELECT id, owner_user_id, title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at
 		   FROM video_projects
 		  WHERE id = $1`,
 		id,
@@ -168,23 +169,23 @@ func (s *Server) getVideoProjectByID(id int64) (*VideoProject, error) {
 	return p, nil
 }
 
-func (s *Server) createVideoProject(ownerUserID, title string, defaultLLMConfigID *int64, now time.Time) (*VideoProject, error) {
+func (s *Server) createVideoProject(workspaceID, ownerUserID, title string, defaultLLMConfigID *int64, now time.Time) (*VideoProject, error) {
 	row := s.db.QueryRow(
-		`INSERT INTO video_projects (owner_user_id, title, default_llm_config_id, status, created_at, updated_at)
-		 VALUES ($1, $2, $3, 'draft', $4, $4)
-		 RETURNING id, owner_user_id, title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at`,
-		ownerUserID, strings.TrimSpace(title), defaultLLMConfigID, now,
+		`INSERT INTO video_projects (owner_user_id, workspace_id, title, default_llm_config_id, status, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, 'draft', $5, $5)
+		 RETURNING id, owner_user_id, COALESCE(workspace_id, ''), title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at`,
+		ownerUserID, workspaceID, strings.TrimSpace(title), defaultLLMConfigID, now,
 	)
 	return scanVideoProject(row.Scan)
 }
 
-func (s *Server) updateVideoProject(ownerUserID string, id int64, title string, defaultLLMConfigID *int64, now time.Time) (*VideoProject, error) {
+func (s *Server) updateVideoProject(workspaceID string, id int64, title string, defaultLLMConfigID *int64, now time.Time) (*VideoProject, error) {
 	row := s.db.QueryRow(
 		`UPDATE video_projects
 		    SET title = $3, default_llm_config_id = $4, updated_at = $5
-		  WHERE id = $1 AND owner_user_id = $2
-		  RETURNING id, owner_user_id, title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at`,
-		id, ownerUserID, strings.TrimSpace(title), defaultLLMConfigID, now,
+		  WHERE id = $1 AND workspace_id = $2
+		  RETURNING id, owner_user_id, COALESCE(workspace_id, ''), title, default_llm_config_id, status, final_video_url, final_render_error, created_at, updated_at`,
+		id, workspaceID, strings.TrimSpace(title), defaultLLMConfigID, now,
 	)
 	p, err := scanVideoProject(row.Scan)
 	if err != nil {
@@ -206,8 +207,8 @@ func (s *Server) updateVideoProjectStatus(id int64, status, finalURL, renderErro
 	return err
 }
 
-func (s *Server) deleteVideoProject(ownerUserID string, id int64) (bool, error) {
-	res, err := s.db.Exec(`DELETE FROM video_projects WHERE id = $1 AND owner_user_id = $2`, id, ownerUserID)
+func (s *Server) deleteVideoProject(workspaceID string, id int64) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM video_projects WHERE id = $1 AND workspace_id = $2`, id, workspaceID)
 	if err != nil {
 		return false, err
 	}
