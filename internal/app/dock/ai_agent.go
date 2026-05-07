@@ -524,12 +524,24 @@ func (a *aiAgent) generateReply(task aiAgentTask, runtimeConfig aiRuntimeConfig)
 		return "这个 Bot 的模型配置还没准备好，请先补全 API Key、Base URL 和 Model。", nil
 	}
 
-	// Phase 1.4A: route to the tool-aware multi-turn loop when the
-	// responding bot has a polar-agent attached. Otherwise fall
-	// through to the plain single-shot completion below.
+	// Phase 1.4: route to the right agent path when this bot has a
+	// polar-agent attached. Two flavors:
+	//   - kimi-cli passthrough — the agent has kimi-cli installed
+	//     and declares the "kimi" capability. Platform forwards the
+	//     chat content as-is, agent shells out to kimi, returns
+	//     kimi's stdout. Platform LLM not invoked at all.
+	//   - tool loop (1.4A) — platform drives an OpenAI-compatible
+	//     tool-calling loop, using read_file/write_file/list_dir/
+	//     run_cmd tools that the agent executes.
+	// Falls through to the plain single-shot completion if no
+	// agent is attached.
 	if a.server != nil && a.server.agentHub != nil && task.ResponderUserID != "" {
 		if conn := a.server.agentHub.lookup(task.ResponderUserID); conn != nil {
-			log.Printf("[ai-agent] bot=%s has agent attached, using tool loop (workdir=%s)", task.ResponderUserID, conn.workdir)
+			if conn.hasCapability("kimi") {
+				log.Printf("[ai-agent] bot=%s using kimi passthrough (workdir=%s)", task.ResponderUserID, conn.workdir)
+				return a.generateReplyWithKimi(task, conn)
+			}
+			log.Printf("[ai-agent] bot=%s using tool loop (workdir=%s)", task.ResponderUserID, conn.workdir)
 			return a.generateReplyWithTools(task, runtimeConfig, task.ResponderUserID, conn.workdir)
 		}
 	}

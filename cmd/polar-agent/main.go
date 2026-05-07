@@ -58,12 +58,16 @@ Usage:
   polar-agent login   --server=<url> --token=<raw>     # write ~/.polar/agent.toml
   polar-agent status                                    # show config + last verify
   polar-agent attach  --bot=<bot_id> --workdir=<path>   # connect WS, execute tools
+  polar-agent attach  --bot=<bot_id> --workdir=<path> --kimi   # passthrough to local kimi-cli
 
-Tool whitelist (executed in workdir):
+Tool whitelist (executed in workdir, default mode):
   read_file   — args: { path }
   write_file  — args: { path, content }
   list_dir    — args: { path }
   run_cmd     — args: { cmd, args[], stdin }   # cmd in {git, swift, xcodebuild, xcrun, ls, cat, find, grep}
+
+--kimi mode: chat content piped through "kimi-cli --work-dir=<path> --yolo --afk --continue".
+            Platform LLM is bypassed; kimi-cli IS the agent. Requires kimi-cli on $PATH.
 
 Config file: ~/.polar/agent.toml
   server = "https://polar.example.com"
@@ -119,6 +123,7 @@ func runAttach(args []string) int {
 	bot := fs.String("bot", "", "bot_user_id to attach to")
 	workdir := fs.String("workdir", ".", "local working directory the bot may operate on")
 	verbose := fs.Bool("verbose", false, "log each tool call")
+	kimi := fs.Bool("kimi", false, "passthrough mode: shell out to local kimi-cli for each chat message")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -137,8 +142,12 @@ func runAttach(args []string) int {
 		return exitConfig
 	}
 	log.SetFlags(log.Ldate | log.Ltime)
-	log.Printf("attach bot=%s workdir=%s server=%s", *bot, resolved, cfg.Server)
-	if err := runAgentLoop(cfg, *bot, resolved, *verbose); err != nil {
+	mode := "tool-loop"
+	if *kimi {
+		mode = "kimi-passthrough"
+	}
+	log.Printf("attach bot=%s workdir=%s server=%s mode=%s", *bot, resolved, cfg.Server, mode)
+	if err := runAgentLoop(cfg, *bot, resolved, *verbose, *kimi); err != nil {
 		log.Printf("agent loop ended: %v", err)
 		return exitNet
 	}
