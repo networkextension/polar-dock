@@ -221,6 +221,15 @@ func NewServer(cfg Config) (*Server, error) {
 		log.Printf("teams: resource workspace_id backfill failed: %v", err)
 	}
 
+	// T6-D enforcement: lock workspace_id NOT NULL only AFTER the
+	// backfill above has had a chance to fill in legacy NULLs. This
+	// is the order that Postgres needs but the embedded schema
+	// string in openDB can't express (schema apply runs before any
+	// Go-side backfill).
+	if err := server.enforceWorkspaceIDNotNull(); err != nil {
+		log.Printf("teams: workspace_id NOT NULL enforcement failed: %v", err)
+	}
+
 	// Mark any pending invitations whose TTL has elapsed as expired.
 	// Idempotent and quick; lazy expiration also happens at access time.
 	if err := server.expireOldInvitations(); err != nil {

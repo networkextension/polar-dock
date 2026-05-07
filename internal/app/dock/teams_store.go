@@ -524,6 +524,32 @@ func (s *Server) listTeamMembersWithUser(teamID string) ([]TeamMemberWithUser, e
 	return out, rows.Err()
 }
 
+// enforceWorkspaceIDNotNull adds the NOT NULL constraint on
+// workspace_id for the T6-migrated tables. Must run AFTER
+// backfillResourceWorkspaceIDs, otherwise the ALTER would 23502 on
+// any legacy row whose workspace_id hasn't been populated yet.
+//
+// SET NOT NULL is idempotent on Postgres — re-applying on an
+// already-NOT-NULL column is a no-op. Failure here is logged but
+// doesn't block server start: a rolling deploy might briefly have
+// rows in flight; the next restart's backfill+enforce loop will
+// converge.
+func (s *Server) enforceWorkspaceIDNotNull() error {
+	tables := []string{
+		"iosdist_apps",
+		"iosdist_certificates",
+		"iosdist_profiles",
+		"iosdist_asc_configs",
+		"llm_configs",
+	}
+	for _, table := range tables {
+		if _, err := s.db.Exec(`ALTER TABLE ` + table + ` ALTER COLUMN workspace_id SET NOT NULL`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // backfillResourceWorkspaceIDs populates the workspace_id column on
 // migrated module tables (T6-A). Each row's workspace_id is set to
 // the personal team of its owner_user_id. Idempotent — only touches
