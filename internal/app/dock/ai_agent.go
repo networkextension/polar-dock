@@ -275,11 +275,75 @@ func (a *aiAgent) handleTask(task aiAgentTask) {
 		}
 		return
 	}
+	// Long-running path: bot has a polar-agent attached. Show a
+	// streaming placeholder ("✦ thinking...") immediately so the
+	// user sees the bot is working — kimi-cli / claude / codex can
+	// take 30+ minutes on real coding tasks. handleAgentTask
+	// reuses the same placeholder + finalize plumbing as
+	// handleStreamingTask but drives one synchronous generateReply
+	// instead of an SSE loop.
+	if a.server != nil && a.server.agentHub != nil && task.ResponderUserID != "" &&
+		a.server.agentHub.lookup(task.ResponderUserID) != nil {
+		a.handleAgentTask(task, cfg)
+		return
+	}
 	if cfg.Streaming {
 		a.handleStreamingTask(task, cfg)
 		return
 	}
 	a.handleSyncTask(task, cfg)
+}
+
+// handleAgentTask is the placeholder-bracketed sync path used for
+// any bot with a polar-agent attached (kimi passthrough or tool
+// loop). It mirrors handleSyncTask but inserts a streaming
+// placeholder up front so the user sees a "thinking" bubble
+// during the (potentially long) wait, then finalizes the same
+// row with the agent's reply.
+func (a *aiAgent) handleAgentTask(task aiAgentTask, cfg aiRuntimeConfig) {
+	now := time.Now()
+	placeholderID, phErr := a.server.sendStreamingPlaceholder(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, now)
+	if phErr != nil {
+		// Fallback to plain sync flow if the placeholder fails — at
+		// least the user still gets the final reply.
+		log.Printf("ai agent placeholder insert failed (falling back to sync): %v", phErr)
+		a.handleSyncTask(task, cfg)
+		return
+	}
+	start := time.Now()
+	reply, err := a.generateReply(task, cfg)
+	latencyMs := time.Since(start).Milliseconds()
+	latencyPtr := &latencyMs
+	if err != nil {
+		log.Printf("ai agent reply failed after %dms: %v", latencyMs, err)
+		body := "我暂时无法完成这次处理，请稍后再试。"
+		if finalErr := a.server.finalizeChatMessage(placeholderID, body, nil, "", latencyPtr, true); finalErr != nil {
+			log.Printf("finalize agent placeholder (failed) error: %v", finalErr)
+		}
+		return
+	}
+	reply = strings.TrimSpace(reply)
+	if reply == "" {
+		reply = "（agent 没有可返回的结果）"
+	}
+	log.Printf("ai agent reply ok in %dms (thread=%d) [agent path]", latencyMs, task.ThreadID)
+
+	// Mirror handleStreamingTask success path: stash full reply as
+	// a markdown entry so the user can re-open the long output, and
+	// finalize the placeholder with a short preview + link.
+	title := buildSystemMarkdownTitle(reply, time.Now())
+	entry, _, mdErr := a.server.saveMarkdownDocument(task.ResponderUserID, title, reply, "markdown", false, time.Now())
+	if mdErr != nil {
+		log.Printf("save agent markdown failed: %v (finalizing as plain text)", mdErr)
+		if finalErr := a.server.finalizeChatMessage(placeholderID, reply, nil, "", latencyPtr, false); finalErr != nil {
+			log.Printf("finalize agent placeholder (no markdown) error: %v", finalErr)
+		}
+		return
+	}
+	preview := buildMarkdownPreview(reply, 120)
+	if err := a.server.finalizeChatMessage(placeholderID, preview, &entry.ID, entry.Title, latencyPtr, false); err != nil {
+		log.Printf("finalize agent placeholder error: %v", err)
+	}
 }
 
 // handleSyncTask is the original non-streaming flow: one HTTP call, save
