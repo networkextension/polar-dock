@@ -121,6 +121,7 @@
                   <button class="lp-subnav-item active" type="button" data-teams-tab="info">基本信息</button>
                   <button class="lp-subnav-item" type="button" data-teams-tab="members">成员</button>
                   <button class="lp-subnav-item" type="button" data-teams-tab="invitations" hidden>邀请</button>
+                  <button class="lp-subnav-item" type="button" data-teams-tab="logs">日志</button>
                   <button class="lp-subnav-item" type="button" data-teams-tab="danger">危险区</button>
                 </nav>
 
@@ -177,6 +178,24 @@
                     <div id="teamsInvitationsList" class="video-studio-project-list">
                       <div class="chat-empty">加载中...</div>
                     </div>
+                  </div>
+                </section>
+
+                <!-- Tab: logs -->
+                <section data-teams-pane="logs" hidden style="display:flex; flex-direction:column; gap:10px;">
+                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                    <label style="font-size:12px; color:var(--text-muted,#888);">按分类筛选：</label>
+                    <select id="teamsLogsCategory" class="input" style="width:auto; min-width:140px; font-size:12px;">
+                      <option value="">全部</option>
+                      <option value="team_audit">team_audit · 工作区操作</option>
+                      <option value="sign">sign · 签名任务</option>
+                      <option value="deploy">deploy · 部署 / 渲染</option>
+                      <option value="agent">agent · AI 活动</option>
+                    </select>
+                    <button id="teamsLogsRefreshBtn" class="btn-inline btn-secondary" type="button" style="font-size:12px;">刷新</button>
+                  </div>
+                  <div id="teamsLogsList" style="display:flex; flex-direction:column; gap:6px;">
+                    <div class="chat-empty">加载中...</div>
                   </div>
                 </section>
 

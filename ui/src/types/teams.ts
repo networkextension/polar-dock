@@ -138,3 +138,25 @@ export type TeamTransferPayload = {
 export type TeamMemberRoleUpdatePayload = {
   role: TeamRole;
 };
+
+export type LogEntry = {
+  id: number;
+  category: "sign" | "team_audit" | "deploy" | "agent" | "server" | string;
+  level: "debug" | "info" | "warn" | "error";
+  source: string;
+  workspace_id?: string;
+  actor_user_id?: string;
+  actor_kind: "user" | "bot" | "system" | "agent";
+  subject_kind?: string;
+  subject_id?: string;
+  action?: string;
+  message: string;
+  details?: Record<string, unknown>;
+  request_id?: string;
+  created_at: string;
+};
+
+export type LogListResponse = {
+  entries: LogEntry[];
+  scope: "workspace" | "site";
+};

@@ -5,6 +5,7 @@ import type {
   AdminInvitationListResponse,
   InboxCountResponse,
   InboxInvitationListResponse,
+  LogListResponse,
   TeamCreatePayload,
   TeamCreateResponse,
   TeamDetailResponse,
@@ -98,6 +99,19 @@ export async function fetchMyInvitations() {
 
 export async function fetchMyInvitationCount() {
   return requestJson<InboxCountResponse>("/api/users/me/invitations/count");
+}
+
+// ---- logs (workspace scope) ---------------------------------------
+
+export async function fetchTeamLogs(id: string, params: Record<string, string> = {}) {
+  const qs = new URLSearchParams(params).toString();
+  const path = `/api/teams/${encodeURIComponent(id)}/logs${qs ? "?" + qs : ""}`;
+  return requestJson<LogListResponse>(path);
+}
+
+export async function fetchAdminLogs(params: Record<string, string> = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return requestJson<LogListResponse>(`/api/admin/logs${qs ? "?" + qs : ""}`);
 }
 
 export async function acceptInvitation(token: string) {

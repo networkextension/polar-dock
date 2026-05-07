@@ -16,6 +16,7 @@ import {
   fetchMyInvitations,
   fetchTeam,
   fetchTeamInvitations,
+  fetchTeamLogs,
   fetchTeamMembers,
   fetchTeams,
   removeTeamMember,
@@ -31,6 +32,7 @@ import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import type {
   AdminInvitation,
   InboxInvitation,
+  LogEntry,
   TeamDeleteBlockedResponse,
   TeamMember,
   TeamRole,
@@ -68,6 +70,10 @@ const inviteRoleEl = byId<HTMLSelectElement>("teamsInviteRole");
 const inviteSubmitBtn = byId<HTMLButtonElement>("teamsInviteSubmit");
 const inviteStatusEl = byId<HTMLElement>("teamsInviteStatus");
 const invitationsListEl = byId<HTMLElement>("teamsInvitationsList");
+
+const logsListEl = byId<HTMLElement>("teamsLogsList");
+const logsCategoryEl = byId<HTMLSelectElement>("teamsLogsCategory");
+const logsRefreshBtn = byId<HTMLButtonElement>("teamsLogsRefreshBtn");
 
 const inboxEl = byId<HTMLElement>("teamsInbox");
 const inboxCountEl = byId<HTMLElement>("teamsInboxCount");
@@ -340,6 +346,75 @@ function setActiveTab(name: string): void {
   if (name === "invitations" && activeTeam) {
     void loadInvitations(activeTeam.id);
   }
+  if (name === "logs" && activeTeam) {
+    void loadLogs(activeTeam.id);
+  }
+}
+
+const LOG_LEVEL_COLOR: Record<string, string> = {
+  debug: "#999",
+  info: "#3a7",
+  warn: "#c80",
+  error: "#c33",
+};
+
+const LOG_CATEGORY_LABEL: Record<string, string> = {
+  sign: "签名",
+  team_audit: "工作区",
+  deploy: "部署",
+  agent: "AI",
+  server: "服务",
+};
+
+function renderLogs(entries: LogEntry[]): void {
+  if (entries.length === 0) {
+    logsListEl.innerHTML = `<div class="chat-empty">暂无日志</div>`;
+    return;
+  }
+  logsListEl.innerHTML = entries
+    .map((e) => {
+      const ts = new Date(e.created_at).toLocaleString();
+      const levelColor = LOG_LEVEL_COLOR[e.level] ?? "#666";
+      const categoryLabel = LOG_CATEGORY_LABEL[e.category] ?? e.category;
+      const detailsBlob =
+        e.details && Object.keys(e.details).length > 0
+          ? `<details style="margin-top:4px;"><summary style="font-size:11px; color:var(--text-muted,#888); cursor:pointer;">详情</summary><pre style="font-size:11px; background:#f7f7f9; padding:6px; margin:4px 0 0 0; border-radius:4px; overflow:auto; white-space:pre-wrap; word-break:break-all;">${escapeHTML(JSON.stringify(e.details, null, 2))}</pre></details>`
+          : "";
+      const subject = e.subject_kind
+        ? ` <span style="font-family:monospace; font-size:11px; color:var(--text-muted,#888);">${escapeHTML(e.subject_kind)}/${escapeHTML(e.subject_id || "")}</span>`
+        : "";
+      const action = e.action ? ` <span style="font-family:monospace; font-size:11px;">${escapeHTML(e.action)}</span>` : "";
+      const actor = e.actor_user_id
+        ? `<span style="font-size:11px; color:var(--text-muted,#888);">actor: ${escapeHTML(e.actor_user_id)}</span>`
+        : `<span style="font-size:11px; color:var(--text-muted,#888);">${escapeHTML(e.actor_kind)}</span>`;
+      return `
+        <div style="padding:8px 10px; background:#fff; border:1px solid var(--border,#ececf0); border-radius:6px;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px;">
+            <span style="font-family:monospace; color:var(--text-muted,#888);">${escapeHTML(ts)}</span>
+            <span style="padding:1px 6px; border-radius:3px; background:${levelColor}; color:#fff; font-size:10px; text-transform:uppercase;">${escapeHTML(e.level)}</span>
+            <span style="padding:1px 6px; border-radius:3px; border:1px solid var(--border,#ddd); font-size:10px;">${escapeHTML(categoryLabel)}</span>
+            ${action}
+            ${subject}
+          </div>
+          <div style="font-size:13px; margin-top:4px;">${escapeHTML(e.message || "(no message)")}</div>
+          <div style="margin-top:4px;">${actor}</div>
+          ${detailsBlob}
+        </div>`;
+    })
+    .join("");
+}
+
+async function loadLogs(teamID: string): Promise<void> {
+  logsListEl.innerHTML = `<div class="chat-empty">加载中...</div>`;
+  const params: Record<string, string> = { limit: "50" };
+  const cat = logsCategoryEl.value.trim();
+  if (cat) params.category = cat;
+  const { response, data } = await fetchTeamLogs(teamID, params);
+  if (!response.ok) {
+    logsListEl.innerHTML = `<div class="chat-empty">加载失败</div>`;
+    return;
+  }
+  renderLogs(data.entries);
 }
 
 async function loadTeams(): Promise<void> {
@@ -741,6 +816,12 @@ createModal.addEventListener("click", (e) => {
 });
 createForm.addEventListener("submit", (e) => void submitCreate(e));
 inviteForm.addEventListener("submit", (e) => void submitInvite(e));
+logsRefreshBtn.addEventListener("click", () => {
+  if (activeTeam) void loadLogs(activeTeam.id);
+});
+logsCategoryEl.addEventListener("change", () => {
+  if (activeTeam) void loadLogs(activeTeam.id);
+});
 
 document.getElementById("logoutBtn")?.addEventListener("click", async () => {
   try {

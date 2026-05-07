@@ -95,6 +95,39 @@ func (s *Server) processIOSSignTask(ctx context.Context, taskID int64) {
 		return
 	}
 	log.Printf("[iosdist sign-worker] task=%d running app=%d source_version=%d cert=%d profile=%d", taskID, app.ID, source.ID, cert.ID, profile.ID)
+	s.logSignEvent(app.WorkspaceID, taskID, "started", "开始签名", LogLevelInfo, map[string]any{
+		"app_id":      app.ID,
+		"app_name":    app.Name,
+		"source_ver":  source.ID,
+		"cert_id":     cert.ID,
+		"profile_id":  profile.ID,
+		"task_status": task.Status,
+	})
+
+	// Defer the terminal outcome log: re-read the task and emit
+	// success/failed depending on what the worker landed on. This
+	// wraps every early failure path (and the panic recovery) in
+	// a single audit entry without touching each markFailed site.
+	defer func() {
+		final, ferr := s.getIOSSignTask(taskID)
+		if ferr != nil || final == nil {
+			return
+		}
+		switch final.Status {
+		case "success":
+			s.logSignEvent(app.WorkspaceID, taskID, "completed", "签名成功", LogLevelInfo, map[string]any{
+				"output_version_id": final.OutputVersionID,
+			})
+		case "failed":
+			msg := final.ErrorMessage
+			if msg == "" {
+				msg = "签名失败"
+			}
+			s.logSignEvent(app.WorkspaceID, taskID, "failed", msg, LogLevelError, map[string]any{
+				"log_text_preview": truncateForLog(final.LogText, 400),
+			})
+		}
+	}()
 
 	workDir, err := os.MkdirTemp("", fmt.Sprintf("iosdist-sign-%d-", taskID))
 	if err != nil {
