@@ -67,7 +67,7 @@ Shot 3 prompt...`,"video.bulkImportConfirm":"Import shots","video.bulkImportPrev
           </div>
         </div>`).join(""),x.querySelectorAll("[data-project-id]").forEach(e=>{e.addEventListener("click",()=>{let t=e.getAttribute("data-project-id");t&&w(t)})})}function J(){if(!n){Ge.hidden=!1,Ye.hidden=!0;return}Ge.hidden=!0,Ye.hidden=!1,Ct.textContent=n.name,Rt.textContent=ot[n.status]??n.status,xt.textContent=`\u521B\u5EFA\u4E8E ${new Date(n.created_at).toLocaleString()}`,A.value=n.description,Y(m),Y(E),Z(),U()}function Z(){if(g.length===0){Je.hidden=!0;return}Je.hidden=!1;let e=g.filter(t=>t.selected).length;Mt.textContent=`${e} / ${g.length} \u5DF2\u9009`,I.disabled=e===0,Xe.innerHTML=g.map(t=>{let o=Ht[t.complexity],a=Nt[t.complexity];return`
         <label style="display:flex; gap:10px; align-items:flex-start; padding:10px; background:${t.selected?"#fff":"#f7f7f9"}; border:1px solid var(--border,#ececf0); border-radius:6px; cursor:pointer;">
-          <input type="checkbox" ${t.selected?"checked":""} data-feature-toggle="${r(t.id)}" style="margin-top:3px; flex-shrink:0;" />
+          <input type="checkbox" ${t.selected?"checked":""} data-feature-toggle="${r(t.id)}" style="margin:3px 0 0 0; padding:0; width:auto; flex-shrink:0;" />
           <div style="flex:1; min-width:0;">
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
               <div style="font-weight:500; font-size:14px;">${r(t.title)}</div>

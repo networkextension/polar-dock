@@ -205,9 +205,14 @@ function renderFeatures(): void {
     .map((f) => {
       const c = COMPLEXITY_COLOR[f.complexity];
       const cl = COMPLEXITY_LABEL[f.complexity];
+      // Inline overrides on the checkbox: the global "input { width:
+      // 100%; padding: 12px 14px }" rule (styles.css) is meant for
+      // text fields, but it also applies to checkboxes here and
+      // collapses the flex sibling text column to a single character
+      // wide. Reset to native sizing.
       return `
         <label style="display:flex; gap:10px; align-items:flex-start; padding:10px; background:${f.selected ? "#fff" : "#f7f7f9"}; border:1px solid var(--border,#ececf0); border-radius:6px; cursor:pointer;">
-          <input type="checkbox" ${f.selected ? "checked" : ""} data-feature-toggle="${escapeHTML(f.id)}" style="margin-top:3px; flex-shrink:0;" />
+          <input type="checkbox" ${f.selected ? "checked" : ""} data-feature-toggle="${escapeHTML(f.id)}" style="margin:3px 0 0 0; padding:0; width:auto; flex-shrink:0;" />
           <div style="flex:1; min-width:0;">
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
               <div style="font-weight:500; font-size:14px;">${escapeHTML(f.title)}</div>
