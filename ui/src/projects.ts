@@ -12,6 +12,7 @@ import {
   createProject,
   decomposeProject,
   deleteProject,
+  fetchAgentBotStatus,
   fetchAgentTokens,
   fetchProject,
   fetchProjects,
@@ -79,7 +80,31 @@ const createModalCloseBtn = byId<HTMLButtonElement>("projectsCreateModalCloseBtn
 const createForm = byId<HTMLFormElement>("projectsCreateForm");
 const createName = byId<HTMLInputElement>("projectsCreateName");
 const createDesc = byId<HTMLTextAreaElement>("projectsCreateDescription");
+const createRuntimeEnv = byId<HTMLSelectElement>("projectsCreateRuntimeEnv");
+const createBusinessScenario = byId<HTMLSelectElement>("projectsCreateBusinessScenario");
+const createCodeProvider = byId<HTMLSelectElement>("projectsCreateCodeProvider");
 const createStatusEl = byId<HTMLElement>("projectsCreateStatus");
+
+const RUNTIME_ENV_LABELS: Record<string, string> = {
+  ios_swiftui: "iOS · SwiftUI",
+  ios_uikit: "iOS · UIKit",
+  macos_native: "macOS",
+  web_static: "Web 静态",
+  web_react: "Web React",
+  web_nextjs: "Web Next.js",
+  cli_tool: "CLI 工具",
+  chrome_ext: "Chrome 扩展",
+};
+
+const BUSINESS_SCENARIO_LABELS: Record<string, string> = {
+  creative_game: "创意小游戏",
+  content_app: "文学/历史/教育内容",
+  productivity: "生产力工具",
+  social: "社交互动",
+  data_viz: "数据可视化",
+  commerce: "商业/交易",
+  media: "媒体内容",
+};
 
 let projects: Project[] = [];
 let activeProjectID: string | null = null;
@@ -88,6 +113,11 @@ let activeFeatures: ProjectFeature[] = [];
 let activeTasks: ProjectTask[] = [];
 let availableBots: BotUser[] = [];
 let pickerOpenForTaskID: string | null = null;
+// botToolMap caches each bot's currently-attached agent tool name
+// (kimi/claude/codex/...) so the pickup picker can highlight bots
+// matching the active project's code_provider. Empty string means
+// "no agent attached" or "tool-loop mode".
+let botToolMap: Record<string, string> = {};
 
 const STATUS_LABEL: Record<ProjectStatus, string> = {
   draft: "草稿",
@@ -181,7 +211,24 @@ function renderProjectPanel(): void {
   emptyEl.hidden = true;
   panelEl.hidden = false;
   nameEl.textContent = activeProject.name;
-  statusPillEl.textContent = STATUS_LABEL[activeProject.status] ?? activeProject.status;
+  // Project status pill plus the (optional) constraint badges so
+  // the user always sees what stack + scenario is locking the AI
+  // 拆解 — these are the things that make the difference between
+  // "useful feature list" and "generic SaaS plan".
+  const constraintChips: string[] = [];
+  const env = activeProject.runtime_env;
+  const scenario = activeProject.business_scenario;
+  const codeProvider = activeProject.code_provider;
+  if (env && RUNTIME_ENV_LABELS[env]) {
+    constraintChips.push(`<span class="tag-chip" title="运行环境">${RUNTIME_ENV_LABELS[env]}</span>`);
+  }
+  if (scenario && BUSINESS_SCENARIO_LABELS[scenario]) {
+    constraintChips.push(`<span class="tag-chip" title="业务场景">${BUSINESS_SCENARIO_LABELS[scenario]}</span>`);
+  }
+  if (codeProvider) {
+    constraintChips.push(`<span class="tag-chip tag-chip-accent" title="首选编码工具">🤖 ${escapeHTML(codeProvider)}</span>`);
+  }
+  statusPillEl.innerHTML = `${STATUS_LABEL[activeProject.status] ?? activeProject.status} ${constraintChips.join(" ")}`;
   createdAtEl.textContent = `创建于 ${new Date(activeProject.created_at).toLocaleString()}`;
   descEl.value = activeProject.description;
   clearStatus(decomposeStatusEl);
@@ -299,13 +346,38 @@ function renderTaskBotSlot(t: ProjectTask, pickerOpen: boolean): string {
     return `<span style="color:var(--text-muted,#888);">没有 bot 可用，请先在 Bots 页面创建一个</span>
             <button type="button" class="btn-inline btn-secondary" data-task-pickup="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">取消</button>`;
   }
-  const choices = availableBots
-    .map(
-      (b) =>
-        `<button type="button" class="btn-inline btn-secondary" data-pickup-bot="${escapeHTML(b.bot_user_id)}" data-task-id="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">${escapeHTML(b.name)}</button>`,
-    )
+  // Sort bots so the project's preferred code_provider comes first.
+  // botToolMap[bot_user_id] returns the attached agent's tool
+  // ("kimi"/"claude"/"codex"/""). Matching = bot's tool ===
+  // project.code_provider.
+  const preferred = activeProject?.code_provider || "";
+  const sorted = [...availableBots].sort((a, b) => {
+    const at = botToolMap[a.bot_user_id] || "";
+    const bt = botToolMap[b.bot_user_id] || "";
+    const aMatch = preferred && at === preferred ? 1 : 0;
+    const bMatch = preferred && bt === preferred ? 1 : 0;
+    if (aMatch !== bMatch) return bMatch - aMatch;
+    // Sub-sort: any attached tool > unattached
+    return (bt ? 1 : 0) - (at ? 1 : 0);
+  });
+  const choices = sorted
+    .map((b) => {
+      const tool = botToolMap[b.bot_user_id] || "";
+      const matchPreferred = preferred && tool === preferred;
+      const cls = matchPreferred ? "btn-inline" : "btn-inline btn-secondary";
+      const tag = tool
+        ? ` <span style="font-size:10px; color:${matchPreferred ? "#fff" : "var(--text-muted,#888)"};">[${escapeHTML(tool)}]</span>`
+        : "";
+      const style = matchPreferred
+        ? "font-size:11px; padding:3px 8px; background:#3a7; color:#fff;"
+        : "font-size:11px; padding:3px 8px;";
+      return `<button type="button" class="${cls}" data-pickup-bot="${escapeHTML(b.bot_user_id)}" data-task-id="${escapeHTML(t.id)}" style="${style}">${escapeHTML(b.name)}${tag}</button>`;
+    })
     .join("");
-  return `<span style="color:var(--text-muted,#888);">选一个 bot：</span>${choices}
+  const hint = preferred
+    ? `<span style="color:var(--text-muted,#888);">选一个 bot（首选 <strong>${escapeHTML(preferred)}</strong>）：</span>`
+    : `<span style="color:var(--text-muted,#888);">选一个 bot：</span>`;
+  return `${hint}${choices}
           <button type="button" class="btn-inline btn-secondary" data-task-pickup="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">取消</button>`;
 }
 
@@ -424,6 +496,22 @@ async function loadBots(): Promise<void> {
   if (response.ok) {
     availableBots = data.bots || [];
   }
+  // Fan out per-bot status fetches in parallel so the picker can
+  // render with tool annotations + preferred-provider sort. Errors
+  // are silently dropped — picker degrades to the un-sorted list
+  // which is fine.
+  await Promise.all(
+    availableBots.map(async (b) => {
+      try {
+        const { response: r, data: d } = await fetchAgentBotStatus(b.bot_user_id);
+        if (r.ok && d.attached) {
+          botToolMap[b.bot_user_id] = (d.tool || "").trim();
+        }
+      } catch {
+        // ignore
+      }
+    }),
+  );
 }
 
 async function doPickup(taskID: string, botUserID: string): Promise<void> {
@@ -465,6 +553,9 @@ async function doDeleteProject(): Promise<void> {
 function openCreateModal(): void {
   createName.value = "";
   createDesc.value = "";
+  createRuntimeEnv.value = "";
+  createBusinessScenario.value = "";
+  createCodeProvider.value = "";
   clearStatus(createStatusEl);
   setModalOpen(createModal, true);
   setTimeout(() => createName.focus(), 0);
@@ -485,6 +576,9 @@ async function submitCreate(e: Event): Promise<void> {
   const { response, data } = await createProject({
     name,
     description: createDesc.value.trim(),
+    runtime_env: createRuntimeEnv.value,
+    business_scenario: createBusinessScenario.value,
+    code_provider: createCodeProvider.value,
   });
   if (!response.ok) {
     setStatus(createStatusEl, "创建失败", true);

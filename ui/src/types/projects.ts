@@ -18,6 +18,9 @@ export type Project = {
   description: string;
   status: ProjectStatus;
   template: string;
+  runtime_env: string;
+  business_scenario: string;
+  code_provider: string;
   created_at: string;
   updated_at: string;
 };
@@ -80,6 +83,9 @@ export type ProjectCreatePayload = {
   name: string;
   description?: string;
   template?: string;
+  runtime_env?: string;
+  business_scenario?: string;
+  code_provider?: string;
 };
 
 export type ProjectUpdatePayload = {
@@ -87,6 +93,9 @@ export type ProjectUpdatePayload = {
   description?: string;
   status?: ProjectStatus;
   template?: string;
+  runtime_env?: string;
+  business_scenario?: string;
+  code_provider?: string;
 };
 
 export type ProjectFeatureUpdatePayload = {

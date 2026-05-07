@@ -50,6 +50,12 @@ type aiAgentTask struct {
 	ResponderUserID string
 	ResponderName   string
 	Content         string
+	// WorkdirSubpath, if set, is a relative path under the agent's
+	// pinned workdir to chdir into before running the local tool.
+	// Used to isolate per-project work — pickup populates it with
+	// the project id so e.g. tasks for project A and project B
+	// don't trample each other's files in $workdir/.
+	WorkdirSubpath string
 }
 
 type aiRuntimeConfig struct {

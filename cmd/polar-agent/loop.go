@@ -6,12 +6,33 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// isSafeSubpath blocks workdir_subpath values that would escape the
+// agent's pinned workdir. Allowed: relative paths with no "..",
+// no leading slash. Rejected: anything else. This is defense-in-
+// depth; the platform won't normally send malicious values, but
+// the path comes from a trusted-but-network channel.
+func isSafeSubpath(p string) bool {
+	if p == "" {
+		return false
+	}
+	if filepath.IsAbs(p) {
+		return false
+	}
+	clean := filepath.Clean(p)
+	if clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		return false
+	}
+	return true
+}
 
 // runAgentLoop opens a WebSocket to /ws/agent, reads tool_call /
 // chat_message envelopes, dispatches them appropriately, and sends
@@ -125,7 +146,38 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 				continue
 			}
 			go func(m chatMessage) {
-				reply, err := invokeTool(ctx, spec, workdir, m, verbose)
+				// Per-project workdir isolation: if the platform
+				// supplies a subpath (project pickup does this with
+				// the project id), spawn the tool inside
+				// $workdir/<subpath> instead of $workdir. mkdir -p
+				// happens here so the tool finds an empty dir on
+				// first use; subsequent messages reuse the same
+				// subdir, which is also what kimi-cli's --continue
+				// keys on for session resume.
+				effectiveWorkdir := workdir
+				if sp := strings.TrimSpace(m.WorkdirSubpath); sp != "" {
+					if !isSafeSubpath(sp) {
+						emitChatReply(send, &chatReply{
+							Kind:  "chat_reply",
+							ID:    m.ID,
+							OK:    false,
+							Error: "invalid workdir_subpath",
+						})
+						return
+					}
+					sub := filepath.Join(workdir, sp)
+					if err := os.MkdirAll(sub, 0o755); err != nil {
+						emitChatReply(send, &chatReply{
+							Kind:  "chat_reply",
+							ID:    m.ID,
+							OK:    false,
+							Error: "mkdir " + sub + ": " + err.Error(),
+						})
+						return
+					}
+					effectiveWorkdir = sub
+				}
+				reply, err := invokeTool(ctx, spec, effectiveWorkdir, m, verbose)
 				if err != nil {
 					emitChatReply(send, &chatReply{
 						Kind:  "chat_reply",

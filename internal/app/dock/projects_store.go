@@ -34,15 +34,18 @@ const (
 )
 
 type Project struct {
-	ID            string    `json:"id"`
-	WorkspaceID   string    `json:"workspace_id"`
-	CreatorUserID string    `json:"creator_user_id"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	Status        string    `json:"status"`
-	Template      string    `json:"template"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	WorkspaceID      string    `json:"workspace_id"`
+	CreatorUserID    string    `json:"creator_user_id"`
+	Name             string    `json:"name"`
+	Description      string    `json:"description"`
+	Status           string    `json:"status"`
+	Template         string    `json:"template"`
+	RuntimeEnv       string    `json:"runtime_env"`
+	BusinessScenario string    `json:"business_scenario"`
+	CodeProvider     string    `json:"code_provider"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type ProjectFeature struct {
@@ -89,16 +92,17 @@ func (s *Server) createProject(p *Project) error {
 	p.CreatedAt = now
 	p.UpdatedAt = now
 	_, err := s.db.Exec(
-		`INSERT INTO projects (id, workspace_id, creator_user_id, name, description, status, template, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
-		p.ID, p.WorkspaceID, p.CreatorUserID, p.Name, p.Description, p.Status, p.Template, now,
+		`INSERT INTO projects (id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+		p.ID, p.WorkspaceID, p.CreatorUserID, p.Name, p.Description, p.Status, p.Template,
+		p.RuntimeEnv, p.BusinessScenario, p.CodeProvider, now,
 	)
 	return err
 }
 
 func (s *Server) listProjects(workspaceID string) ([]Project, error) {
 	rows, err := s.db.Query(
-		`SELECT id, workspace_id, creator_user_id, name, description, status, template, created_at, updated_at
+		`SELECT id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, created_at, updated_at
 		 FROM projects WHERE workspace_id = $1 ORDER BY updated_at DESC`,
 		workspaceID,
 	)
@@ -109,7 +113,7 @@ func (s *Server) listProjects(workspaceID string) ([]Project, error) {
 	out := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -120,10 +124,10 @@ func (s *Server) listProjects(workspaceID string) ([]Project, error) {
 func (s *Server) getProject(id, workspaceID string) (*Project, error) {
 	var p Project
 	err := s.db.QueryRow(
-		`SELECT id, workspace_id, creator_user_id, name, description, status, template, created_at, updated_at
+		`SELECT id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, created_at, updated_at
 		 FROM projects WHERE id = $1 AND workspace_id = $2`,
 		id, workspaceID,
-	).Scan(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -133,13 +137,55 @@ func (s *Server) getProject(id, workspaceID string) (*Project, error) {
 	return &p, nil
 }
 
-func (s *Server) updateProjectMetadata(id, workspaceID, name, description, status, template string) error {
-	now := time.Now().UTC()
-	res, err := s.db.Exec(
-		`UPDATE projects SET name = $1, description = $2, status = $3, template = $4, updated_at = $5
-		 WHERE id = $6 AND workspace_id = $7`,
-		name, description, status, template, now, id, workspaceID,
-	)
+// ProjectMetaUpdate carries the editable project fields, all
+// optional. Nil pointers leave the existing value unchanged.
+type ProjectMetaUpdate struct {
+	Name             *string
+	Description      *string
+	Status           *string
+	Template         *string
+	RuntimeEnv       *string
+	BusinessScenario *string
+	CodeProvider     *string
+}
+
+func (s *Server) updateProjectMetadata(id, workspaceID string, u ProjectMetaUpdate) error {
+	sets := []string{"updated_at = NOW()"}
+	args := []any{}
+	if u.Name != nil {
+		args = append(args, *u.Name)
+		sets = append(sets, "name = $"+itoa(len(args)))
+	}
+	if u.Description != nil {
+		args = append(args, *u.Description)
+		sets = append(sets, "description = $"+itoa(len(args)))
+	}
+	if u.Status != nil {
+		args = append(args, *u.Status)
+		sets = append(sets, "status = $"+itoa(len(args)))
+	}
+	if u.Template != nil {
+		args = append(args, *u.Template)
+		sets = append(sets, "template = $"+itoa(len(args)))
+	}
+	if u.RuntimeEnv != nil {
+		args = append(args, *u.RuntimeEnv)
+		sets = append(sets, "runtime_env = $"+itoa(len(args)))
+	}
+	if u.BusinessScenario != nil {
+		args = append(args, *u.BusinessScenario)
+		sets = append(sets, "business_scenario = $"+itoa(len(args)))
+	}
+	if u.CodeProvider != nil {
+		args = append(args, *u.CodeProvider)
+		sets = append(sets, "code_provider = $"+itoa(len(args)))
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	args = append(args, id, workspaceID)
+	query := "UPDATE projects SET " + strings.Join(sets, ", ") + " WHERE id = $" + itoa(len(args)-1) + " AND workspace_id = $" + itoa(len(args))
+	res, err := s.db.Exec(query, args...)
 	if err != nil {
 		return err
 	}
