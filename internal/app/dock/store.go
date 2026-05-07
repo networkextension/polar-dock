@@ -1638,6 +1638,60 @@ COMMENT ON COLUMN video_projects.owner_user_id        IS 'audit: who created/ups
 -- still NULL, the inline ALTER would 23502 and crash the boot.
 -- See enforceWorkspaceIDNotNull(), called after the backfill.
 
+-- logs_entries: append-only structured log table. Spans three
+-- scopes: site-wide (workspace_id NULL — admin-only readable),
+-- workspace (workspace_id set — readable by team members), and
+-- by category. category is the high-level bucket; actor_kind +
+-- subject_kind/_id let viewers filter by who did something to
+-- what. details is a JSONB blob for whatever the writer wants
+-- to record beyond the plain message — never query-load this
+-- in hot paths, only for detail views.
+--
+-- Categories used by the platform (extend over time, no enum):
+--   sign         — iosdist sign worker transitions
+--   team_audit   — workspace-level events (member changes,
+--                  invitations, ownership transfer, deletion)
+--   deploy       — video render / external deploy outcomes
+--   agent        — AI agent / bot tool calls and completions
+--   server       — server-side opportunistic errors (replaces
+--                  / supplements log.Printf at notable spots)
+CREATE TABLE IF NOT EXISTS logs_entries (
+	id BIGSERIAL PRIMARY KEY,
+	category TEXT NOT NULL,
+	level TEXT NOT NULL DEFAULT 'info',
+	source TEXT NOT NULL DEFAULT '',
+	workspace_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+	actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+	actor_kind TEXT NOT NULL DEFAULT 'user',
+	subject_kind TEXT NOT NULL DEFAULT '',
+	subject_id TEXT NOT NULL DEFAULT '',
+	action TEXT NOT NULL DEFAULT '',
+	message TEXT NOT NULL DEFAULT '',
+	details JSONB NOT NULL DEFAULT '{}'::jsonb,
+	request_id TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Workspace-scoped reads (team members) — partial index drops the
+-- site-wide rows so the index stays tight.
+CREATE INDEX IF NOT EXISTS idx_logs_entries_ws_ts
+	ON logs_entries(workspace_id, created_at DESC, id DESC)
+	WHERE workspace_id IS NOT NULL;
+-- Site-wide reads (admin only).
+CREATE INDEX IF NOT EXISTS idx_logs_entries_site_ts
+	ON logs_entries(created_at DESC, id DESC)
+	WHERE workspace_id IS NULL;
+-- Filter by category (cheap; covers both scopes).
+CREATE INDEX IF NOT EXISTS idx_logs_entries_category_ts
+	ON logs_entries(category, created_at DESC, id DESC);
+-- "What did user X do?" — actor breakdown.
+CREATE INDEX IF NOT EXISTS idx_logs_entries_actor_ts
+	ON logs_entries(actor_user_id, created_at DESC)
+	WHERE actor_user_id IS NOT NULL;
+-- "Show me everything that touched this resource."
+CREATE INDEX IF NOT EXISTS idx_logs_entries_subject
+	ON logs_entries(subject_kind, subject_id, created_at DESC);
+
 -- The owner_user_id column (still NOT NULL) keeps an in-DB
 -- comment as a hint that its semantics changed in T6: it's now
 -- the audit "who created / last upserted this row" field, not

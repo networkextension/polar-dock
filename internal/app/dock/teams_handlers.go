@@ -186,6 +186,8 @@ func (s *Server) handleTeamCreate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	s.logTeamAudit(team.ID, userID, "team.create", "team", team.ID,
+		"创建工作区 "+team.Name, map[string]any{"slug": team.Slug, "kind": team.Kind})
 	c.JSON(http.StatusOK, gin.H{"team": team, "my_role": TeamRoleOwner})
 }
 
@@ -235,6 +237,10 @@ func (s *Server) handleTeamUpdate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	if uid, ok := c.Get("user_id"); ok {
+		s.logTeamAudit(teamID, uid.(string), "team.update", "team", teamID,
+			"更新工作区元信息", map[string]any{"name": name})
+	}
 	c.JSON(http.StatusOK, gin.H{"team": team})
 }
 
@@ -279,6 +285,20 @@ func (s *Server) handleTeamDelete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	if uid, ok := c.Get("user_id"); ok {
+		// Workspace gone — record this site-wide so the audit
+		// trail isn't lost when the workspace_id FK cascades.
+		_ = s.appendLog(LogEntry{
+			Category:    LogCategoryTeamAudit,
+			Level:       LogLevelWarn,
+			ActorUserID: uid.(string),
+			ActorKind:   LogActorUser,
+			Action:      "team.delete",
+			SubjectKind: "team",
+			SubjectID:   teamID,
+			Message:     "删除工作区 " + team.Name,
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -317,6 +337,10 @@ func (s *Server) handleTeamTransfer(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
+	}
+	if uid, ok := c.Get("user_id"); ok {
+		s.logTeamAudit(teamID, uid.(string), "team.transfer", "team", teamID,
+			"转让工作区所有者", map[string]any{"new_owner_user_id": newOwnerUserID})
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -387,6 +411,8 @@ func (s *Server) handleTeamMemberRoleUpdate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	s.logTeamAudit(teamID, actorUserID, "member.role_change", "user", targetUserID,
+		"修改成员角色", map[string]any{"role": role, "previous_role": target.Role})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -448,6 +474,13 @@ func (s *Server) handleTeamMemberRemove(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	action := "member.kick"
+	message := "踢出成员"
+	if isSelfLeave {
+		action = "member.leave"
+		message = "成员主动退出"
+	}
+	s.logTeamAudit(teamID, actorUserID, action, "user", targetUserID, message, map[string]any{"former_role": target.Role})
 	c.JSON(http.StatusOK, gin.H{"ok": true, "self_left": isSelfLeave})
 }
 

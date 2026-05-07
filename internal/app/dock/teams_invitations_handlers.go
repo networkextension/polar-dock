@@ -169,6 +169,8 @@ func (s *Server) handleTeamInvitationCreate(c *gin.Context) {
 		log.Printf("[teams invite] send email failed: %v (team=%s email=%s)", sendErr, teamID, email)
 	}
 
+	s.logTeamAudit(teamID, userID, "invitation.create", "invitation", inv.ID,
+		"邀请新成员", map[string]any{"email": inv.Email, "role": inv.Role, "email_sent": emailSent})
 	c.JSON(http.StatusOK, gin.H{
 		"invitation": adminInvitationView{
 			ID:            inv.ID,
@@ -255,6 +257,9 @@ func (s *Server) handleTeamInvitationRevoke(c *gin.Context) {
 	if err := s.revokeInvitation(invID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
+	}
+	if uid, ok := c.Get("user_id"); ok {
+		s.logTeamAudit(teamID, uid.(string), "invitation.revoke", "invitation", invID, "撤销邀请", nil)
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -360,6 +365,8 @@ func (s *Server) handleInvitationAccept(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	s.logTeamAudit(accepted.TeamID, userID, "invitation.accept", "invitation", accepted.ID,
+		"接受邀请加入工作区", map[string]any{"role": accepted.Role})
 	c.JSON(http.StatusOK, gin.H{
 		"team_id": accepted.TeamID,
 		"role":    accepted.Role,

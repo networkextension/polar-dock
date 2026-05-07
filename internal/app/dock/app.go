@@ -636,6 +636,7 @@ func (s *Server) registerRoutes() {
 		api.PUT("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamUpdate)
 		api.DELETE("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleOwner), s.handleTeamDelete)
 		api.GET("/teams/:id/members", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamMembers)
+		api.GET("/teams/:id/logs", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamLogs)
 		// T7: member ops + ownership transfer. Auth via the
 		// member-context middleware; the handlers themselves do the
 		// finer-grained gates (admin can demote members but only
@@ -686,6 +687,7 @@ func (s *Server) registerRoutes() {
 		api.PUT("/iosdist/apps/:id/asc-binding", s.AuthMiddleware(), s.handleIOSAppASCBindingUpdate)
 		api.POST("/iosdist/apps/:id/invite-tester", s.AuthMiddleware(), s.handleIOSAppInviteTester)
 		api.POST("/iosdist/apps/:id/asc-sync", s.AuthMiddleware(), s.handleIOSAppASCSyncMeta)
+		api.GET("/admin/logs", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLogs)
 		api.GET("/admin/users", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserList)
 		api.GET("/admin/users/:id/login-history", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserLoginHistory)
 		api.PUT("/admin/users/:id/password", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserPasswordUpdate)
