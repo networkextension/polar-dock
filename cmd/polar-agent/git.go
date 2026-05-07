@@ -93,6 +93,13 @@ func gitPrepare(ctx context.Context, workdir, remoteURL string) (preHEAD string,
 	return preHEAD, nil
 }
 
+func shortSHA(sha string) string {
+	if len(sha) < 7 {
+		return sha
+	}
+	return sha[:7]
+}
+
 func isDirEmpty(dir string) bool {
 	f, err := os.Open(dir)
 	if err != nil {

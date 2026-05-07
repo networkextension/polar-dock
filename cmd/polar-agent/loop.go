@@ -186,9 +186,12 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 				var preHEAD string
 				var gitPrepErr error
 				if remote := strings.TrimSpace(m.GitRemoteURL); remote != "" {
+					log.Printf("[git] prepare workdir=%s remote=%s", effectiveWorkdir, remote)
 					preHEAD, gitPrepErr = gitPrepare(ctx, effectiveWorkdir, remote)
 					if gitPrepErr != nil {
-						log.Printf("git prepare failed (continuing): %v", gitPrepErr)
+						log.Printf("[git] prepare failed (continuing): %v", gitPrepErr)
+					} else {
+						log.Printf("[git] prepare ok preHEAD=%s", shortSHA(preHEAD))
 					}
 				}
 
@@ -211,6 +214,7 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 				// is the user's value.
 				if remote := strings.TrimSpace(m.GitRemoteURL); remote != "" && gitPrepErr == nil {
 					commits, pushed, finErr := gitFinalize(ctx, effectiveWorkdir, preHEAD, "")
+					log.Printf("[git] finalize commits=%d pushed=%v err=%v", len(commits), pushed, finErr)
 					reply.Content += renderGitSummary(commits, pushed, finErr, remote)
 				} else if gitPrepErr != nil {
 					reply.Content += "\n\n---\n⚠️ git 准备失败：" + gitPrepErr.Error()
