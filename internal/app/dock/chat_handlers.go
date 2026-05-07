@@ -150,19 +150,12 @@ func (s *Server) handleChatStart(c *gin.Context) {
 		return
 	}
 	if strings.HasPrefix(targetID, "bot_") {
-		selectedLLMConfigID := req.LLMConfigID
-		if selectedLLMConfigID <= 0 {
-			configs, cfgErr := s.listAvailableLLMConfigs(c.GetString("workspace_id"))
-			if cfgErr != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
-				return
-			}
-			if len(configs) == 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "暂无可用 LLM 配置，请先创建或共享一个配置"})
-				return
-			}
-			selectedLLMConfigID = configs[0].ID
-		}
+		// Look up the bot to decide whether an LLM config is needed.
+		// Passthrough bots have no LLM config — the LLM thread is
+		// still created (so the chat has a topic to attach to), but
+		// updateLLMThreadConfig is skipped.
+		botUser, _ := s.getBotUserByUserID(targetID)
+		isPassthrough := botUser != nil && botUser.BotKind == BotKindPassthrough
 
 		llmThreadID, _, threadErr := s.resolveChatLLMThread(thread.ID, userIDStr, "", true, time.Now())
 		if threadErr != nil {
@@ -174,14 +167,29 @@ func (s *Server) handleChatStart(c *gin.Context) {
 			return
 		}
 
-		item, updateErr := s.updateLLMThreadConfig(thread.ID, userIDStr, *llmThreadID, selectedLLMConfigID, time.Now())
-		if updateErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
-			return
-		}
-		if item == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "选择的 LLM 配置无效"})
-			return
+		if !isPassthrough {
+			selectedLLMConfigID := req.LLMConfigID
+			if selectedLLMConfigID <= 0 {
+				configs, cfgErr := s.listAvailableLLMConfigs(c.GetString("workspace_id"))
+				if cfgErr != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+					return
+				}
+				if len(configs) == 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "暂无可用 LLM 配置，请先创建或共享一个配置"})
+					return
+				}
+				selectedLLMConfigID = configs[0].ID
+			}
+			item, updateErr := s.updateLLMThreadConfig(thread.ID, userIDStr, *llmThreadID, selectedLLMConfigID, time.Now())
+			if updateErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+				return
+			}
+			if item == nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "选择的 LLM 配置无效"})
+				return
+			}
 		}
 	}
 

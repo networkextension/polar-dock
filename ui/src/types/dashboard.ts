@@ -168,6 +168,8 @@ export type BotPayload = {
   description: string;
   system_prompt: string;
   llm_config_id: number;
+  bot_kind?: "classic" | "passthrough";
+  preferred_tool?: string;
 };
 
 export type BotUser = {
@@ -179,6 +181,14 @@ export type BotUser = {
   system_prompt: string;
   llm_config_id: number;
   config_name: string;
+  // bot_kind:
+  //   "classic"     — has llm_config_id, regular LLM call path
+  //   "passthrough" — local-tool-only, llm_config_id may be 0
+  bot_kind: "classic" | "passthrough";
+  // preferred_tool: hint string ("kimi"/"claude"/"codex"/...) shown
+  // in UI when bot is passthrough, helping the user remember which
+  // polar-agent --tool= flag pairs with it. Backend doesn't enforce.
+  preferred_tool: string;
   created_at: string;
   updated_at: string;
 };

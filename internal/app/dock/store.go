@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -407,18 +408,29 @@ type PackTunnelRuleFile struct {
 }
 
 type BotUser struct {
-	ID           int64     `json:"id"`
-	OwnerUserID  string    `json:"owner_user_id"`
-	WorkspaceID  string    `json:"workspace_id"`
-	BotUserID    string    `json:"bot_user_id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description"`
-	SystemPrompt string    `json:"system_prompt"`
-	LLMConfigID  int64     `json:"llm_config_id"`
-	ConfigName   string    `json:"config_name"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            int64     `json:"id"`
+	OwnerUserID   string    `json:"owner_user_id"`
+	WorkspaceID   string    `json:"workspace_id"`
+	BotUserID     string    `json:"bot_user_id"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description"`
+	SystemPrompt  string    `json:"system_prompt"`
+	// LLMConfigID is 0 for passthrough bots (the column is NULL in
+	// DB for those rows; we surface it as 0 in JSON for FE compat).
+	LLMConfigID   int64     `json:"llm_config_id"`
+	ConfigName    string    `json:"config_name"`
+	BotKind       string    `json:"bot_kind"`        // "classic" | "passthrough"
+	PreferredTool string    `json:"preferred_tool"`  // "" | "kimi" | "claude" | "codex" | custom
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
+
+// Bot kind constants. Defined string literals (not iota) since they
+// also live in DB rows.
+const (
+	BotKindClassic     = "classic"
+	BotKindPassthrough = "passthrough"
+)
 
 type ApplePushCertificate struct {
 	Environment string     `json:"environment"`
@@ -961,6 +973,24 @@ CREATE TABLE IF NOT EXISTS bot_users (
 
 ALTER TABLE bot_users
 	ADD COLUMN IF NOT EXISTS system_prompt TEXT NOT NULL DEFAULT '';
+-- bot_kind:
+--   "classic"     — bot's chat replies come from llm_config_id
+--                   (regular LLM call, optionally tool-loop when an
+--                   agent is attached)
+--   "passthrough" — bot is only meaningful when polar-agent is
+--                   attached in --tool=<name> mode; the platform
+--                   refuses to fall back to LLM if no agent is
+--                   attached. llm_config_id may be NULL.
+-- preferred_tool: hint string ("kimi"/"claude"/"codex"/...) shown
+-- in the UI so users know which polar-agent --tool= flag pairs
+-- with this bot. Not enforced — the actual tool comes from the
+-- attached agent's hello frame.
+ALTER TABLE bot_users
+	ADD COLUMN IF NOT EXISTS bot_kind TEXT NOT NULL DEFAULT 'classic';
+ALTER TABLE bot_users
+	ADD COLUMN IF NOT EXISTS preferred_tool TEXT NOT NULL DEFAULT '';
+ALTER TABLE bot_users
+	ALTER COLUMN llm_config_id DROP NOT NULL;
 
 ALTER TABLE llm_configs
 	ADD COLUMN IF NOT EXISTS share_id TEXT NOT NULL DEFAULT '';
@@ -2653,11 +2683,43 @@ func decodePackTunnelJSON(raw []byte, dest any) error {
 	return json.Unmarshal(raw, dest)
 }
 
+// botUserSelectColumns is the canonical SELECT projection used by
+// every bot_users read. Joined with llm_configs via LEFT JOIN
+// (passthrough bots may not have an llm_config_id), so c.name is
+// scanned through sql.NullString.
+const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), b.created_at, b.updated_at`
+
+// scanBotUser reads one row from a query that selected
+// botUserSelectColumns. nullable scan targets handle passthrough
+// bots whose llm_config_id (and therefore c.name) is NULL.
+func scanBotUser(scanFn func(...any) error) (*BotUser, error) {
+	var item BotUser
+	var llmConfigID sql.NullInt64
+	var configName sql.NullString
+	err := scanFn(
+		&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID,
+		&item.Name, &item.Description, &item.SystemPrompt,
+		&llmConfigID, &configName,
+		&item.BotKind, &item.PreferredTool,
+		&item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if llmConfigID.Valid {
+		item.LLMConfigID = llmConfigID.Int64
+	}
+	if configName.Valid {
+		item.ConfigName = configName.String
+	}
+	return &item, nil
+}
+
 func (s *Server) listBotUsers(workspaceID string) ([]BotUser, error) {
 	rows, err := s.db.Query(
-		`SELECT b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, b.created_at, b.updated_at
+		`SELECT `+botUserSelectColumns+`
 		   FROM bot_users b
-		   JOIN llm_configs c ON c.id = b.llm_config_id
+		   LEFT JOIN llm_configs c ON c.id = b.llm_config_id
 		  WHERE b.workspace_id = $1
 		  ORDER BY b.updated_at DESC, b.id DESC`,
 		workspaceID,
@@ -2668,11 +2730,11 @@ func (s *Server) listBotUsers(workspaceID string) ([]BotUser, error) {
 	defer rows.Close()
 	items := make([]BotUser, 0)
 	for rows.Next() {
-		var item BotUser
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.ConfigName, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		item, err := scanBotUser(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+		items = append(items, *item)
 	}
 	return items, rows.Err()
 }
@@ -2709,15 +2771,15 @@ func (s *Server) ensureBuiltinBotUsers(workspaceID, ownerUserID string, now time
 		if existingNames[preset.Name] {
 			continue
 		}
-		if _, err := s.createBotUser(
-			workspaceID,
-			ownerUserID,
-			preset.Name,
-			preset.Description,
-			preset.SystemPrompt,
-			defaultLLMConfigID,
-			now,
-		); err != nil {
+		if _, err := s.createBotUser(CreateBotUserInput{
+			WorkspaceID:  workspaceID,
+			OwnerUserID:  ownerUserID,
+			Name:         preset.Name,
+			Description:  preset.Description,
+			SystemPrompt: preset.SystemPrompt,
+			LLMConfigID:  defaultLLMConfigID,
+			BotKind:      BotKindClassic,
+		}, now); err != nil {
 			return err
 		}
 	}
@@ -2725,24 +2787,47 @@ func (s *Server) ensureBuiltinBotUsers(workspaceID, ownerUserID string, now time
 }
 
 func (s *Server) getBotUserForOwner(workspaceID string, id int64) (*BotUser, error) {
-	var item BotUser
-	err := s.db.QueryRow(
-		`SELECT b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, b.created_at, b.updated_at
+	row := s.db.QueryRow(
+		`SELECT `+botUserSelectColumns+`
 		   FROM bot_users b
-		   JOIN llm_configs c ON c.id = b.llm_config_id
+		   LEFT JOIN llm_configs c ON c.id = b.llm_config_id
 		  WHERE b.id = $1 AND b.workspace_id = $2`,
 		id, workspaceID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.ConfigName, &item.CreatedAt, &item.UpdatedAt)
+	)
+	item, err := scanBotUser(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return &item, nil
+	return item, nil
 }
 
-func (s *Server) createBotUser(workspaceID, ownerUserID, name, description, systemPrompt string, llmConfigID int64, now time.Time) (*BotUser, error) {
+// CreateBotUserInput captures the editable fields for a new bot.
+// Kept as a struct (vs positional args) because passthrough adds
+// 2 more knobs and the call sites would otherwise grow ugly.
+type CreateBotUserInput struct {
+	WorkspaceID   string
+	OwnerUserID   string
+	Name          string
+	Description   string
+	SystemPrompt  string
+	LLMConfigID   int64  // 0 allowed when BotKind = passthrough
+	BotKind       string // "" → "classic"; "passthrough" → llm_config_id may be 0
+	PreferredTool string // freeform hint; "kimi"/"claude"/"codex" recommended
+}
+
+func (s *Server) createBotUser(in CreateBotUserInput, now time.Time) (*BotUser, error) {
+	if in.BotKind == "" {
+		in.BotKind = BotKindClassic
+	}
+	if in.BotKind != BotKindClassic && in.BotKind != BotKindPassthrough {
+		return nil, fmt.Errorf("invalid bot_kind %q", in.BotKind)
+	}
+	if in.BotKind == BotKindClassic && in.LLMConfigID <= 0 {
+		return nil, errors.New("classic bots require llm_config_id")
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -2753,13 +2838,18 @@ func (s *Server) createBotUser(workspaceID, ownerUserID, name, description, syst
 		}
 	}()
 
-	var configName string
-	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE OR is_platform = TRUE)`, llmConfigID, workspaceID).Scan(&configName)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
+	// Validate the LLM config exists in this workspace when one is
+	// supplied. Passthrough bots may legitimately have id=0; we
+	// skip the validation in that case.
+	if in.LLMConfigID > 0 {
+		var name string
+		err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE OR is_platform = TRUE)`, in.LLMConfigID, in.WorkspaceID).Scan(&name)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, nil
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 
 	botUserID := "bot_" + generateSessionID()[:16]
@@ -2771,29 +2861,62 @@ func (s *Server) createBotUser(workspaceID, ownerUserID, name, description, syst
 	if _, err = tx.Exec(
 		`INSERT INTO users (id, username, email, password_hash, role, bio, icon_url, is_online, last_active_device_type, last_seen_at, created_at)
 		 VALUES ($1, $2, $3, $4, 'bot', $5, '', FALSE, 'browser', NULL, $6)`,
-		botUserID, name, botEmail, password, description, now,
+		botUserID, in.Name, botEmail, password, in.Description, now,
 	); err != nil {
 		return nil, err
 	}
 
-	var item BotUser
-	err = tx.QueryRow(
-		`INSERT INTO bot_users (owner_user_id, workspace_id, bot_user_id, name, description, system_prompt, llm_config_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-		 RETURNING id, owner_user_id, COALESCE(workspace_id, ''), bot_user_id, name, description, system_prompt, llm_config_id, created_at, updated_at`,
-		ownerUserID, workspaceID, botUserID, name, description, systemPrompt, llmConfigID, now,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.CreatedAt, &item.UpdatedAt)
-	if err != nil {
+	var llmConfigArg any
+	if in.LLMConfigID > 0 {
+		llmConfigArg = in.LLMConfigID
+	} else {
+		llmConfigArg = nil
+	}
+	if _, err = tx.Exec(
+		`INSERT INTO bot_users (owner_user_id, workspace_id, bot_user_id, name, description, system_prompt, llm_config_id, bot_kind, preferred_tool, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
+		in.OwnerUserID, in.WorkspaceID, botUserID, in.Name, in.Description, in.SystemPrompt, llmConfigArg, in.BotKind, in.PreferredTool, now,
+	); err != nil {
 		return nil, err
 	}
-	item.ConfigName = configName
+
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return &item, nil
+	// Re-read via the canonical projection so callers get the full
+	// BotUser shape (including ConfigName from the LEFT JOIN).
+	row := s.db.QueryRow(
+		`SELECT `+botUserSelectColumns+`
+		   FROM bot_users b
+		   LEFT JOIN llm_configs c ON c.id = b.llm_config_id
+		  WHERE b.bot_user_id = $1`,
+		botUserID,
+	)
+	return scanBotUser(row.Scan)
 }
 
-func (s *Server) updateBotUser(workspaceID string, id int64, name, description, systemPrompt string, llmConfigID int64, now time.Time) (*BotUser, error) {
+// UpdateBotUserInput mirrors CreateBotUserInput for the edit path.
+// Each field is required (no partial patches); the caller is the
+// bots-page edit form which submits the full row anyway.
+type UpdateBotUserInput struct {
+	Name          string
+	Description   string
+	SystemPrompt  string
+	LLMConfigID   int64
+	BotKind       string
+	PreferredTool string
+}
+
+func (s *Server) updateBotUser(workspaceID string, id int64, in UpdateBotUserInput, now time.Time) (*BotUser, error) {
+	if in.BotKind == "" {
+		in.BotKind = BotKindClassic
+	}
+	if in.BotKind != BotKindClassic && in.BotKind != BotKindPassthrough {
+		return nil, fmt.Errorf("invalid bot_kind %q", in.BotKind)
+	}
+	if in.BotKind == BotKindClassic && in.LLMConfigID <= 0 {
+		return nil, errors.New("classic bots require llm_config_id")
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -2812,36 +2935,44 @@ func (s *Server) updateBotUser(workspaceID string, id int64, name, description, 
 		}
 		return nil, err
 	}
-	var configName string
-	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE OR is_platform = TRUE)`, llmConfigID, workspaceID).Scan(&configName)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
+	if in.LLMConfigID > 0 {
+		var name string
+		err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE OR is_platform = TRUE)`, in.LLMConfigID, workspaceID).Scan(&name)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, nil
+			}
+			return nil, err
 		}
+	}
+	if _, err = tx.Exec(`UPDATE users SET username = $1, bio = $2 WHERE id = $3`, in.Name, in.Description, botUserID); err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(`UPDATE users SET username = $1, bio = $2 WHERE id = $3`, name, description, botUserID); err != nil {
-		return nil, err
+	var llmConfigArg any
+	if in.LLMConfigID > 0 {
+		llmConfigArg = in.LLMConfigID
+	} else {
+		llmConfigArg = nil
 	}
-	var item BotUser
-	err = tx.QueryRow(
+	if _, err = tx.Exec(
 		`UPDATE bot_users
-		    SET name = $3, description = $4, system_prompt = $5, llm_config_id = $6, updated_at = $7
-		  WHERE id = $1 AND workspace_id = $2
-		  RETURNING id, owner_user_id, COALESCE(workspace_id, ''), bot_user_id, name, description, system_prompt, llm_config_id, created_at, updated_at`,
-		id, workspaceID, name, description, systemPrompt, llmConfigID, now,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.CreatedAt, &item.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
+		    SET name = $3, description = $4, system_prompt = $5, llm_config_id = $6, bot_kind = $7, preferred_tool = $8, updated_at = $9
+		  WHERE id = $1 AND workspace_id = $2`,
+		id, workspaceID, in.Name, in.Description, in.SystemPrompt, llmConfigArg, in.BotKind, in.PreferredTool, now,
+	); err != nil {
 		return nil, err
 	}
-	item.ConfigName = configName
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return &item, nil
+	row := s.db.QueryRow(
+		`SELECT `+botUserSelectColumns+`
+		   FROM bot_users b
+		   LEFT JOIN llm_configs c ON c.id = b.llm_config_id
+		  WHERE b.id = $1 AND b.workspace_id = $2`,
+		id, workspaceID,
+	)
+	return scanBotUser(row.Scan)
 }
 
 func (s *Server) deleteBotUser(workspaceID string, id int64) (bool, error) {
@@ -2875,21 +3006,21 @@ func (s *Server) deleteBotUser(workspaceID string, id int64) (bool, error) {
 }
 
 func (s *Server) getBotUserByUserID(botUserID string) (*BotUser, error) {
-	var item BotUser
-	err := s.db.QueryRow(
-		`SELECT b.id, b.owner_user_id, b.workspace_id, b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, b.created_at, b.updated_at
+	row := s.db.QueryRow(
+		`SELECT `+botUserSelectColumns+`
 		   FROM bot_users b
-		   JOIN llm_configs c ON c.id = b.llm_config_id
+		   LEFT JOIN llm_configs c ON c.id = b.llm_config_id
 		  WHERE b.bot_user_id = $1`,
 		botUserID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.ConfigName, &item.CreatedAt, &item.UpdatedAt)
+	)
+	item, err := scanBotUser(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return &item, nil
+	return item, nil
 }
 
 func (s *Server) getLLMConfigForThread(chatThreadID, llmThreadID int64, botUserID string) (*LLMConfig, string, error) {
