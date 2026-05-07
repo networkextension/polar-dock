@@ -36,23 +36,37 @@ func (a *aiAgent) generateReplyWithKimi(task aiAgentTask, conn *agentConn) (stri
 		case errors.Is(err, errAgentNoKimiCapability):
 			return "本地 polar-agent 没声明 kimi 能力（可能是用 --kimi 之外的模式启动的）。", nil
 		case errors.Is(err, errAgentTimeout):
-			return "kimi-cli 在 10 分钟内没返回结果，已超时。", nil
+			return "本地 polar-agent 在 2 小时内没返回结果，平台超时（kimi 子进程可能还在跑）。", nil
 		case errors.Is(err, errAgentDisconnected):
 			return "kimi-cli 还在跑的时候，本地 agent 断线了。", nil
 		}
 		return fmt.Sprintf("kimi 路由失败：%s", err.Error()), nil
 	}
 	if !reply.OK {
-		// Surface kimi-cli's own stderr if any — usually the most
-		// actionable info (e.g. login expired, work-dir missing).
-		msg := reply.Error
-		if msg == "" {
-			msg = strings.TrimSpace(reply.Stderr)
+		// Failure path. Three sources of useful info, surface
+		// whichever exist:
+		//   1. reply.Error      — orchestration message (timeout, exit code, etc.)
+		//   2. reply.Content    — partial stdout kimi produced before
+		//                         the failure (CRITICAL for timeout —
+		//                         kimi may have written code already)
+		//   3. reply.Stderr     — runtime / build errors
+		// Stitch them together with clear section markers so the
+		// user can iterate ("the code is generated, please don't
+		// run xcodebuild") instead of starting over blind.
+		var sections []string
+		if msg := strings.TrimSpace(reply.Error); msg != "" {
+			sections = append(sections, "⚠️ "+msg)
 		}
-		if msg == "" {
-			msg = "kimi-cli 退出失败但没有错误信息"
+		if out := strings.TrimSpace(reply.Content); out != "" {
+			sections = append(sections, "**kimi 已输出（截至中断）**：\n\n"+out)
 		}
-		return fmt.Sprintf("⚠️ kimi-cli 报错：\n```\n%s\n```", msg), nil
+		if errOut := strings.TrimSpace(reply.Stderr); errOut != "" {
+			sections = append(sections, "**stderr**：\n```\n"+errOut+"\n```")
+		}
+		if len(sections) == 0 {
+			sections = []string{"kimi-cli 退出失败但没有错误信息"}
+		}
+		return strings.Join(sections, "\n\n"), nil
 	}
 	out := strings.TrimSpace(reply.Content)
 	if out == "" {

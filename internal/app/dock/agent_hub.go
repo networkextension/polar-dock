@@ -257,7 +257,13 @@ func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content
 	}
 }
 
-const agentChatTimeout = 10 * time.Minute
+// agentChatTimeout caps how long the platform waits for a
+// chat_reply. Must comfortably exceed polar-agent's own kimi
+// timeout (30min default, configurable via POLAR_KIMI_TIMEOUT) so
+// the polar-agent's own timeout-with-partial-content path always
+// runs first — otherwise the platform abandons the request and
+// any reply that does eventually arrive is dropped.
+const agentChatTimeout = 2 * time.Hour
 
 var (
 	errAgentNotAttached       = errors.New("agent not attached to this bot")
