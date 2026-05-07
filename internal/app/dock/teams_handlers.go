@@ -258,15 +258,197 @@ func (s *Server) handleTeamDelete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "个人工作区不能删除"})
 		return
 	}
-	// T6 will add cross-module resource checks here. For now the
-	// schema's ON DELETE CASCADE handles team_members and
-	// team_invitations cleanup; module tables don't yet carry
-	// team_id so there's nothing else to vet.
+	// T7: pre-delete check across the T6-migrated tables. Refuse
+	// rather than orphan apps / certs / profiles / ASC configs /
+	// LLM configs that still belong to the workspace. Surface the
+	// counts so the UI can prompt the user to clean up.
+	counts, err := s.countTeamResources(teamID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if counts.Total() > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":           "工作区内仍有资源未清空，无法删除",
+			"resource_counts": counts,
+		})
+		return
+	}
+	// team_members and team_invitations cascade via FK ON DELETE.
 	if err := s.deleteTeam(teamID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ---- transfer ownership -------------------------------------------
+
+type teamTransferRequest struct {
+	NewOwnerUserID string `json:"new_owner_user_id"`
+}
+
+func (s *Server) handleTeamTransfer(c *gin.Context) {
+	teamID, _, ok := requireTeamRoleFromCtx(c)
+	if !ok {
+		return
+	}
+	var req teamTransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	newOwnerUserID := strings.TrimSpace(req.NewOwnerUserID)
+	if newOwnerUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择新的所有者"})
+		return
+	}
+	if err := s.transferTeamOwnership(teamID, newOwnerUserID); err != nil {
+		switch err.Error() {
+		case "personal team ownership cannot be transferred":
+			c.JSON(http.StatusBadRequest, gin.H{"error": "个人工作区不能转让"})
+			return
+		case "new owner is not a member of this team":
+			c.JSON(http.StatusBadRequest, gin.H{"error": "新所有者必须先成为工作区成员"})
+			return
+		case "team not found":
+			c.JSON(http.StatusNotFound, gin.H{"error": "工作区不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ---- members: change role + kick / leave --------------------------
+
+type teamMemberRoleUpdateRequest struct {
+	Role string `json:"role"`
+}
+
+func (s *Server) handleTeamMemberRoleUpdate(c *gin.Context) {
+	teamID, actorRole, ok := requireTeamRoleFromCtx(c)
+	if !ok {
+		return
+	}
+	if !teamRoleAllows(actorRole, TeamRoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+	actorUserID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	targetUserID := strings.TrimSpace(c.Param("user_id"))
+	if targetUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	if targetUserID == actorUserID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不能修改自己的角色"})
+		return
+	}
+	var req teamMemberRoleUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	role := strings.TrimSpace(req.Role)
+	switch role {
+	case TeamRoleAdmin, TeamRoleMember, TeamRoleViewer:
+		// allowed
+	default:
+		// 'owner' is reserved for transfer flow.
+		c.JSON(http.StatusBadRequest, gin.H{"error": "角色不可分配（owner 通过转让流程切换）"})
+		return
+	}
+	target, err := s.getTeamMember(teamID, targetUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if target == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "成员不存在"})
+		return
+	}
+	if target.Role == TeamRoleOwner {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不能修改所有者角色，请先转让所有权"})
+		return
+	}
+	// Admins can demote/promote members and viewers but not other
+	// admins (only owner can touch admins). Tightens the bus-factor
+	// failure mode where an admin could lock another admin out.
+	if !teamRoleAllows(actorRole, TeamRoleOwner) && target.Role == TeamRoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "仅所有者可修改管理员角色"})
+		return
+	}
+	if err := s.updateTeamMemberRole(teamID, targetUserID, role); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) handleTeamMemberRemove(c *gin.Context) {
+	teamID, actorRole, ok := requireTeamRoleFromCtx(c)
+	if !ok {
+		return
+	}
+	actorUserID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	targetUserID := strings.TrimSpace(c.Param("user_id"))
+	if targetUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	team, err := s.getTeam(teamID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if team == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "工作区不存在"})
+		return
+	}
+	if team.Kind == TeamKindPersonal {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "个人工作区不能踢人 / 退出"})
+		return
+	}
+	target, err := s.getTeamMember(teamID, targetUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if target == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "成员不存在"})
+		return
+	}
+	// Owner can never be removed by API — must transfer first.
+	if target.Role == TeamRoleOwner {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不能移除所有者，请先转让所有权"})
+		return
+	}
+	isSelfLeave := targetUserID == actorUserID
+	if !isSelfLeave {
+		// Kicking someone else requires admin+.
+		if !teamRoleAllows(actorRole, TeamRoleAdmin) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+			return
+		}
+		// Admins can't kick other admins; only owner can.
+		if !teamRoleAllows(actorRole, TeamRoleOwner) && target.Role == TeamRoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "仅所有者可踢出管理员"})
+			return
+		}
+	}
+	if err := s.removeTeamMember(teamID, targetUserID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "self_left": isSelfLeave})
 }
 
 // ---- members -------------------------------------------------------

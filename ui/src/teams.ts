@@ -18,14 +18,24 @@ import {
   fetchTeamInvitations,
   fetchTeamMembers,
   fetchTeams,
+  removeTeamMember,
   revokeTeamInvitation,
+  transferTeamOwnership,
   updateTeam,
+  updateTeamMemberRole,
 } from "./api/teams.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
 import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
-import type { AdminInvitation, InboxInvitation, TeamMember, TeamRole, TeamWithRole } from "./types/teams.js";
+import type {
+  AdminInvitation,
+  InboxInvitation,
+  TeamDeleteBlockedResponse,
+  TeamMember,
+  TeamRole,
+  TeamWithRole,
+} from "./types/teams.js";
 
 initStoredTheme();
 bindThemeSync();
@@ -65,7 +75,21 @@ const inboxListEl = byId<HTMLElement>("teamsInboxList");
 
 const dangerPersonalEl = byId<HTMLElement>("teamsDangerPersonal");
 const dangerTeamEl = byId<HTMLElement>("teamsDangerTeam");
+
+const transferSection = byId<HTMLElement>("teamsTransferSection");
+const transferTargetEl = byId<HTMLSelectElement>("teamsTransferTarget");
+const transferBtn = byId<HTMLButtonElement>("teamsTransferBtn");
+const transferStatusEl = byId<HTMLElement>("teamsTransferStatus");
+
+const leaveSection = byId<HTMLElement>("teamsLeaveSection");
+const leaveBtn = byId<HTMLButtonElement>("teamsLeaveBtn");
+
+const deleteSection = byId<HTMLElement>("teamsDeleteSection");
 const deleteBtn = byId<HTMLButtonElement>("teamsDeleteBtn");
+const deleteStatusEl = byId<HTMLElement>("teamsDeleteStatus");
+
+let currentMembers: TeamMember[] = [];
+let currentUserID = "";
 
 const createBtn = byId<HTMLButtonElement>("teamsCreateBtn");
 const createModal = byId<HTMLElement>("teamsCreateModal");
@@ -192,35 +216,118 @@ function renderTeamPanel(team: TeamWithRole): void {
   const showInviteTab = canEdit(team.my_role) && team.kind !== "personal";
   if (invitationsTabBtn) invitationsTabBtn.hidden = !showInviteTab;
 
-  // Danger tab
+  // Danger tab. Each subsection appears based on what the caller can
+  // actually do here; non-personal team only.
   dangerPersonalEl.hidden = team.kind !== "personal";
   dangerTeamEl.hidden = team.kind === "personal";
-  deleteBtn.disabled = !canDelete(team);
-  deleteBtn.title = canDelete(team) ? "" : "仅 owner 能删除";
+  if (team.kind !== "personal") {
+    transferSection.hidden = team.my_role !== "owner";
+    leaveSection.hidden = team.my_role === "owner"; // owner must transfer first
+    deleteSection.hidden = team.my_role !== "owner";
+    clearStatus(transferStatusEl);
+    clearStatus(deleteStatusEl);
+  }
 }
 
 function renderMembers(members: TeamMember[]): void {
-  if (members.length === 0) {
+  currentMembers = members;
+  if (!activeTeam || members.length === 0) {
     membersListEl.innerHTML = `<div class="chat-empty">没有成员</div>`;
+    refreshTransferTargetOptions();
     return;
   }
+  const myRole = activeTeam.my_role;
+  const isPersonal = activeTeam.kind === "personal";
   membersListEl.innerHTML = members
     .map((m) => {
       const initial = (m.username || m.email || "?").charAt(0).toUpperCase();
       const avatar = m.icon_url
         ? `<img src="${escapeHTML(m.icon_url)}" alt="" style="width:36px; height:36px; border-radius:50%; object-fit:cover; flex-shrink:0;" />`
         : `<div style="width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg,#e9e9ef,#cfd0d6); display:flex; align-items:center; justify-content:center; font-size:14px; color:#666; flex-shrink:0;">${escapeHTML(initial)}</div>`;
+      const isSelf = m.user_id === currentUserID;
+      const targetIsOwner = m.role === "owner";
+      const targetIsAdmin = m.role === "admin";
+
+      // Decide which actions are available on this member row.
+      // Mirrors the backend rules so the UI doesn't surface buttons
+      // the API would reject.
+      const canChangeRole =
+        !isPersonal &&
+        !isSelf &&
+        !targetIsOwner &&
+        teamRoleAtLeast(myRole, "admin") &&
+        (myRole === "owner" || !targetIsAdmin);
+      const canKick =
+        !isPersonal &&
+        !isSelf &&
+        !targetIsOwner &&
+        teamRoleAtLeast(myRole, "admin") &&
+        (myRole === "owner" || !targetIsAdmin);
+
+      let actions = "";
+      if (canChangeRole) {
+        const opts: TeamRole[] = ["admin", "member", "viewer"];
+        const optsHtml = opts
+          .map((r) => `<option value="${r}" ${r === m.role ? "selected" : ""}>${ROLE_LABEL[r]}</option>`)
+          .join("");
+        actions += `<select class="input" style="font-size:11px; padding:2px 6px;" data-member-role-target="${escapeHTML(m.user_id)}">${optsHtml}</select>`;
+      } else {
+        actions += `<span class="settings-value-pill" style="font-size:11px;">${ROLE_LABEL[m.role] ?? m.role}</span>`;
+      }
+      if (canKick) {
+        actions += `<button type="button" class="btn-inline" style="color:#c33; font-size:11px;" data-member-kick="${escapeHTML(m.user_id)}">踢出</button>`;
+      }
       return `
         <div class="video-studio-project-item" style="cursor:default;">
           ${avatar}
           <div style="flex:1; min-width:0;">
-            <div style="font-weight:500;">${escapeHTML(m.username || "(no name)")}</div>
+            <div style="font-weight:500;">${escapeHTML(m.username || "(no name)")}${isSelf ? " (你)" : ""}</div>
             <div style="font-size:11px; color:var(--text-muted,#888); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(m.email)}</div>
           </div>
-          <span class="settings-value-pill" style="font-size:11px;">${ROLE_LABEL[m.role] ?? m.role}</span>
+          ${actions}
         </div>`;
     })
     .join("");
+
+  membersListEl.querySelectorAll<HTMLSelectElement>("[data-member-role-target]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const uid = sel.getAttribute("data-member-role-target");
+      if (uid) void doMemberRoleChange(uid, sel.value as TeamRole);
+    });
+  });
+  membersListEl.querySelectorAll<HTMLButtonElement>("[data-member-kick]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const uid = btn.getAttribute("data-member-kick");
+      if (uid) void doMemberKick(uid);
+    });
+  });
+
+  refreshTransferTargetOptions();
+}
+
+function teamRoleAtLeast(actor: TeamRole, min: TeamRole): boolean {
+  const rank: Record<TeamRole, number> = { owner: 4, admin: 3, member: 2, viewer: 1 };
+  return rank[actor] >= rank[min];
+}
+
+function refreshTransferTargetOptions(): void {
+  if (!activeTeam || activeTeam.my_role !== "owner") {
+    transferTargetEl.innerHTML = `<option value="">选择一位成员...</option>`;
+    return;
+  }
+  const candidates = currentMembers.filter((m) => m.user_id !== currentUserID);
+  if (candidates.length === 0) {
+    transferTargetEl.innerHTML = `<option value="">工作区里只有你 ——先邀请其他人</option>`;
+    return;
+  }
+  transferTargetEl.innerHTML =
+    `<option value="">选择一位成员...</option>` +
+    candidates
+      .map(
+        (m) =>
+          `<option value="${escapeHTML(m.user_id)}">${escapeHTML(m.username || m.email)} (${ROLE_LABEL[m.role] ?? m.role})</option>`,
+      )
+      .join("");
 }
 
 function setActiveTab(name: string): void {
@@ -469,10 +576,23 @@ async function doDelete(): Promise<void> {
   const name = activeTeam.name;
   const confirmed = window.confirm(`确认删除工作区「${name}」？该操作不可恢复。`);
   if (!confirmed) return;
+  setStatus(deleteStatusEl, "删除中...", false);
   const { response, data } = await deleteTeam(activeTeam.id);
+  if (response.status === 409) {
+    const blocked = data as unknown as TeamDeleteBlockedResponse;
+    const c = blocked.resource_counts;
+    const parts: string[] = [];
+    if (c.apps > 0) parts.push(`${c.apps} 个应用`);
+    if (c.certificates > 0) parts.push(`${c.certificates} 个证书`);
+    if (c.profiles > 0) parts.push(`${c.profiles} 个 Profile`);
+    if (c.asc_configs > 0) parts.push(`${c.asc_configs} 个 ASC config`);
+    if (c.llm_configs > 0) parts.push(`${c.llm_configs} 个 LLM config`);
+    setStatus(deleteStatusEl, `工作区还有：${parts.join("、")}。请先归档或迁走再删除。`, true);
+    return;
+  }
   if (!response.ok) {
     const err = (data as unknown as { error?: string })?.error || "删除失败";
-    window.alert(err);
+    setStatus(deleteStatusEl, err, true);
     return;
   }
   // Remove from list, jump back to empty / first remaining team.
@@ -485,6 +605,80 @@ async function doDelete(): Promise<void> {
   if (teams.length > 0) {
     void openTeam(teams[0].id);
   }
+}
+
+async function doMemberRoleChange(targetUserID: string, role: TeamRole): Promise<void> {
+  if (!activeTeam) return;
+  const { response, data } = await updateTeamMemberRole(activeTeam.id, targetUserID, { role });
+  if (!response.ok) {
+    window.alert((data as unknown as { error?: string })?.error || "改角色失败");
+    // Reload to reset the select to its real value.
+    void loadMembers(activeTeam.id);
+    return;
+  }
+  void loadMembers(activeTeam.id);
+}
+
+async function doMemberKick(targetUserID: string): Promise<void> {
+  if (!activeTeam) return;
+  const target = currentMembers.find((m) => m.user_id === targetUserID);
+  const targetName = target ? target.username || target.email : "该成员";
+  if (!window.confirm(`确认将 ${targetName} 踢出工作区？`)) return;
+  const { response, data } = await removeTeamMember(activeTeam.id, targetUserID);
+  if (!response.ok) {
+    window.alert((data as unknown as { error?: string })?.error || "踢出失败");
+    return;
+  }
+  void loadMembers(activeTeam.id);
+}
+
+async function doSelfLeave(): Promise<void> {
+  if (!activeTeam || activeTeam.kind === "personal" || activeTeam.my_role === "owner") return;
+  if (!window.confirm(`确认退出工作区「${activeTeam.name}」？退出后将看不到该工作区的资源。`)) return;
+  const leftTeamID = activeTeam.id;
+  const { response, data } = await removeTeamMember(leftTeamID, currentUserID);
+  if (!response.ok) {
+    window.alert((data as unknown as { error?: string })?.error || "退出失败");
+    return;
+  }
+  // Reload everything; the team should disappear from my list.
+  await loadTeams();
+  if (activeTeamId === leftTeamID) {
+    activeTeamId = null;
+    activeTeam = null;
+    emptyEl.hidden = false;
+    panelEl.hidden = true;
+  }
+  if (teams.length > 0) void openTeam(teams[0].id);
+}
+
+async function doTransfer(): Promise<void> {
+  if (!activeTeam || activeTeam.my_role !== "owner") return;
+  const newOwnerUserID = transferTargetEl.value.trim();
+  if (!newOwnerUserID) {
+    setStatus(transferStatusEl, "请选择一位成员作为新所有者", true);
+    return;
+  }
+  const target = currentMembers.find((m) => m.user_id === newOwnerUserID);
+  const targetName = target ? target.username || target.email : "该成员";
+  if (!window.confirm(`确认将工作区「${activeTeam.name}」的所有者转给 ${targetName}？转让后你会自动降为管理员。`)) return;
+  transferBtn.disabled = true;
+  setStatus(transferStatusEl, "转让中...", false);
+  const { response, data } = await transferTeamOwnership(activeTeam.id, { new_owner_user_id: newOwnerUserID });
+  transferBtn.disabled = false;
+  if (!response.ok) {
+    setStatus(transferStatusEl, (data as unknown as { error?: string })?.error || "转让失败", true);
+    return;
+  }
+  setStatus(transferStatusEl, "已转让，正在刷新...", false);
+  // Re-fetch the team detail so my_role flips from owner to admin.
+  await Promise.all([loadTeams(), reopenActiveTeam()]);
+}
+
+async function reopenActiveTeam(): Promise<void> {
+  if (!activeTeamId) return;
+  const id = activeTeamId;
+  await openTeam(id);
 }
 
 function openCreateModal(): void {
@@ -533,6 +727,8 @@ tabButtons.forEach((btn) => {
 });
 infoSaveBtn.addEventListener("click", () => void saveInfo());
 deleteBtn.addEventListener("click", () => void doDelete());
+transferBtn.addEventListener("click", () => void doTransfer());
+leaveBtn.addEventListener("click", () => void doSelfLeave());
 createBtn.addEventListener("click", openCreateModal);
 createModalCloseBtn.addEventListener("click", closeCreateModal);
 createModal.addEventListener("click", (e) => {
@@ -559,6 +755,7 @@ async function init(): Promise<void> {
     window.location.href = "/login.html";
     return;
   }
+  currentUserID = data.user_id || "";
   renderSidebarFoot(data);
   await Promise.all([loadTeams(), loadInbox()]);
   if (teams.length > 0) {

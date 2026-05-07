@@ -109,3 +109,28 @@ export type InboxInvitation = {
 export type InboxInvitationListResponse = {
   invitations: InboxInvitation[];
 };
+
+export type InboxCountResponse = {
+  count: number;
+};
+
+export type TeamResourceCounts = {
+  apps: number;
+  certificates: number;
+  profiles: number;
+  asc_configs: number;
+  llm_configs: number;
+};
+
+export type TeamDeleteBlockedResponse = {
+  error: string;
+  resource_counts: TeamResourceCounts;
+};
+
+export type TeamTransferPayload = {
+  new_owner_user_id: string;
+};
+
+export type TeamMemberRoleUpdatePayload = {
+  role: TeamRole;
+};

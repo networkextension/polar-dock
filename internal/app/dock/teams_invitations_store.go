@@ -371,6 +371,23 @@ func (s *Server) listMyPendingInvitations(email string) ([]TeamInvitation, error
 	return out, rows.Err()
 }
 
+// countMyPendingInvitations returns the count of pending, non-expired
+// invitations addressed to the email. Cheaper than fetching the full
+// list; used by the inbox-badge polling endpoint.
+func (s *Server) countMyPendingInvitations(email string) (int, error) {
+	emailLower := strings.ToLower(strings.TrimSpace(email))
+	if emailLower == "" {
+		return 0, nil
+	}
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM team_invitations
+		 WHERE LOWER(email) = $1 AND status = 'pending' AND expires_at > $2`,
+		emailLower, time.Now().UTC(),
+	).Scan(&n)
+	return n, err
+}
+
 // expireOldInvitations rewrites pending rows whose expires_at has
 // passed. Cheap to run at startup. Idempotent.
 func (s *Server) expireOldInvitations() error {

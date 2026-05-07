@@ -89,6 +89,10 @@ function buildSwitcherStyles(): string {
 .lp-ws-action { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; color: var(--text-muted, #555); text-decoration: none; font-size: 12px; }
 .lp-ws-action:hover { background: var(--surface-hover, #f3f3f6); }
 .lp-ws-empty { padding: 8px; font-size: 12px; color: var(--text-muted, #888); }
+.lp-ws-trigger { position: relative; }
+.lp-ws-inbox-dot { position: absolute; top: 4px; right: 4px; min-width: 14px; height: 14px; padding: 0 4px; border-radius: 7px; background: #c33; color: #fff; font-size: 10px; line-height: 14px; text-align: center; box-shadow: 0 0 0 2px var(--surface, #fff); display: none; }
+.lp-ws-inbox-dot.visible { display: block; }
+.lp-ws-action.lp-ws-inbox-action { font-weight: 500; color: #a22; }
   `.trim();
 }
 
@@ -144,6 +148,48 @@ async function fetchTeamsForSwitcher(): Promise<Team[]> {
   }
 }
 
+// Inbox poll cadence — invitations are low-frequency events, but
+// users do expect the badge to clear shortly after they accept on
+// /teams.html. 60s strikes a reasonable balance.
+const INBOX_POLL_INTERVAL_MS = 60_000;
+
+async function fetchInboxCount(): Promise<number> {
+  try {
+    const res = await fetch("/api/users/me/invitations/count", { credentials: "include" });
+    if (!res.ok) return 0;
+    const data = (await res.json()) as { count?: number };
+    return data.count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function applyInboxCount(wrapper: HTMLElement, count: number): void {
+  const dot = wrapper.querySelector<HTMLElement>(".lp-ws-inbox-dot");
+  const action = wrapper.querySelector<HTMLElement>(".lp-ws-inbox-action");
+  if (dot) {
+    if (count > 0) {
+      dot.textContent = count > 9 ? "9+" : String(count);
+      dot.classList.add("visible");
+    } else {
+      dot.classList.remove("visible");
+    }
+  }
+  if (action) {
+    action.hidden = count <= 0;
+    action.textContent = count > 0 ? `📬 你有 ${count} 条待处理邀请` : "";
+  }
+}
+
+function pollInbox(wrapper: HTMLElement): void {
+  void (async () => {
+    applyInboxCount(wrapper, await fetchInboxCount());
+  })();
+  window.setInterval(async () => {
+    applyInboxCount(wrapper, await fetchInboxCount());
+  }, INBOX_POLL_INTERVAL_MS);
+}
+
 export async function installWorkspaceSwitcher(): Promise<void> {
   const nav = document.querySelector<HTMLElement>(".lp-nav");
   if (!nav) return;
@@ -167,6 +213,7 @@ export async function installWorkspaceSwitcher(): Promise<void> {
   wrapper.className = "lp-ws-switcher";
   wrapper.innerHTML = `
     <button type="button" class="lp-ws-trigger" data-ws-trigger>
+      <span class="lp-ws-inbox-dot" data-ws-inbox-dot>0</span>
       <div class="lp-ws-icon">${
         active.avatar_url
           ? `<img src="${escapeHTML(active.avatar_url)}" alt="" />`
@@ -181,9 +228,11 @@ export async function installWorkspaceSwitcher(): Promise<void> {
     <div class="lp-ws-menu" data-ws-menu>
       ${teams.map((t) => renderItem(t, active.id)).join("")}
       <div class="lp-ws-divider"></div>
+      <a class="lp-ws-action lp-ws-inbox-action" href="/teams.html" hidden></a>
       <a class="lp-ws-action" href="/teams.html">＋ 创建 / 管理工作区</a>
     </div>`;
   nav.parentNode?.insertBefore(wrapper, nav);
+  pollInbox(wrapper);
 
   const trigger = wrapper.querySelector<HTMLButtonElement>("[data-ws-trigger]");
   const menu = wrapper.querySelector<HTMLElement>("[data-ws-menu]");
