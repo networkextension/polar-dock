@@ -66,18 +66,59 @@ type aiChatCompletionRequest struct {
 	MaxTokens          int                       `json:"max_tokens,omitempty"`
 	Stream             bool                      `json:"stream,omitempty"`
 	ChatTemplateKwargs map[string]any            `json:"chat_template_kwargs,omitempty"`
+	// Tools / ToolChoice are OpenAI-compatible function-calling
+	// fields used when the bot has a polar-agent attached. Kimi
+	// supports the same shape via api.moonshot.cn.
+	Tools      []aiToolSpec `json:"tools,omitempty"`
+	ToolChoice string       `json:"tool_choice,omitempty"` // "auto" | "none" | "required"
 }
 
 type aiChatCompletionMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// ToolCalls is what the assistant emits when it wants to call
+	// a tool. Mutually exclusive with Content in practice (Content
+	// often empty when tool calls present).
+	ToolCalls []aiToolCallMsg `json:"tool_calls,omitempty"`
+	// ToolCallID + Name set when this is a "role: tool" message
+	// echoing a tool's output back into the conversation.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+}
+
+// aiToolSpec is the OpenAI function-calling schema. We only use
+// "function" type; type=function + function.name/description/parameters.
+type aiToolSpec struct {
+	Type     string         `json:"type"`
+	Function aiToolFunction `json:"function"`
+}
+
+type aiToolFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+// aiToolCallMsg is one tool call inside an assistant message. id
+// is the model's correlation token (we echo it back on the tool
+// result message). function.arguments is a JSON-encoded string.
+type aiToolCallMsg struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"` // "function"
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type aiChatCompletionChoice struct {
+	Message      aiChatCompletionMessage `json:"message"`
+	FinishReason string                  `json:"finish_reason,omitempty"`
 }
 
 type aiChatCompletionResponse struct {
-	Choices []struct {
-		Message aiChatCompletionMessage `json:"message"`
-	} `json:"choices"`
-	Error json.RawMessage `json:"error,omitempty"`
+	Choices []aiChatCompletionChoice `json:"choices"`
+	Error   json.RawMessage          `json:"error,omitempty"`
 }
 
 type aiProvider string
@@ -483,6 +524,16 @@ func (a *aiAgent) generateReply(task aiAgentTask, runtimeConfig aiRuntimeConfig)
 		return "这个 Bot 的模型配置还没准备好，请先补全 API Key、Base URL 和 Model。", nil
 	}
 
+	// Phase 1.4A: route to the tool-aware multi-turn loop when the
+	// responding bot has a polar-agent attached. Otherwise fall
+	// through to the plain single-shot completion below.
+	if a.server != nil && a.server.agentHub != nil && task.ResponderUserID != "" {
+		if conn := a.server.agentHub.lookup(task.ResponderUserID); conn != nil {
+			log.Printf("[ai-agent] bot=%s has agent attached, using tool loop (workdir=%s)", task.ResponderUserID, conn.workdir)
+			return a.generateReplyWithTools(task, runtimeConfig, task.ResponderUserID, conn.workdir)
+		}
+	}
+
 	contextText, err := a.buildContext(task.ThreadID, task.LLMThreadID)
 	if err != nil {
 		log.Printf("build ai context failed: %v", err)
@@ -601,9 +652,7 @@ func (a *aiAgent) requestOpenAICompatibleChatCompletion(runtimeConfig aiRuntimeC
 		if err := json.Unmarshal(responseBody, &anthropicResult); err == nil {
 			if text := extractAnthropicResponseText(anthropicResult); text != "" {
 				return &aiChatCompletionResponse{
-					Choices: []struct {
-						Message aiChatCompletionMessage `json:"message"`
-					}{
+					Choices: []aiChatCompletionChoice{
 						{Message: aiChatCompletionMessage{Role: "assistant", Content: text}},
 					},
 				}, nil
@@ -657,9 +706,7 @@ func (a *aiAgent) requestGeminiContent(runtimeConfig aiRuntimeConfig, payload ai
 
 	text := extractGeminiResponseText(result)
 	return &aiChatCompletionResponse{
-		Choices: []struct {
-			Message aiChatCompletionMessage `json:"message"`
-		}{
+		Choices: []aiChatCompletionChoice{
 			{
 				Message: aiChatCompletionMessage{
 					Role:    "assistant",
@@ -715,9 +762,7 @@ func (a *aiAgent) requestXAIResponses(runtimeConfig aiRuntimeConfig, payload aiC
 
 	text := extractXAIResponseText(result)
 	return &aiChatCompletionResponse{
-		Choices: []struct {
-			Message aiChatCompletionMessage `json:"message"`
-		}{
+		Choices: []aiChatCompletionChoice{
 			{
 				Message: aiChatCompletionMessage{
 					Role:    "assistant",
@@ -774,9 +819,7 @@ func (a *aiAgent) requestAnthropicMessages(runtimeConfig aiRuntimeConfig, payloa
 
 	text := extractAnthropicResponseText(result)
 	return &aiChatCompletionResponse{
-		Choices: []struct {
-			Message aiChatCompletionMessage `json:"message"`
-		}{
+		Choices: []aiChatCompletionChoice{
 			{
 				Message: aiChatCompletionMessage{
 					Role:    "assistant",
