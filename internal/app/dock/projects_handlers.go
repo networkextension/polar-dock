@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -646,11 +647,13 @@ func (s *Server) handleProjectTaskPickup(c *gin.Context) {
 	now := time.Now()
 	chatThread, err := s.ensureChatThread(userIDStr, botUserID, now)
 	if err != nil {
+		log.Printf("pickup: ensureChatThread project=%s task=%s bot=%s: %v", projectID, taskID, botUserID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
 	llmThread, err := s.createLLMThread(chatThread.ID, userIDStr, botUserID, "[Task] "+task.Title, now)
 	if err != nil {
+		log.Printf("pickup: createLLMThread project=%s task=%s bot=%s: %v", projectID, taskID, botUserID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
