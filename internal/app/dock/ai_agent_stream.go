@@ -150,7 +150,7 @@ type streamSession struct {
 	watchdog *time.Timer
 }
 
-func (a *aiAgent) startStreamingRequest(ctx context.Context, providerLabel, reqURL, contentType string, body []byte, headers map[string]string) (*streamSession, error) {
+func (a *aiAgent) startStreamingRequest(ctx context.Context, providerLabel, reqURL, contentType string, body []byte, headers map[string]string, proxyURL string) (*streamSession, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
 	watchdog := time.AfterFunc(streamIdleTimeout, cancel)
 
@@ -168,7 +168,7 @@ func (a *aiAgent) startStreamingRequest(ctx context.Context, providerLabel, reqU
 
 	log.Printf("ai agent stream open: provider=%s url=%s body=%s", providerLabel, reqURL, compactLogJSON(body))
 
-	resp, err := a.streamClient.Do(req)
+	resp, err := a.streamClientFor(proxyURL).Do(req)
 	if err != nil {
 		watchdog.Stop()
 		cancel()
@@ -230,7 +230,7 @@ func (a *aiAgent) streamOpenAICompatible(ctx context.Context, runtimeConfig aiRu
 	}
 	session, err := a.startStreamingRequest(ctx, "openai", runtimeConfig.BaseURL, "application/json", body, map[string]string{
 		"Authorization": "Bearer " + runtimeConfig.APIKey,
-	})
+	}, runtimeConfig.ProxyURL)
 	if err != nil {
 		return "", err
 	}
@@ -323,7 +323,7 @@ func (a *aiAgent) streamAnthropic(ctx context.Context, runtimeConfig aiRuntimeCo
 	session, err := a.startStreamingRequest(ctx, "anthropic", reqURL, "application/json", body, map[string]string{
 		"x-api-key":         runtimeConfig.APIKey,
 		"anthropic-version": "2023-06-01",
-	})
+	}, runtimeConfig.ProxyURL)
 	if err != nil {
 		return "", err
 	}
@@ -396,7 +396,7 @@ func (a *aiAgent) streamGemini(ctx context.Context, runtimeConfig aiRuntimeConfi
 	if err != nil {
 		return "", err
 	}
-	session, err := a.startStreamingRequest(ctx, "gemini", reqURL, "application/json", body, nil)
+	session, err := a.startStreamingRequest(ctx, "gemini", reqURL, "application/json", body, nil, runtimeConfig.ProxyURL)
 	if err != nil {
 		return "", err
 	}
@@ -492,7 +492,7 @@ func (a *aiAgent) streamXAI(ctx context.Context, runtimeConfig aiRuntimeConfig, 
 	}
 	session, err := a.startStreamingRequest(ctx, "xai", reqURL, "application/json", body, map[string]string{
 		"Authorization": "Bearer " + runtimeConfig.APIKey,
-	})
+	}, runtimeConfig.ProxyURL)
 	if err != nil {
 		return "", err
 	}

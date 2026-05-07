@@ -64,6 +64,11 @@ type aiRuntimeConfig struct {
 	Model        string
 	SystemPrompt string
 	Streaming    bool
+	// ProxyURL: optional HTTP(S) proxy used for THIS provider's
+	// API call. Empty = inherit dock's default Go transport
+	// (which respects HTTP_PROXY / HTTPS_PROXY env). Plumbed in
+	// from llm_configs.proxy_url.
+	ProxyURL string
 }
 
 type aiChatCompletionRequest struct {
@@ -244,6 +249,51 @@ func (a *aiAgent) stop() {
 	a.stopOnce.Do(func() {
 		close(a.stopCh)
 	})
+}
+
+// httpClientFor returns a.httpClient when no proxy is configured
+// (default Go transport, respects HTTP_PROXY / HTTPS_PROXY env on
+// the dock machine) or a freshly-built client wired to the
+// supplied proxy URL. Per-call build keeps the implementation
+// trivial; cost is one Transport allocation, dominated by the LLM
+// round-trip latency itself.
+func (a *aiAgent) httpClientFor(proxyURL string) *http.Client {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return a.httpClient
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		log.Printf("ai agent invalid proxy_url %q, falling back to default client: %v", proxyURL, err)
+		return a.httpClient
+	}
+	return &http.Client{
+		Timeout: 180 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(parsed),
+		},
+	}
+}
+
+// streamClientFor mirrors httpClientFor but returns a client with
+// no overall timeout (matching a.streamClient) for SSE-style
+// long-lived connections.
+func (a *aiAgent) streamClientFor(proxyURL string) *http.Client {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return a.streamClient
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		log.Printf("ai agent invalid proxy_url %q, falling back to default stream client: %v", proxyURL, err)
+		return a.streamClient
+	}
+	return &http.Client{
+		Timeout: 0,
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(parsed),
+		},
+	}
 }
 
 func (a *aiAgent) enqueue(task aiAgentTask) {
@@ -733,7 +783,7 @@ func (a *aiAgent) requestOpenAICompatibleChatCompletion(runtimeConfig aiRuntimeC
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+runtimeConfig.APIKey)
 
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.httpClientFor(runtimeConfig.ProxyURL).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -793,7 +843,7 @@ func (a *aiAgent) requestGeminiContent(runtimeConfig aiRuntimeConfig, payload ai
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.httpClientFor(runtimeConfig.ProxyURL).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -849,7 +899,7 @@ func (a *aiAgent) requestXAIResponses(runtimeConfig aiRuntimeConfig, payload aiC
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+runtimeConfig.APIKey)
 
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.httpClientFor(runtimeConfig.ProxyURL).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -910,7 +960,7 @@ func (a *aiAgent) requestVolcesResponses(runtimeConfig aiRuntimeConfig, payload 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+runtimeConfig.APIKey)
 
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.httpClientFor(runtimeConfig.ProxyURL).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -991,7 +1041,7 @@ func (a *aiAgent) requestAnthropicMessages(runtimeConfig aiRuntimeConfig, payloa
 	req.Header.Set("x-api-key", runtimeConfig.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.httpClientFor(runtimeConfig.ProxyURL).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,6 +1141,7 @@ func (a *aiAgent) runtimeConfig(threadID int64, llmThreadID *int64, responderUse
 		BaseURL:      strings.TrimSpace(item.BaseURL),
 		Model:        strings.TrimSpace(item.Model),
 		SystemPrompt: systemPrompt,
+		ProxyURL:     strings.TrimSpace(item.ProxyURL),
 		Streaming:    item.Streaming,
 	}, nil
 }

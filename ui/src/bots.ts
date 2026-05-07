@@ -29,6 +29,7 @@ const llmConfigNameInput = byId<HTMLInputElement>("llmConfigNameInput");
 const llmConfigBaseUrlInput = byId<HTMLInputElement>("llmConfigBaseUrlInput");
 const llmConfigModelInput = byId<HTMLInputElement>("llmConfigModelInput");
 const llmConfigApiKeyInput = byId<HTMLInputElement>("llmConfigApiKeyInput");
+const llmConfigProxyUrlInput = byId<HTMLInputElement>("llmConfigProxyUrlInput");
 const llmConfigSystemPromptInput = byId<HTMLTextAreaElement>("llmConfigSystemPromptInput");
 const llmConfigSharedInput = byId<HTMLInputElement>("llmConfigSharedInput");
 const llmConfigResetBtn = byId<HTMLButtonElement>("llmConfigResetBtn");
@@ -91,6 +92,7 @@ function collectLLMConfigPayloadFromForm(): LLMConfigPayload {
     base_url: llmConfigBaseUrlInput.value.trim() || resolvePresetEndpoint(preset),
     model: llmConfigModelInput.value.trim() || preset.defaultModelID,
     api_key: llmConfigApiKeyInput.value.trim(),
+    proxy_url: llmConfigProxyUrlInput.value.trim(),
     system_prompt: llmConfigSystemPromptInput.value.trim(),
     shared: llmConfigSharedInput.checked,
     provider_kind: resolvePresetProviderKind(preset),
@@ -385,6 +387,7 @@ llmConfigList.addEventListener("click", async (event) => {
     llmConfigBaseUrlInput.value = config.base_url;
     llmConfigModelInput.value = config.model;
     llmConfigApiKeyInput.value = "";
+    llmConfigProxyUrlInput.value = config.proxy_url || "";
     llmConfigSystemPromptInput.value = config.system_prompt || "";
     llmConfigSharedInput.checked = config.shared;
     llmConfigSubmitBtn.textContent = t("dashboard.updateConfig");
