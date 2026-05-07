@@ -69,6 +69,7 @@ export type ProjectCreateResponse = {
 
 export type ProjectDecomposeResponse = {
   features: ProjectFeature[];
+  llm_used?: { id: number; name: string; model: string };
   error?: string;
   raw?: string;
   hint?: string;

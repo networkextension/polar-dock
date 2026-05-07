@@ -6,7 +6,7 @@
 //
 // Per-task chat thread (1:1) wiring + bot pickup come in phase 1.3.
 
-import { fetchBotUsers } from "./api/dashboard.js";
+import { fetchAvailableLLMConfigs, fetchBotUsers } from "./api/dashboard.js";
 import {
   createAgentToken,
   createProject,
@@ -54,6 +54,7 @@ const descEl = byId<HTMLTextAreaElement>("projectsDescription");
 const saveDescBtn = byId<HTMLButtonElement>("projectsSaveDescBtn");
 const decomposeBtn = byId<HTMLButtonElement>("projectsDecomposeBtn");
 const decomposeStatusEl = byId<HTMLElement>("projectsDecomposeStatus");
+const decomposeLLMSelect = byId<HTMLSelectElement>("projectsDecomposeLLMSelect");
 
 const featuresSection = byId<HTMLElement>("projectsFeaturesSection");
 const featuresListEl = byId<HTMLElement>("projectsFeaturesList");
@@ -442,14 +443,21 @@ async function decompose(): Promise<void> {
   }
   decomposeBtn.disabled = true;
   setStatus(decomposeStatusEl, "AI 正在拆解功能（最多 90 秒）...", false);
-  const { response, data } = await decomposeProject(activeProject.id);
+  const llmIDRaw = decomposeLLMSelect.value;
+  const llmID = llmIDRaw ? Number(llmIDRaw) : undefined;
+  const { response, data } = await decomposeProject(activeProject.id, llmID);
   decomposeBtn.disabled = false;
   if (!response.ok) {
     setStatus(decomposeStatusEl, data.error || "拆解失败", true);
     return;
   }
   activeFeatures = data.features;
-  setStatus(decomposeStatusEl, `拆出 ${activeFeatures.length} 个功能`, false);
+  // Surface which LLM actually produced this run so A/B comparison
+  // is unambiguous without checking server logs.
+  const llmTag = data.llm_used
+    ? `（${escapeHTML(data.llm_used.name)} · ${escapeHTML(data.llm_used.model)}）`
+    : "";
+  setStatus(decomposeStatusEl, `拆出 ${activeFeatures.length} 个功能 ${llmTag}`, false);
   renderFeatures();
   // Reload project so status flips to planning.
   void openProject(activeProject.id);
@@ -512,6 +520,26 @@ async function loadBots(): Promise<void> {
       }
     }),
   );
+}
+
+// loadDecomposeLLMs populates the LLM picker next to AI 拆解.
+// First option is "auto"; the rest are workspace-available configs
+// that have an API key. Disabled configs (no key) are surfaced
+// with a "(no key)" suffix but disabled — visible to the user
+// without misleading them into picking an unusable one.
+async function loadDecomposeLLMs(): Promise<void> {
+  const { response, data } = await fetchAvailableLLMConfigs();
+  if (!response.ok) {
+    return;
+  }
+  const configs = data.configs || [];
+  const opts = ['<option value="">拆解用 LLM（自动选）</option>'];
+  for (const cfg of configs) {
+    const label = `${escapeHTML(cfg.name)} · ${escapeHTML(cfg.model)}${cfg.has_api_key ? "" : "（缺 API Key）"}`;
+    const disabled = cfg.has_api_key ? "" : " disabled";
+    opts.push(`<option value="${cfg.id}"${disabled}>${label}</option>`);
+  }
+  decomposeLLMSelect.innerHTML = opts.join("");
 }
 
 async function doPickup(taskID: string, botUserID: string): Promise<void> {
@@ -714,7 +742,7 @@ async function init(): Promise<void> {
     return;
   }
   renderSidebarFoot(data);
-  await Promise.all([loadProjects(), loadBots()]);
+  await Promise.all([loadProjects(), loadBots(), loadDecomposeLLMs()]);
   if (projects.length > 0) {
     void openProject(projects[0].id);
   }

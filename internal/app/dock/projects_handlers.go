@@ -331,24 +331,48 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 		return
 	}
 
-	// Pick a text-kind LLM available to this workspace. Platform
-	// default (is_platform=TRUE) sorts first in listAvailableLLMConfigs,
-	// so the natural choice is configs[0].
+	// Optional explicit LLM pick (for A/B comparison: same project,
+	// different LLM each click). Body is JSON; missing/0 = auto-pick
+	// the first config with an API key.
+	var req struct {
+		LLMConfigID int64 `json:"llm_config_id"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
 	configs, err := s.listAvailableLLMConfigs(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
 	var chosen *LLMConfig
-	for i := range configs {
-		if configs[i].HasAPIKey {
-			chosen = &configs[i]
-			break
+	if req.LLMConfigID > 0 {
+		for i := range configs {
+			if configs[i].ID == req.LLMConfigID {
+				chosen = &configs[i]
+				break
+			}
 		}
-	}
-	if chosen == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "没有可用的 LLM 配置；请联系管理员开通平台默认 LLM 或自行添加配置"})
-		return
+		if chosen == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "选定的 LLM 配置在此工作区不可用"})
+			return
+		}
+		if !chosen.HasAPIKey {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "选定的 LLM 配置没有 API Key"})
+			return
+		}
+	} else {
+		// Auto-pick: platform default (is_platform=TRUE) sorts first
+		// in listAvailableLLMConfigs, so configs[0] when present.
+		for i := range configs {
+			if configs[i].HasAPIKey {
+				chosen = &configs[i]
+				break
+			}
+		}
+		if chosen == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "没有可用的 LLM 配置；请联系管理员开通平台默认 LLM 或自行添加配置"})
+			return
+		}
 	}
 	cfg, apiKey, err := s.getAvailableLLMConfigWithAPIKey(workspaceID, chosen.ID)
 	if err != nil || cfg == nil || strings.TrimSpace(apiKey) == "" {
@@ -428,7 +452,17 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 		st := ProjectStatusPlanning
 		_ = s.updateProjectMetadata(project.ID, workspaceID, ProjectMetaUpdate{Status: &st})
 	}
-	c.JSON(http.StatusOK, gin.H{"features": features})
+	// Include the LLM that actually produced the result so the FE
+	// can display "拆解 by claude-3.5-sonnet · 12s" — handy when
+	// re-decomposing across providers for A/B comparison.
+	c.JSON(http.StatusOK, gin.H{
+		"features": features,
+		"llm_used": gin.H{
+			"id":    chosen.ID,
+			"name":  chosen.Name,
+			"model": chosen.Model,
+		},
+	})
 }
 
 // stripCodeFences removes wrapping ```json ... ``` fences that some

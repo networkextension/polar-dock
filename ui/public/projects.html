@@ -112,6 +112,9 @@
                   <textarea id="projectsDescription" class="input textarea" rows="6" placeholder="一句话描述这个 app 想做什么；越具体越好（题材、目标人群、核心交互、预期最终形态）"></textarea>
                   <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <button id="projectsSaveDescBtn" class="btn-inline btn-secondary" type="button">保存描述</button>
+                    <select id="projectsDecomposeLLMSelect" class="input" style="width:auto; padding:6px 8px; font-size:12px;">
+                      <option value="">拆解用 LLM（自动选）</option>
+                    </select>
                     <button id="projectsDecomposeBtn" class="btn-inline btn-secondary" type="button" style="background:#3a7;color:#fff;">AI 拆解功能 →</button>
                     <span id="projectsDecomposeStatus" class="status-text"></span>
                   </div>
