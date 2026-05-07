@@ -1600,6 +1600,37 @@ CREATE INDEX IF NOT EXISTS idx_llm_configs_workspace          ON llm_configs(wor
 ALTER TABLE iosdist_asc_configs DROP CONSTRAINT IF EXISTS iosdist_asc_configs_pkey;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_iosdist_asc_configs_workspace
 	ON iosdist_asc_configs(workspace_id) WHERE workspace_id IS NOT NULL;
+
+-- T6-D: lock workspace_id to NOT NULL on the migrated tables. By
+-- this point: T6-A backfill ran on every restart (every legacy
+-- row has workspace_id set) and T6-B/C handlers all write
+-- workspace_id on INSERT, so the constraint should never have a
+-- row to reject. SET NOT NULL is idempotent on Postgres —
+-- re-applying on an already-NOT-NULL column is a no-op. If a
+-- NULL slips in (e.g. an out-of-band INSERT during a rolling
+-- deploy), the schema apply at next start will fail loudly
+-- rather than silently corrupting; that's intentional. If you
+-- hit that, restart again — the backfill at the top of NewServer
+-- will fix any NULL rows before the schema re-runs.
+ALTER TABLE iosdist_apps         ALTER COLUMN workspace_id SET NOT NULL;
+ALTER TABLE iosdist_certificates ALTER COLUMN workspace_id SET NOT NULL;
+ALTER TABLE iosdist_profiles     ALTER COLUMN workspace_id SET NOT NULL;
+ALTER TABLE iosdist_asc_configs  ALTER COLUMN workspace_id SET NOT NULL;
+ALTER TABLE llm_configs          ALTER COLUMN workspace_id SET NOT NULL;
+
+-- The owner_user_id column (still NOT NULL) keeps an in-DB
+-- comment as a hint that its semantics changed in T6: it's now
+-- the audit "who created / last upserted this row" field, not
+-- the ownership / authorization column. Authorization queries
+-- should always be WHERE workspace_id = $X. The column is left
+-- in place — no rename — to avoid the cross-cutting touch that
+-- would entail (struct fields, JSON tags, frontend types). A
+-- future cleanup PR may rename it to creator_user_id.
+COMMENT ON COLUMN iosdist_apps.owner_user_id         IS 'audit: who created/upserted; not for authorization (use workspace_id)';
+COMMENT ON COLUMN iosdist_certificates.owner_user_id IS 'audit: who created/upserted; not for authorization (use workspace_id)';
+COMMENT ON COLUMN iosdist_profiles.owner_user_id     IS 'audit: who created/upserted; not for authorization (use workspace_id)';
+COMMENT ON COLUMN iosdist_asc_configs.owner_user_id  IS 'audit: who created/upserted; not for authorization (use workspace_id)';
+COMMENT ON COLUMN llm_configs.owner_user_id          IS 'audit: who created/upserted; not for authorization (use workspace_id)';
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
