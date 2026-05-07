@@ -86,6 +86,15 @@ type Config struct {
 	VideoSeedanceModel       string // e.g. doubao-seedance-1-0-pro-250528
 	VideoSeedanceAPIKey      string // ARK_API_KEY equivalent; seeds a system video config on first boot
 
+	// Platform-default LLM (Kimi). Set on the operator side; users
+	// don't manage their own AI key — the bot picker surfaces this
+	// row tagged "(平台默认)" and any workspace can pick it without
+	// configuring anything. Unset = no platform default; users must
+	// supply their own LLM config to use bots.
+	KimiBaseURL string // default https://api.moonshot.cn/v1
+	KimiModel   string // e.g. kimi-k2-turbo-preview
+	KimiAPIKey  string
+
 	// iOS distribution: 32-byte hex AES-GCM key used to encrypt .p12
 	// passwords at rest. When unset the platform stores cert passwords
 	// in plaintext and flags it on the API response so the operator

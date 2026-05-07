@@ -101,6 +101,7 @@ Shot 3 prompt...`,"video.bulkImportConfirm":"Import shots","video.bulkImportPrev
               <span class="tag-chip">${t.model}</span>
               ${t.has_api_key?`<span class="tag-chip">${a("dashboard.keySaved")}</span>`:`<span class="tag-chip">${a("dashboard.noKey")}</span>`}
               ${t.shared?`<span class="tag-chip">${a("dashboard.shared")}</span>`:`<span class="tag-chip">${a("dashboard.private")}</span>`}
+              ${t.is_platform?'<span class="tag-chip" style="background:#3a7;color:#fff;">\u5E73\u53F0\u9ED8\u8BA4</span>':""}
             </div>
             <div class="tag-item-meta">${t.base_url}</div>
             <div class="tag-item-desc">${t.system_prompt||a("dashboard.noSystemPrompt")}</div>
@@ -110,7 +111,7 @@ Shot 3 prompt...`,"video.bulkImportConfirm":"Import shots","video.bulkImportPrev
             <button class="btn-inline" type="button" data-action="delete">${a("common.delete")}</button>
           </div>
         </li>
-      `).join("")}function ie(e){if(!e.length){C.innerHTML=`<option value="">${a("dashboard.createLLMConfigFirst")}</option>`,C.disabled=!0,D.disabled=!0;return}let t=M?C.value:"";C.innerHTML=e.map(o=>`<option value="${o.id}">${o.name} \xB7 ${o.model}</option>`).join(""),t&&e.some(o=>String(o.id)===t)&&(C.value=t),C.disabled=!1,D.disabled=!1}function Bn(e){if(!e.length){me.innerHTML=`<li class="tag-item tag-item-empty">${a("dashboard.noBots")}</li>`;return}me.innerHTML=e.map(t=>`
+      `).join("")}function ie(e){if(!e.length){C.innerHTML=`<option value="">${a("dashboard.createLLMConfigFirst")}</option>`,C.disabled=!0,D.disabled=!0;return}let t=M?C.value:"";C.innerHTML=e.map(o=>{let n=o.is_platform?" (\u5E73\u53F0\u9ED8\u8BA4)":"";return`<option value="${o.id}">${o.name} \xB7 ${o.model}${n}</option>`}).join(""),t&&e.some(o=>String(o.id)===t)&&(C.value=t),C.disabled=!1,D.disabled=!1}function Bn(e){if(!e.length){me.innerHTML=`<li class="tag-item tag-item-empty">${a("dashboard.noBots")}</li>`;return}me.innerHTML=e.map(t=>`
         <li class="tag-item" data-bot-user-id="${t.id}">
           <div class="tag-item-main">
             <div class="tag-item-header">

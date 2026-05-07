@@ -70,6 +70,13 @@ type Server struct {
 	videoSeedanceModel   string
 	videoSeedanceAPIKey  string
 
+	// Platform-default LLM (Kimi). Seeded at startup if KIMI_API_KEY
+	// is set; users / workspaces can pick this row in the bot
+	// picker without touching their own LLM credentials.
+	kimiBaseURL string
+	kimiModel   string
+	kimiAPIKey  string
+
 	// iosdistResourceKey is the optional 32-byte AES-GCM key used to
 	// encrypt sensitive iOS distribution credentials (today: .p12
 	// passwords). nil means encryption is disabled and we'll store
@@ -282,8 +289,14 @@ func NewServer(cfg Config) (*Server, error) {
 	server.videoSeedanceBaseURL = cfg.VideoSeedanceBaseURL
 	server.videoSeedanceModel = cfg.VideoSeedanceModel
 	server.videoSeedanceAPIKey = cfg.VideoSeedanceAPIKey
+	server.kimiBaseURL = cfg.KimiBaseURL
+	server.kimiModel = cfg.KimiModel
+	server.kimiAPIKey = cfg.KimiAPIKey
 	if err := server.ensureSeedanceSystemConfig(); err != nil {
 		log.Printf("seed seedance system config failed: %v", err)
+	}
+	if err := server.ensureKimiPlatformConfig(); err != nil {
+		log.Printf("seed kimi platform config failed: %v", err)
 	}
 	server.startVideoRenderWorker(server.backgroundCtx)
 	go server.runVideoPollWorker(server.backgroundCtx)
@@ -329,6 +342,11 @@ func (s *Server) Close() error {
 // operator can ship a working default without clicking through the UI form.
 // Idempotent: if a row already exists for the system user we leave it alone
 // (operators can edit it via the LLM-config form afterwards).
+//
+// Post T6: lives under the system user's personal team workspace so
+// the workspace_id NOT NULL constraint is satisfied. shared=TRUE +
+// is_platform=TRUE both true so any workspace can pick this row in
+// the video-config picker.
 func (s *Server) ensureSeedanceSystemConfig() error {
 	if s == nil {
 		return nil
@@ -347,11 +365,16 @@ func (s *Server) ensureSeedanceSystemConfig() error {
 	if err == nil && existingID > 0 {
 		return nil
 	}
+	workspaceID, err := s.systemWorkspaceID()
+	if err != nil {
+		return err
+	}
 	now := time.Now()
 	if _, err := s.db.Exec(
-		`INSERT INTO llm_configs (owner_user_id, share_id, shared, name, base_url, model, api_key, system_prompt, provider_kind, extras, created_at, updated_at)
-		 VALUES ($1, '', TRUE, $2, $3, $4, $5, '', $6, $7::jsonb, $8, $8)`,
+		`INSERT INTO llm_configs (owner_user_id, workspace_id, share_id, shared, is_platform, name, base_url, model, api_key, system_prompt, provider_kind, extras, created_at, updated_at)
+		 VALUES ($1, $2, '', TRUE, TRUE, $3, $4, $5, $6, '', $7, $8::jsonb, $9, $9)`,
 		systemUserID,
+		workspaceID,
 		"Seedance · 默认",
 		baseURL,
 		model,
@@ -363,6 +386,65 @@ func (s *Server) ensureSeedanceSystemConfig() error {
 		return err
 	}
 	log.Printf("seeded seedance system config (model=%s)", model)
+	return nil
+}
+
+// ensureKimiPlatformConfig seeds the platform-default Kimi LLM
+// config. Once set, every workspace's bot picker / agent surfaces
+// this row tagged "(平台默认)" without anyone supplying credentials.
+// Idempotent: existing platform-kind row is updated in place so an
+// operator key rotation just needs a restart with the new env var.
+func (s *Server) ensureKimiPlatformConfig() error {
+	if s == nil {
+		return nil
+	}
+	apiKey := strings.TrimSpace(s.kimiAPIKey)
+	baseURL := strings.TrimSpace(s.kimiBaseURL)
+	model := strings.TrimSpace(s.kimiModel)
+	if apiKey == "" || baseURL == "" || model == "" {
+		return nil
+	}
+	workspaceID, err := s.systemWorkspaceID()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	// Look for an existing platform-default text config first; if
+	// found, refresh the credentials in place.
+	var existingID int64
+	err = s.db.QueryRow(
+		`SELECT id FROM llm_configs
+		   WHERE is_platform = TRUE
+		     AND (provider_kind = 'text' OR provider_kind = '' OR provider_kind IS NULL)
+		   ORDER BY id ASC LIMIT 1`,
+	).Scan(&existingID)
+	if err == nil && existingID > 0 {
+		_, uerr := s.db.Exec(
+			`UPDATE llm_configs
+			    SET base_url = $1, model = $2, api_key = $3, name = $4, updated_at = $5
+			  WHERE id = $6`,
+			baseURL, model, apiKey, "Kimi · 平台默认", now, existingID,
+		)
+		if uerr != nil {
+			return uerr
+		}
+		log.Printf("refreshed kimi platform config id=%d (model=%s)", existingID, model)
+		return nil
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO llm_configs (owner_user_id, workspace_id, share_id, shared, is_platform, name, base_url, model, api_key, system_prompt, streaming, provider_kind, extras, created_at, updated_at)
+		 VALUES ($1, $2, '', TRUE, TRUE, $3, $4, $5, $6, '', TRUE, '', '{}'::jsonb, $7, $7)`,
+		systemUserID,
+		workspaceID,
+		"Kimi · 平台默认",
+		baseURL,
+		model,
+		apiKey,
+		now,
+	); err != nil {
+		return err
+	}
+	log.Printf("seeded kimi platform config (model=%s)", model)
 	return nil
 }
 

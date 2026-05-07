@@ -243,6 +243,7 @@ type LLMConfig struct {
 	Streaming    bool            `json:"streaming"`
 	HasAPIKey    bool            `json:"has_api_key"`
 	ProviderKind string          `json:"provider_kind,omitempty"`
+	IsPlatform   bool            `json:"is_platform,omitempty"`
 	Extras       json.RawMessage `json:"extras,omitempty"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
@@ -965,6 +966,10 @@ ALTER TABLE llm_configs
 	ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE llm_configs
 	ADD COLUMN IF NOT EXISTS streaming BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE llm_configs
+	ADD COLUMN IF NOT EXISTS is_platform BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_llm_configs_platform
+	ON llm_configs(is_platform) WHERE is_platform = TRUE;
 
 CREATE TABLE IF NOT EXISTS packtunnel_profiles (
 	id TEXT PRIMARY KEY,
@@ -2027,7 +2032,7 @@ func (s *Server) getAvailableLLMConfigWithAPIKey(workspaceID string, id int64) (
 		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
 		  WHERE id = $1
-		    AND (workspace_id = $2 OR shared = TRUE)
+		    AND (workspace_id = $2 OR shared = TRUE OR is_platform = TRUE)
 		    AND (provider_kind = 'text' OR provider_kind = '' OR provider_kind IS NULL)`,
 		id,
 		workspaceID,
@@ -2100,12 +2105,17 @@ func (s *Server) deleteLLMConfig(workspaceID string, id int64) (bool, error) {
 // user gets confused when their bot can't reply. Empty provider_kind
 // is treated as 'text' so existing rows pre-migration keep working.
 func (s *Server) listAvailableLLMConfigs(workspaceID string) ([]LLMConfig, error) {
+	// Order: workspace's own > platform defaults > shared from
+	// other workspaces. The sort puts workspace_id-match first
+	// (DESC=true first), then is_platform=TRUE among the rest, so
+	// the bot picker surfaces my-team's first, falling back to the
+	// platform default below.
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, is_platform, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
-		  WHERE (workspace_id = $1 OR shared = TRUE)
+		  WHERE (workspace_id = $1 OR shared = TRUE OR is_platform = TRUE)
 		    AND (provider_kind = 'text' OR provider_kind = '' OR provider_kind IS NULL)
-		  ORDER BY (workspace_id = $1) DESC, updated_at DESC, id DESC`,
+		  ORDER BY (workspace_id = $1) DESC, is_platform DESC, updated_at DESC, id DESC`,
 		workspaceID,
 	)
 	if err != nil {
@@ -2115,7 +2125,7 @@ func (s *Server) listAvailableLLMConfigs(workspaceID string) ([]LLMConfig, error
 	items := make([]LLMConfig, 0)
 	for rows.Next() {
 		var item LLMConfig
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.IsPlatform, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -2587,7 +2597,7 @@ func (s *Server) createBotUser(workspaceID, ownerUserID, name, description, syst
 	}()
 
 	var configName string
-	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE)`, llmConfigID, workspaceID).Scan(&configName)
+	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE OR is_platform = TRUE)`, llmConfigID, workspaceID).Scan(&configName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -2646,7 +2656,7 @@ func (s *Server) updateBotUser(workspaceID string, id int64, name, description, 
 		return nil, err
 	}
 	var configName string
-	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE)`, llmConfigID, workspaceID).Scan(&configName)
+	err = tx.QueryRow(`SELECT name FROM llm_configs WHERE id = $1 AND (workspace_id = $2 OR shared = TRUE OR is_platform = TRUE)`, llmConfigID, workspaceID).Scan(&configName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil

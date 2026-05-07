@@ -86,6 +86,11 @@ func main() {
 		VideoSeedanceModel:       envOrDefault("VIDEO_SEEDANCE_MODEL", "doubao-seedance-1-0-pro-250528"),
 		VideoSeedanceAPIKey:      os.Getenv("VIDEO_SEEDANCE_API_KEY"),
 
+		// Platform LLM (Kimi)
+		KimiBaseURL: envOrDefault("KIMI_BASE_URL", "https://api.moonshot.cn/v1"),
+		KimiModel:   envOrDefault("KIMI_MODEL", "kimi-k2-turbo-preview"),
+		KimiAPIKey:  os.Getenv("KIMI_API_KEY"),
+
 		// iOS distribution
 		IOSDistResourceKey: os.Getenv("IOSDIST_RESOURCE_KEY"),
 	}

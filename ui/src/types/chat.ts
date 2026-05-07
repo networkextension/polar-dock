@@ -84,6 +84,7 @@ export type ChatLLMConfig = {
   name: string;
   model: string;
   shared: boolean;
+  is_platform?: boolean;
   streaming?: boolean;
 };
 
