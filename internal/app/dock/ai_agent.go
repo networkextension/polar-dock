@@ -588,24 +588,28 @@ func (a *aiAgent) cancelStream(messageID int64) {
 }
 
 func (a *aiAgent) generateReply(task aiAgentTask, runtimeConfig aiRuntimeConfig) (string, error) {
-	if strings.TrimSpace(runtimeConfig.APIKey) == "" || strings.TrimSpace(runtimeConfig.BaseURL) == "" || strings.TrimSpace(runtimeConfig.Model) == "" {
-		if task.ResponderUserID == systemUserID {
-			return "AI 助理尚未配置完成，请联系管理员设置 `AI_AGENT_API_KEY`、`AI_AGENT_BASE_URL` 和 `AI_AGENT_MODEL`。", nil
+	// Look up the bot kind first. Passthrough bots have no LLM
+	// config and the WS-attached agent IS their runtime; if we
+	// can't reach an agent, refuse the request rather than fall
+	// through to the missing-LLM error which would be confusing.
+	var botKind, preferredTool string
+	if task.ResponderUserID != "" && task.ResponderUserID != systemUserID {
+		if bot, _ := a.server.getBotUserByUserID(task.ResponderUserID); bot != nil {
+			botKind = bot.BotKind
+			preferredTool = bot.PreferredTool
 		}
-		return "这个 Bot 的模型配置还没准备好，请先补全 API Key、Base URL 和 Model。", nil
 	}
 
 	// Phase 1.4: route to the right agent path when this bot has a
 	// polar-agent attached. Two flavors:
 	//   - kimi-cli passthrough — the agent has kimi-cli installed
-	//     and declares the "kimi" capability. Platform forwards the
-	//     chat content as-is, agent shells out to kimi, returns
-	//     kimi's stdout. Platform LLM not invoked at all.
+	//     and declares the "passthrough" capability. Platform
+	//     forwards the chat content as-is, agent shells out to kimi
+	//     (or claude/codex/...), returns its stdout. Platform LLM
+	//     not invoked at all.
 	//   - tool loop (1.4A) — platform drives an OpenAI-compatible
 	//     tool-calling loop, using read_file/write_file/list_dir/
 	//     run_cmd tools that the agent executes.
-	// Falls through to the plain single-shot completion if no
-	// agent is attached.
 	if a.server != nil && a.server.agentHub != nil && task.ResponderUserID != "" {
 		if conn := a.server.agentHub.lookup(task.ResponderUserID); conn != nil {
 			if conn.hasPassthrough() {
@@ -619,6 +623,25 @@ func (a *aiAgent) generateReply(task aiAgentTask, runtimeConfig aiRuntimeConfig)
 			log.Printf("[ai-agent] bot=%s using tool loop (workdir=%s)", task.ResponderUserID, conn.workdir)
 			return a.generateReplyWithTools(task, runtimeConfig, task.ResponderUserID, conn.workdir)
 		}
+	}
+
+	// Passthrough bot without an attached agent: don't fall through
+	// to the LLM (it has no config and the user explicitly opted
+	// into "this bot is local-tool-only"). Return a clear actionable
+	// error.
+	if botKind == BotKindPassthrough {
+		hint := preferredTool
+		if hint == "" {
+			hint = "kimi"
+		}
+		return fmt.Sprintf("该 Bot 仅支持本地工具接管（passthrough 模式），暂时没有 polar-agent 连上。请先在终端运行：\n```\npolar-agent attach --bot=%s --workdir=<path> --tool=%s\n```", task.ResponderUserID, hint), nil
+	}
+
+	if strings.TrimSpace(runtimeConfig.APIKey) == "" || strings.TrimSpace(runtimeConfig.BaseURL) == "" || strings.TrimSpace(runtimeConfig.Model) == "" {
+		if task.ResponderUserID == systemUserID {
+			return "AI 助理尚未配置完成，请联系管理员设置 `AI_AGENT_API_KEY`、`AI_AGENT_BASE_URL` 和 `AI_AGENT_MODEL`。", nil
+		}
+		return "这个 Bot 的模型配置还没准备好，请先补全 API Key、Base URL 和 Model。", nil
 	}
 
 	contextText, err := a.buildContext(task.ThreadID, task.LLMThreadID)
@@ -1021,6 +1044,20 @@ func (a *aiAgent) runtimeConfig(threadID int64, llmThreadID *int64, responderUse
 	}
 	if botUser == nil {
 		return aiRuntimeConfig{}, fmt.Errorf("bot config not found for %s", responderUserID)
+	}
+
+	// Passthrough bots have no LLM config — the polar-agent's
+	// local tool is the runtime. Return an empty aiRuntimeConfig
+	// (with the bot's system prompt, so the tool-loop fallback
+	// still gets a useful prompt prefix when an agent IS attached
+	// and we accidentally enter the LLM path). generateReply
+	// detects the empty config + no agent case and returns a
+	// helpful "attach polar-agent first" message instead of
+	// dispatching a real LLM call.
+	if botUser.BotKind == BotKindPassthrough {
+		return aiRuntimeConfig{
+			SystemPrompt: strings.TrimSpace(botUser.SystemPrompt),
+		}, nil
 	}
 
 	var (

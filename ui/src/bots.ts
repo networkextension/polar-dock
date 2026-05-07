@@ -41,6 +41,11 @@ const llmConfigList = byId<HTMLUListElement>("llmConfigList");
 const botUserForm = byId<HTMLFormElement>("botUserForm");
 const botUserNameInput = byId<HTMLInputElement>("botUserNameInput");
 const botUserConfigSelect = byId<HTMLSelectElement>("botUserConfigSelect");
+const botUserConfigBlock = byId<HTMLElement>("botUserConfigBlock");
+const botUserPreferredToolBlock = byId<HTMLElement>("botUserPreferredToolBlock");
+const botUserPreferredToolSelect = byId<HTMLSelectElement>("botUserPreferredToolSelect");
+const botKindClassicRadio = byId<HTMLInputElement>("botKindClassic");
+const botKindPassthroughRadio = byId<HTMLInputElement>("botKindPassthrough");
 const botUserDescriptionInput = byId<HTMLTextAreaElement>("botUserDescriptionInput");
 const botUserSystemPromptInput = byId<HTMLTextAreaElement>("botUserSystemPromptInput");
 const botUserResetBtn = byId<HTMLButtonElement>("botUserResetBtn");
@@ -140,6 +145,10 @@ function renderLLMConfigList(configs: LLMConfig[]): void {
 function resetBotUserForm(): void {
   editingBotUserId = null;
   botUserForm.reset();
+  // form.reset() clears the radio selection — restore classic
+  // as the default (no LLM = no work) and re-sync visibility.
+  botKindClassicRadio.checked = true;
+  applyBotKindUI();
   botUserStatus.textContent = "";
   botUserSubmitBtn.textContent = t("dashboard.saveBotBtn");
 }
@@ -187,12 +196,20 @@ function renderBotUserList(bots: BotUser[]): void {
           ${promptHtml ? `<div class="bot-expand-section"><div class="bot-expand-label">${t("dashboard.botSystemPromptLabel")}</div><div class="content-box bot-expand-content">${promptHtml}</div></div>` : ""}
         </div>` : "";
 
+      // Bot kind chip:
+      //   classic     → show the LLM config name (existing behavior)
+      //   passthrough → show "Passthrough" + the preferred tool hint
+      // so the list reads at a glance which bots use a local agent
+      // vs the platform LLM.
+      const kindChip = bot.bot_kind === "passthrough"
+        ? `<span class="tag-chip tag-chip-accent">Passthrough${bot.preferred_tool ? " · " + bot.preferred_tool : ""}</span>`
+        : `<span class="tag-chip">${bot.config_name}</span>`;
       return `
         <li class="tag-item${isPending ? " tag-item-pending-delete" : ""}${isExpanded ? " tag-item-expanded" : ""}" data-bot-user-id="${bot.id}">
           <div class="tag-item-main">
             <div class="tag-item-header">
               <strong>${bot.name}</strong>
-              <span class="tag-chip">${bot.config_name}</span>
+              ${kindChip}
               <span class="bot-agent-badge" data-bot-agent-badge="${bot.bot_user_id}"></span>
             </div>
             <div class="tag-item-meta">${t("dashboard.botUserId", { id: bot.bot_user_id })}</div>
@@ -403,15 +420,43 @@ botUserResetBtn.addEventListener("click", () => {
   resetBotUserForm();
 });
 
+function currentBotKind(): "classic" | "passthrough" {
+  return botKindPassthroughRadio.checked ? "passthrough" : "classic";
+}
+
+// applyBotKindUI hides/shows the LLM config block + preferred-tool
+// block based on the radio. Passthrough bots don't need an LLM
+// config; the polar-agent's local tool is the runtime.
+function applyBotKindUI(): void {
+  const kind = currentBotKind();
+  if (kind === "passthrough") {
+    botUserConfigBlock.style.display = "none";
+    botUserPreferredToolBlock.style.display = "";
+  } else {
+    botUserConfigBlock.style.display = "";
+    botUserPreferredToolBlock.style.display = "none";
+  }
+}
+
+botKindClassicRadio.addEventListener("change", applyBotKindUI);
+botKindPassthroughRadio.addEventListener("change", applyBotKindUI);
+
 botUserForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const kind = currentBotKind();
   const payload: BotPayload = {
     name: botUserNameInput.value.trim(),
     description: botUserDescriptionInput.value.trim(),
     system_prompt: botUserSystemPromptInput.value.trim(),
-    llm_config_id: Number(botUserConfigSelect.value || 0),
+    llm_config_id: kind === "classic" ? Number(botUserConfigSelect.value || 0) : 0,
+    bot_kind: kind,
+    preferred_tool: kind === "passthrough" ? botUserPreferredToolSelect.value : "",
   };
-  if (!payload.name || payload.llm_config_id <= 0) {
+  if (!payload.name) {
+    botUserStatus.textContent = t("dashboard.botMissingFields");
+    return;
+  }
+  if (kind === "classic" && payload.llm_config_id <= 0) {
     botUserStatus.textContent = t("dashboard.botMissingFields");
     return;
   }
@@ -459,7 +504,14 @@ botUserList.addEventListener("click", async (event) => {
     botUserNameInput.value = bot.name;
     botUserDescriptionInput.value = bot.description || "";
     botUserSystemPromptInput.value = bot.system_prompt || "";
-    botUserConfigSelect.value = String(bot.llm_config_id);
+    botUserConfigSelect.value = String(bot.llm_config_id || "");
+    if (bot.bot_kind === "passthrough") {
+      botKindPassthroughRadio.checked = true;
+      botUserPreferredToolSelect.value = bot.preferred_tool || "";
+    } else {
+      botKindClassicRadio.checked = true;
+    }
+    applyBotKindUI();
     botUserSubmitBtn.textContent = t("dashboard.updateBot");
     botUserStatus.textContent = "";
     botUserNameInput.focus();

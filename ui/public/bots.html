@@ -129,8 +129,37 @@
                   <label class="form-label" for="botUserNameInput" data-i18n="dashboard.botNameLabel">Bot name</label>
                   <input id="botUserNameInput" class="input" type="text" maxlength="60" data-i18n-placeholder="dashboard.botNamePlaceholder" placeholder="e.g. Translation assistant" />
 
-                  <label class="form-label" for="botUserConfigSelect" data-i18n="dashboard.botConfigLabel">Bind config</label>
-                  <select id="botUserConfigSelect" class="input"></select>
+                  <label class="form-label">Bot 类型</label>
+                  <div style="display:flex; gap:14px; align-items:center; padding:6px 0;">
+                    <label style="display:flex; gap:6px; align-items:center; cursor:pointer;">
+                      <input type="radio" name="botKind" value="classic" id="botKindClassic" checked />
+                      <span>经典 LLM</span>
+                      <span style="color:var(--text-muted,#888); font-size:11px;">(用平台的 LLM 配置回复)</span>
+                    </label>
+                    <label style="display:flex; gap:6px; align-items:center; cursor:pointer;">
+                      <input type="radio" name="botKind" value="passthrough" id="botKindPassthrough" />
+                      <span>本地工具接管</span>
+                      <span style="color:var(--text-muted,#888); font-size:11px;">(只配 polar-agent + kimi/claude/codex)</span>
+                    </label>
+                  </div>
+
+                  <div id="botUserConfigBlock">
+                    <label class="form-label" for="botUserConfigSelect" data-i18n="dashboard.botConfigLabel">Bind config</label>
+                    <select id="botUserConfigSelect" class="input"></select>
+                  </div>
+
+                  <div id="botUserPreferredToolBlock" style="display:none;">
+                    <label class="form-label" for="botUserPreferredToolSelect">首选编码工具</label>
+                    <select id="botUserPreferredToolSelect" class="input">
+                      <option value="">（不指定）</option>
+                      <option value="kimi">kimi-cli</option>
+                      <option value="claude">claude</option>
+                      <option value="codex">codex</option>
+                    </select>
+                    <div style="font-size:11px; color:var(--text-muted,#888); margin:4px 0 8px 0;">
+                      ⓘ 仅作 UI 标签——实际工具由 polar-agent attach 时的 <code>--tool=</code> 决定。
+                    </div>
+                  </div>
 
                   <label class="form-label" for="botUserDescriptionInput" data-i18n="dashboard.botDescriptionLabel">Bot description</label>
                   <textarea id="botUserDescriptionInput" class="input textarea" rows="3" maxlength="500" data-i18n-placeholder="dashboard.botDescriptionPlaceholder" placeholder="Tell users what this Bot is good at"></textarea>

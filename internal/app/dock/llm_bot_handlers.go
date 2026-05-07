@@ -233,21 +233,40 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
 	var req struct {
-		Name         string `json:"name" binding:"required"`
-		Description  string `json:"description"`
-		SystemPrompt string `json:"system_prompt"`
-		LLMConfigID  int64  `json:"llm_config_id" binding:"required"`
+		Name          string `json:"name" binding:"required"`
+		Description   string `json:"description"`
+		SystemPrompt  string `json:"system_prompt"`
+		LLMConfigID   int64  `json:"llm_config_id"`
+		BotKind       string `json:"bot_kind"`       // "" → classic
+		PreferredTool string `json:"preferred_tool"` // optional hint
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
 		return
 	}
 	name := strings.TrimSpace(req.Name)
-	if name == "" || req.LLMConfigID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Bot 名称和配置不能为空"})
+	kind := strings.TrimSpace(req.BotKind)
+	if kind == "" {
+		kind = BotKindClassic
+	}
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Bot 名称不能为空"})
 		return
 	}
-	item, err := s.createBotUser(workspaceID, userIDStr, name, strings.TrimSpace(req.Description), strings.TrimSpace(req.SystemPrompt), req.LLMConfigID, time.Now())
+	if kind == BotKindClassic && req.LLMConfigID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Classic Bot 必须选择 LLM 配置"})
+		return
+	}
+	item, err := s.createBotUser(CreateBotUserInput{
+		WorkspaceID:   workspaceID,
+		OwnerUserID:   userIDStr,
+		Name:          name,
+		Description:   strings.TrimSpace(req.Description),
+		SystemPrompt:  strings.TrimSpace(req.SystemPrompt),
+		LLMConfigID:   req.LLMConfigID,
+		BotKind:       kind,
+		PreferredTool: strings.TrimSpace(req.PreferredTool),
+	}, time.Now())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
@@ -270,21 +289,38 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Name         string `json:"name" binding:"required"`
-		Description  string `json:"description"`
-		SystemPrompt string `json:"system_prompt"`
-		LLMConfigID  int64  `json:"llm_config_id" binding:"required"`
+		Name          string `json:"name" binding:"required"`
+		Description   string `json:"description"`
+		SystemPrompt  string `json:"system_prompt"`
+		LLMConfigID   int64  `json:"llm_config_id"`
+		BotKind       string `json:"bot_kind"`
+		PreferredTool string `json:"preferred_tool"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
 		return
 	}
 	name := strings.TrimSpace(req.Name)
-	if name == "" || req.LLMConfigID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Bot 名称和配置不能为空"})
+	kind := strings.TrimSpace(req.BotKind)
+	if kind == "" {
+		kind = BotKindClassic
+	}
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Bot 名称不能为空"})
 		return
 	}
-	item, err := s.updateBotUser(workspaceID, id, name, strings.TrimSpace(req.Description), strings.TrimSpace(req.SystemPrompt), req.LLMConfigID, time.Now())
+	if kind == BotKindClassic && req.LLMConfigID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Classic Bot 必须选择 LLM 配置"})
+		return
+	}
+	item, err := s.updateBotUser(workspaceID, id, UpdateBotUserInput{
+		Name:          name,
+		Description:   strings.TrimSpace(req.Description),
+		SystemPrompt:  strings.TrimSpace(req.SystemPrompt),
+		LLMConfigID:   req.LLMConfigID,
+		BotKind:       kind,
+		PreferredTool: strings.TrimSpace(req.PreferredTool),
+	}, time.Now())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
