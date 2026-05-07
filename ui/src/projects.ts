@@ -6,6 +6,7 @@
 //
 // Per-task chat thread (1:1) wiring + bot pickup come in phase 1.3.
 
+import { fetchBotUsers } from "./api/dashboard.js";
 import {
   createAgentToken,
   createProject,
@@ -15,12 +16,14 @@ import {
   fetchProject,
   fetchProjects,
   generateProjectPlan,
+  pickupProjectTask,
   revokeAgentToken,
   updateProject,
   updateProjectFeature,
   updateProjectTask,
 } from "./api/projects.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
+import type { BotUser } from "./types/dashboard.js";
 import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
@@ -83,6 +86,8 @@ let activeProjectID: string | null = null;
 let activeProject: Project | null = null;
 let activeFeatures: ProjectFeature[] = [];
 let activeTasks: ProjectTask[] = [];
+let availableBots: BotUser[] = [];
+let pickerOpenForTaskID: string | null = null;
 
 const STATUS_LABEL: Record<ProjectStatus, string> = {
   draft: "草稿",
@@ -234,16 +239,15 @@ function renderTasks(): void {
       const opts = TASK_STATUS_OPTIONS.map(
         (s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${TASK_STATUS_LABEL[s]}</option>`,
       ).join("");
+      const isPickerOpen = pickerOpenForTaskID === t.id;
       return `
         <div style="padding:10px; background:#fff; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:10px; align-items:flex-start;">
           <div style="flex:1; min-width:0;">
             <div style="font-weight:500; font-size:14px;">${escapeHTML(t.title)}</div>
             <div style="font-size:12px; color:var(--text-muted,#888); margin-top:3px;">${escapeHTML(t.description)}</div>
-            ${
-              t.chat_thread_id
-                ? `<a href="/chat.html#thread=${t.chat_thread_id}" style="font-size:11px; margin-top:4px; display:inline-block;">→ 进入会话</a>`
-                : `<div style="font-size:11px; color:var(--text-muted,#888); margin-top:4px;">（未派给 bot）</div>`
-            }
+            <div style="margin-top:6px; font-size:11px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              ${renderTaskBotSlot(t, isPickerOpen)}
+            </div>
           </div>
           <select class="input" style="font-size:12px; padding:4px 6px; width:auto;" data-task-status="${escapeHTML(t.id)}">${opts}</select>
         </div>`;
@@ -255,6 +259,49 @@ function renderTasks(): void {
       if (id) void changeTaskStatus(id, sel.value as TaskStatus);
     });
   });
+  tasksListEl.querySelectorAll<HTMLElement>("[data-task-pickup]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-task-pickup");
+      if (!id) return;
+      pickerOpenForTaskID = pickerOpenForTaskID === id ? null : id;
+      renderTasks();
+    });
+  });
+  tasksListEl.querySelectorAll<HTMLElement>("[data-pickup-bot]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const taskID = btn.getAttribute("data-task-id");
+      const botID = btn.getAttribute("data-pickup-bot");
+      if (taskID && botID) void doPickup(taskID, botID);
+    });
+  });
+}
+
+function renderTaskBotSlot(t: ProjectTask, pickerOpen: boolean): string {
+  if (t.bot_user_id) {
+    const bot = availableBots.find((b) => b.bot_user_id === t.bot_user_id);
+    const botName = bot?.name || t.bot_user_id;
+    // chat.html accepts ?user_id=<bot> to navigate to the existing
+    // user↔bot thread; the most-recent llm_thread (the one we just
+    // created) is auto-selected by chat's loader.
+    const link = `/chat.html?user_id=${encodeURIComponent(t.bot_user_id)}`;
+    return `<span style="color:var(--text-muted,#888);">🤖 ${escapeHTML(botName)}</span>
+            <a href="${link}" style="color:var(--accent,#3a7);">→ 进入会话</a>`;
+  }
+  if (!pickerOpen) {
+    return `<button type="button" class="btn-inline btn-secondary" data-task-pickup="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">🤖 派给 Bot</button>`;
+  }
+  if (availableBots.length === 0) {
+    return `<span style="color:var(--text-muted,#888);">没有 bot 可用，请先在 Bots 页面创建一个</span>
+            <button type="button" class="btn-inline btn-secondary" data-task-pickup="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">取消</button>`;
+  }
+  const choices = availableBots
+    .map(
+      (b) =>
+        `<button type="button" class="btn-inline btn-secondary" data-pickup-bot="${escapeHTML(b.bot_user_id)}" data-task-id="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">${escapeHTML(b.name)}</button>`,
+    )
+    .join("");
+  return `<span style="color:var(--text-muted,#888);">选一个 bot：</span>${choices}
+          <button type="button" class="btn-inline btn-secondary" data-task-pickup="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">取消</button>`;
 }
 
 // ---- data ops -----------------------------------------------------
@@ -365,6 +412,32 @@ async function changeTaskStatus(taskID: string, status: TaskStatus): Promise<voi
   if (!t) return;
   t.status = status;
   await updateProjectTask(activeProject.id, taskID, { status });
+}
+
+async function loadBots(): Promise<void> {
+  const { response, data } = await fetchBotUsers();
+  if (response.ok) {
+    availableBots = data.bots || [];
+  }
+}
+
+async function doPickup(taskID: string, botUserID: string): Promise<void> {
+  if (!activeProject) return;
+  pickerOpenForTaskID = null;
+  const { response, data } = await pickupProjectTask(activeProject.id, taskID, botUserID);
+  if (!response.ok) {
+    window.alert(("error" in data && (data as { error?: string }).error) || "派单失败");
+    renderTasks();
+    return;
+  }
+  // Replace the task in-place rather than refetching the whole
+  // project — the response carries the updated task and we already
+  // know it's transitioned to in_progress.
+  const idx = activeTasks.findIndex((x) => x.id === taskID);
+  if (idx >= 0) {
+    activeTasks[idx] = data.task;
+  }
+  renderTasks();
 }
 
 async function doDeleteProject(): Promise<void> {
@@ -542,7 +615,7 @@ async function init(): Promise<void> {
     return;
   }
   renderSidebarFoot(data);
-  await loadProjects();
+  await Promise.all([loadProjects(), loadBots()]);
   if (projects.length > 0) {
     void openProject(projects[0].id);
   }

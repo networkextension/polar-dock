@@ -42,6 +42,7 @@ export type ProjectTask = {
   status: TaskStatus;
   bot_user_id?: string;
   chat_thread_id?: number;
+  llm_thread_id?: number;
   ord: number;
   created_at: string;
   updated_at: string;

@@ -372,6 +372,158 @@ func (s *Server) handleProjectGeneratePlan(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"tasks": tasks, "created_count": len(tasks)})
 }
 
+// ---- task pickup (assign to bot) ----------------------------------
+
+type projectTaskPickupRequest struct {
+	BotUserID string `json:"bot_user_id" binding:"required"`
+}
+
+type projectTaskPickupResponse struct {
+	Task         ProjectTask `json:"task"`
+	ChatThreadID int64       `json:"chat_thread_id"`
+	LLMThreadID  int64       `json:"llm_thread_id"`
+	BotName      string      `json:"bot_name"`
+}
+
+// handleProjectTaskPickup wires a project task to a bot user. It
+// creates (or reuses) the user↔bot chat thread, opens a fresh
+// llm_thread titled after the task, writes the task description as
+// the user's first message, and enqueues an aiAgentTask so the bot
+// (or its attached polar-agent) starts responding immediately.
+//
+// Per 用户 ("1:1 task↔chat thread mapping"): each task gets its own
+// llm_thread inside the shared (user, bot) chat thread. kimi-cli
+// passthrough mode rides its own --continue session keyed on
+// workdir, so cross-task continuity falls out for free.
+func (s *Server) handleProjectTaskPickup(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	userID, _ := c.Get("user_id")
+	userIDStr, _ := userID.(string)
+	if userIDStr == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	projectID := strings.TrimSpace(c.Param("id"))
+	if _, err := s.getProject(projectID, workspaceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	taskID := strings.TrimSpace(c.Param("task_id"))
+	task, err := s.loadProjectTask(projectID, taskID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	var req projectTaskPickupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	botUserID := strings.TrimSpace(req.BotUserID)
+	if !strings.HasPrefix(botUserID, "bot_") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bot_user_id 必须是一个 bot 用户"})
+		return
+	}
+	bot, err := s.getBotUserByUserID(botUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if bot == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "bot 不存在"})
+		return
+	}
+	if bot.WorkspaceID != workspaceID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "该 bot 不属于当前工作区"})
+		return
+	}
+
+	now := time.Now()
+	chatThread, err := s.ensureChatThread(userIDStr, botUserID, now)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	llmThread, err := s.createLLMThread(chatThread.ID, userIDStr, botUserID, "[Task] "+task.Title, now)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if llmThread == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "初始化任务话题失败"})
+		return
+	}
+
+	// Persist the wiring on the task before sending the message —
+	// avoids a stale task state if the message send fails.
+	if _, err := s.db.Exec(
+		`UPDATE project_tasks
+		 SET bot_user_id = $1,
+		     chat_thread_id = $2,
+		     llm_thread_id = $3,
+		     status = CASE WHEN status IN ($4, $5) THEN $6 ELSE status END,
+		     started_at = COALESCE(started_at, $7),
+		     updated_at = $7
+		 WHERE id = $8 AND project_id = $9`,
+		botUserID, chatThread.ID, llmThread.ID,
+		ProjectTaskStatusTodo, ProjectTaskStatusBlocked,
+		ProjectTaskStatusInProgress,
+		now, taskID, projectID,
+	); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+
+	// First message body: title + description so the bot has full
+	// context. Don't bother with extra prompt scaffolding — the
+	// system prompt is already on the bot, and kimi-cli passthrough
+	// would skip it anyway.
+	body := task.Title
+	if strings.TrimSpace(task.Description) != "" {
+		body += "\n\n" + task.Description
+	}
+	username, _ := c.Get("username")
+	senderName, _ := username.(string)
+	llmThreadIDPtr := &llmThread.ID
+	if _, err := s.sendChatMessage(chatThread.ID, llmThreadIDPtr, userIDStr, senderName, body, now); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "消息发送失败"})
+		return
+	}
+	if s.aiAgent != nil {
+		s.aiAgent.enqueue(aiAgentTask{
+			ThreadID:        chatThread.ID,
+			LLMThreadID:     llmThreadIDPtr,
+			UserID:          userIDStr,
+			ResponderUserID: botUserID,
+			ResponderName:   bot.Name,
+			Content:         body,
+		})
+	}
+
+	updated, err := s.loadProjectTask(projectID, taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, projectTaskPickupResponse{
+		Task:         *updated,
+		ChatThreadID: chatThread.ID,
+		LLMThreadID:  llmThread.ID,
+		BotName:      bot.Name,
+	})
+}
+
 // ---- task update ---------------------------------------------------
 
 type projectTaskUpdateRequest struct {

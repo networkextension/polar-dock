@@ -9,6 +9,7 @@ import type {
   ProjectFeatureUpdatePayload,
   ProjectGeneratePlanResponse,
   ProjectListResponse,
+  ProjectTask,
   ProjectTaskUpdatePayload,
   ProjectUpdatePayload,
 } from "../types/projects.js";
@@ -64,6 +65,24 @@ export async function updateProjectTask(id: string, taskID: string, payload: Pro
   return requestJson<{ ok: boolean }>(
     `/api/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskID)}`,
     { method: "PUT", body: payload },
+  );
+}
+
+export type ProjectTaskPickupResponse = {
+  task: ProjectTask;
+  chat_thread_id: number;
+  llm_thread_id: number;
+  bot_name: string;
+};
+
+// Assigns a task to a bot. Backend creates / reuses the user↔bot
+// chat thread, opens a fresh llm_thread titled after the task,
+// drops the task description as the user's first message, and
+// enqueues the AI agent so the bot starts working immediately.
+export async function pickupProjectTask(id: string, taskID: string, botUserID: string) {
+  return requestJson<ProjectTaskPickupResponse>(
+    `/api/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskID)}/pickup`,
+    { method: "POST", body: { bot_user_id: botUserID } },
   );
 }
 
