@@ -227,8 +227,11 @@ async function hydrateBotAgentBadges(bots: BotUser[]): Promise<void> {
       }
       const caps = data.capabilities || [];
       const workdir = data.workdir || "";
-      if (caps.includes("kimi")) {
-        slot.innerHTML = `<span class="tag-chip tag-chip-accent" title="本地 polar-agent 用 kimi-cli 接管，bot 的模型配置被旁路。workdir=${escapeAttr(workdir)}">🤖 kimi-cli 接管</span>`;
+      const tool = (data.tool || "").trim();
+      const isPassthrough = caps.includes("passthrough") || caps.includes("kimi");
+      if (isPassthrough) {
+        const label = tool ? `🤖 ${tool} 接管` : "🤖 本地 agent 接管";
+        slot.innerHTML = `<span class="tag-chip tag-chip-accent" title="本地 polar-agent 用 ${escapeAttr(tool || "本地工具")} 接管，bot 的模型配置被旁路。workdir=${escapeAttr(workdir)}">${label}</span>`;
       } else {
         slot.innerHTML = `<span class="tag-chip" title="polar-agent 已附着，走平台 tool loop。workdir=${escapeAttr(workdir)}">⚙️ agent 已连接</span>`;
       }

@@ -57,17 +57,23 @@ func printUsage() {
 Usage:
   polar-agent login   --server=<url> --token=<raw>     # write ~/.polar/agent.toml
   polar-agent status                                    # show config + last verify
-  polar-agent attach  --bot=<bot_id> --workdir=<path>   # connect WS, execute tools
-  polar-agent attach  --bot=<bot_id> --workdir=<path> --kimi   # passthrough to local kimi-cli
+  polar-agent attach  --bot=<bot_id> --workdir=<path>             # tool-call loop mode
+  polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=kimi  # passthrough to local kimi-cli
+  polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=claude
+  polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=codex
 
-Tool whitelist (executed in workdir, default mode):
+Tool whitelist (executed in workdir, default tool-call mode):
   read_file   — args: { path }
   write_file  — args: { path, content }
   list_dir    — args: { path }
   run_cmd     — args: { cmd, args[], stdin }   # cmd in {git, swift, xcodebuild, xcrun, ls, cat, find, grep}
 
---kimi mode: chat content piped through "kimi-cli --work-dir=<path> --yolo --afk --continue".
-            Platform LLM is bypassed; kimi-cli IS the agent. Requires kimi-cli on $PATH.
+--tool=<name> passthrough mode: chat content forwarded to the named local tool.
+              Built-ins: kimi (kimi-cli), claude, codex. Override or add via
+              ~/.polar/tools.json (see toolSpec / builtinTools in tools.go).
+              Platform LLM is bypassed; the local tool IS the agent.
+
+--kimi (legacy alias for --tool=kimi).
 
 Config file: ~/.polar/agent.toml
   server = "https://polar.example.com"
@@ -123,7 +129,8 @@ func runAttach(args []string) int {
 	bot := fs.String("bot", "", "bot_user_id to attach to")
 	workdir := fs.String("workdir", ".", "local working directory the bot may operate on")
 	verbose := fs.Bool("verbose", false, "log each tool call")
-	kimi := fs.Bool("kimi", false, "passthrough mode: shell out to local kimi-cli for each chat message")
+	tool := fs.String("tool", "", "passthrough tool name (kimi/claude/codex/<custom>); empty = tool-call loop")
+	kimi := fs.Bool("kimi", false, "legacy alias for --tool=kimi")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -131,6 +138,10 @@ func runAttach(args []string) int {
 		fmt.Fprintln(os.Stderr, "--bot=<bot_user_id> is required")
 		return exitUsage
 	}
+	if *kimi && *tool == "" {
+		*tool = "kimi"
+	}
+
 	cfg, err := LoadAgentConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "no config (run `polar-agent login` first): %v\n", err)
@@ -141,13 +152,30 @@ func runAttach(args []string) int {
 		fmt.Fprintf(os.Stderr, "workdir invalid: %v\n", err)
 		return exitConfig
 	}
+
+	// Resolve tool spec up front so we fail fast on bad name.
+	var spec *toolSpec
+	if *tool != "" {
+		specs, _, lerr := loadToolsConfig()
+		if lerr != nil {
+			fmt.Fprintf(os.Stderr, "tools config invalid: %v\n", lerr)
+			return exitConfig
+		}
+		s, ferr := findToolSpec(specs, *tool)
+		if ferr != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", ferr)
+			return exitConfig
+		}
+		spec = s
+	}
+
 	log.SetFlags(log.Ldate | log.Ltime)
 	mode := "tool-loop"
-	if *kimi {
-		mode = "kimi-passthrough"
+	if spec != nil {
+		mode = "passthrough(" + spec.Name + ")"
 	}
 	log.Printf("attach bot=%s workdir=%s server=%s mode=%s", *bot, resolved, cfg.Server, mode)
-	if err := runAgentLoop(cfg, *bot, resolved, *verbose, *kimi); err != nil {
+	if err := runAgentLoop(cfg, *bot, resolved, *verbose, spec); err != nil {
 		log.Printf("agent loop ended: %v", err)
 		return exitNet
 	}

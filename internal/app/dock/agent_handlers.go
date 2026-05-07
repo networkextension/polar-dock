@@ -249,12 +249,14 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 				Kind         string   `json:"kind"`
 				Version      string   `json:"version"`
 				Capabilities []string `json:"capabilities"`
+				Tool         string   `json:"tool"`
 			}
 			if err := json.Unmarshal(raw, &h); err == nil {
 				ac.capabilities = h.Capabilities
+				ac.tool = strings.TrimSpace(h.Tool)
 			}
-			log.Printf("[agent ws] hello bot=%s caps=%v payload=%s",
-				ac.botUserID, ac.capabilities, truncateForLog(string(raw), 200))
+			log.Printf("[agent ws] hello bot=%s caps=%v tool=%q payload=%s",
+				ac.botUserID, ac.capabilities, ac.tool, truncateForLog(string(raw), 200))
 		default:
 			log.Printf("[agent ws] unknown kind=%s bot=%s", head.Kind, ac.botUserID)
 		}
@@ -378,5 +380,6 @@ func (s *Server) handleAgentStatus(c *gin.Context) {
 		"attached":     true,
 		"workdir":      conn.workdir,
 		"capabilities": caps,
+		"tool":         conn.tool,
 	})
 }
