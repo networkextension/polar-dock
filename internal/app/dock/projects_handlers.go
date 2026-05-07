@@ -666,6 +666,10 @@ func (s *Server) handleProjectTaskPickup(c *gin.Context) {
 			ResponderUserID: botUserID,
 			ResponderName:   bot.Name,
 			Content:         body,
+			// Per-project subdir under the agent's pinned workdir
+			// (e.g. ~/work/myrepo/<project_id>/) so two concurrent
+			// projects on one agent don't fight over the same files.
+			WorkdirSubpath: project.ID,
 		})
 	}
 

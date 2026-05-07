@@ -117,15 +117,21 @@ func (c *agentConn) deliverResult(r agentToolResult) {
 }
 
 // agentChatMessage is the platform → agent envelope when routing a
-// user-typed chat message into a kimi-cli passthrough agent. The
-// agent spawns its local kimi-cli with this Content as input
-// (resuming the per-thread session) and pipes stdout back as
-// agentChatReply.
+// user-typed chat message into a passthrough agent. The agent
+// spawns its local tool with Content as input and pipes stdout
+// back as agentChatReply.
+//
+// WorkdirSubpath, when non-empty, scopes the tool's cwd to a
+// subdirectory of the agent's pinned --workdir. Pickup handlers
+// populate it with the project id so each project's code lives
+// at $workdir/<project_id>/, isolated from other projects on
+// the same agent. The agent mkdir -p's the path before exec.
 type agentChatMessage struct {
-	Kind     string `json:"kind"` // "chat_message"
-	ID       string `json:"id"`
-	ThreadID int64  `json:"thread_id"`
-	Content  string `json:"content"`
+	Kind           string `json:"kind"` // "chat_message"
+	ID             string `json:"id"`
+	ThreadID       int64  `json:"thread_id"`
+	Content        string `json:"content"`
+	WorkdirSubpath string `json:"workdir_subpath,omitempty"`
 }
 
 type agentChatReply struct {
@@ -235,7 +241,9 @@ func (h *agentHub) dispatchToolCall(botUserID, callID, tool string, args map[str
 // dispatchChatMessage sends a chat_message envelope to the agent
 // (kimi-cli passthrough mode) and waits for the chat_reply. Long
 // timeout — kimi can take a few minutes on big tasks.
-func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content string) (*agentChatReply, error) {
+// workdirSubpath, if non-empty, tells the agent to scope the tool's
+// cwd to $workdir/<subpath>; pickup uses this for project isolation.
+func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content, workdirSubpath string) (*agentChatReply, error) {
 	conn := h.lookup(botUserID)
 	if conn == nil {
 		return nil, errAgentNotAttached
@@ -245,10 +253,11 @@ func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content
 	}
 	id := generateResourceID()
 	payload, err := json.Marshal(agentChatMessage{
-		Kind:     "chat_message",
-		ID:       id,
-		ThreadID: threadID,
-		Content:  content,
+		Kind:           "chat_message",
+		ID:             id,
+		ThreadID:       threadID,
+		Content:        content,
+		WorkdirSubpath: workdirSubpath,
 	})
 	if err != nil {
 		return nil, err

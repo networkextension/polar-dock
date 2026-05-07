@@ -28,10 +28,16 @@ import (
 )
 
 type chatMessage struct {
-	Kind     string `json:"kind"`
-	ID       string `json:"id"`
-	ThreadID int64  `json:"thread_id"`
-	Content  string `json:"content"`
+	Kind           string `json:"kind"`
+	ID             string `json:"id"`
+	ThreadID       int64  `json:"thread_id"`
+	Content        string `json:"content"`
+	// WorkdirSubpath, if non-empty, scopes the tool's cwd to
+	// $workdir/<subpath> instead of $workdir. The platform sets
+	// this from project pickup so each project's code lives in
+	// its own subdir. Empty = use the agent's pinned root workdir.
+	// We mkdir -p the subdir at spawn time.
+	WorkdirSubpath string `json:"workdir_subpath,omitempty"`
 }
 
 type chatReply struct {
