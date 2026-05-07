@@ -85,3 +85,16 @@ export async function revokeAgentToken(id: string) {
     method: "DELETE",
   });
 }
+
+export type AgentBotStatus = {
+  attached: boolean;
+  workdir?: string;
+  capabilities?: string[];
+};
+
+// Agent attach status for a single bot. Used by bots.ts to show a
+// "passthrough mode" badge so users know a bot's configured model
+// field is being bypassed by a local runtime (kimi-cli today).
+export async function fetchAgentBotStatus(botUserID: string) {
+  return requestJson<AgentBotStatus>(`/api/agent/bots/${encodeURIComponent(botUserID)}/status`);
+}
