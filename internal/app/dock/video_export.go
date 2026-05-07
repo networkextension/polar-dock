@@ -25,7 +25,7 @@ import (
 const videoExportShotDownloadTimeout = 5 * time.Minute
 
 func (s *Server) handleVideoProjectShotsZip(c *gin.Context) {
-	userID, ok := requireUserID(c)
+	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
 		return
 	}
@@ -33,7 +33,7 @@ func (s *Server) handleVideoProjectShotsZip(c *gin.Context) {
 	if !ok {
 		return
 	}
-	project, err := s.getVideoProject(userID, projectID)
+	project, err := s.getVideoProject(workspaceID, projectID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return

@@ -207,13 +207,17 @@ func (s *Server) handleLLMConfigDelete(c *gin.Context) {
 }
 
 func (s *Server) handleBotUserList(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
-	if err := s.ensureBuiltinBotUsers(userIDStr, time.Now()); err != nil {
+	if err := s.ensureBuiltinBotUsers(workspaceID, userIDStr, time.Now()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	items, err := s.listBotUsers(userIDStr)
+	items, err := s.listBotUsers(workspaceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -222,6 +226,10 @@ func (s *Server) handleBotUserList(c *gin.Context) {
 }
 
 func (s *Server) handleBotUserCreate(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
 	var req struct {
@@ -239,7 +247,7 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Bot 名称和配置不能为空"})
 		return
 	}
-	item, err := s.createBotUser(userIDStr, name, strings.TrimSpace(req.Description), strings.TrimSpace(req.SystemPrompt), req.LLMConfigID, time.Now())
+	item, err := s.createBotUser(workspaceID, userIDStr, name, strings.TrimSpace(req.Description), strings.TrimSpace(req.SystemPrompt), req.LLMConfigID, time.Now())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
@@ -252,8 +260,10 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 }
 
 func (s *Server) handleBotUserUpdate(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	userIDStr, _ := userID.(string)
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 Bot"})
@@ -274,7 +284,7 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Bot 名称和配置不能为空"})
 		return
 	}
-	item, err := s.updateBotUser(userIDStr, id, name, strings.TrimSpace(req.Description), strings.TrimSpace(req.SystemPrompt), req.LLMConfigID, time.Now())
+	item, err := s.updateBotUser(workspaceID, id, name, strings.TrimSpace(req.Description), strings.TrimSpace(req.SystemPrompt), req.LLMConfigID, time.Now())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
@@ -287,19 +297,21 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 }
 
 func (s *Server) handleBotUserDelete(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	userIDStr, _ := userID.(string)
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 Bot"})
 		return
 	}
-	ok, err := s.deleteBotUser(userIDStr, id)
+	deleted, err := s.deleteBotUser(workspaceID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
 		return
 	}
-	if !ok {
+	if !deleted {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Bot 不存在"})
 		return
 	}

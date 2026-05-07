@@ -239,13 +239,13 @@ type assistError struct {
 
 func (e *assistError) Error() string { return e.message }
 
-// resolveAssistBot loads the bot and its LLM config. ownerUserID is the
-// caller's user id (still used to scope bot ownership — bots stay
-// per-user for now); workspaceID gates the LLM config visibility, so a
-// shared config from any workspace plus the workspace's own configs are
-// reachable.
+// resolveAssistBot loads the bot and its LLM config. Both bot
+// ownership and LLM config visibility are now workspace-scoped post
+// the misc-migrate sweep. ownerUserID stays in the signature for
+// audit logging callers may want; the lookup itself uses workspaceID.
 func (s *Server) resolveAssistBot(ownerUserID, workspaceID string, botID, llmConfigID int64) (aiRuntimeConfig, *BotUser, *LLMConfig, error) {
-	bot, err := s.getBotUserForOwner(ownerUserID, botID)
+	_ = ownerUserID
+	bot, err := s.getBotUserForOwner(workspaceID, botID)
 	if err != nil {
 		return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
 	}

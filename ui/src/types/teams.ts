@@ -120,6 +120,10 @@ export type TeamResourceCounts = {
   profiles: number;
   asc_configs: number;
   llm_configs: number;
+  bot_users: number;
+  packtunnel_profiles: number;
+  packtunnel_rules: number;
+  video_projects: number;
 };
 
 export type TeamDeleteBlockedResponse = {

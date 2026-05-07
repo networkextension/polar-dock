@@ -403,38 +403,47 @@ func (s *Server) removeTeamMember(teamID, userID string) error {
 // belong to the team. Used for the pre-delete check so we don't
 // orphan resources when a team is deleted.
 type teamResourceCounts struct {
-	Apps         int `json:"apps"`
-	Certificates int `json:"certificates"`
-	Profiles     int `json:"profiles"`
-	ASCConfigs   int `json:"asc_configs"`
-	LLMConfigs   int `json:"llm_configs"`
+	Apps               int `json:"apps"`
+	Certificates       int `json:"certificates"`
+	Profiles           int `json:"profiles"`
+	ASCConfigs         int `json:"asc_configs"`
+	LLMConfigs         int `json:"llm_configs"`
+	BotUsers           int `json:"bot_users"`
+	PackTunnelProfiles int `json:"packtunnel_profiles"`
+	PackTunnelRules    int `json:"packtunnel_rules"`
+	VideoProjects      int `json:"video_projects"`
 }
 
 // Total returns the sum across all migrated tables.
 func (c teamResourceCounts) Total() int {
-	return c.Apps + c.Certificates + c.Profiles + c.ASCConfigs + c.LLMConfigs
+	return c.Apps + c.Certificates + c.Profiles + c.ASCConfigs + c.LLMConfigs +
+		c.BotUsers + c.PackTunnelProfiles + c.PackTunnelRules + c.VideoProjects
 }
 
 // countTeamResources tallies workspace_id-owned rows across the
-// migrated tables (T6 scope). Used by handleTeamDelete to refuse
-// deletion until the team is empty, and by the UI to show
-// "delete blocked because: 3 apps, 1 cert, ..." hints.
+// migrated tables. Used by handleTeamDelete to refuse deletion until
+// the team is empty, and by the UI to show "delete blocked because:
+// 3 apps, 1 cert, ..." hints.
 func (s *Server) countTeamResources(teamID string) (teamResourceCounts, error) {
 	var c teamResourceCounts
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM iosdist_apps WHERE workspace_id = $1`, teamID).Scan(&c.Apps); err != nil {
-		return c, err
+	queries := []struct {
+		dest *int
+		sql  string
+	}{
+		{&c.Apps, `SELECT COUNT(*) FROM iosdist_apps WHERE workspace_id = $1`},
+		{&c.Certificates, `SELECT COUNT(*) FROM iosdist_certificates WHERE workspace_id = $1`},
+		{&c.Profiles, `SELECT COUNT(*) FROM iosdist_profiles WHERE workspace_id = $1`},
+		{&c.ASCConfigs, `SELECT COUNT(*) FROM iosdist_asc_configs WHERE workspace_id = $1`},
+		{&c.LLMConfigs, `SELECT COUNT(*) FROM llm_configs WHERE workspace_id = $1`},
+		{&c.BotUsers, `SELECT COUNT(*) FROM bot_users WHERE workspace_id = $1`},
+		{&c.PackTunnelProfiles, `SELECT COUNT(*) FROM packtunnel_profiles WHERE workspace_id = $1`},
+		{&c.PackTunnelRules, `SELECT COUNT(*) FROM packtunnel_rule_files WHERE workspace_id = $1`},
+		{&c.VideoProjects, `SELECT COUNT(*) FROM video_projects WHERE workspace_id = $1`},
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM iosdist_certificates WHERE workspace_id = $1`, teamID).Scan(&c.Certificates); err != nil {
-		return c, err
-	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM iosdist_profiles WHERE workspace_id = $1`, teamID).Scan(&c.Profiles); err != nil {
-		return c, err
-	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM iosdist_asc_configs WHERE workspace_id = $1`, teamID).Scan(&c.ASCConfigs); err != nil {
-		return c, err
-	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM llm_configs WHERE workspace_id = $1`, teamID).Scan(&c.LLMConfigs); err != nil {
-		return c, err
+	for _, q := range queries {
+		if err := s.db.QueryRow(q.sql, teamID).Scan(q.dest); err != nil {
+			return c, err
+		}
 	}
 	return c, nil
 }
@@ -541,6 +550,10 @@ func (s *Server) enforceWorkspaceIDNotNull() error {
 		"iosdist_profiles",
 		"iosdist_asc_configs",
 		"llm_configs",
+		"bot_users",
+		"packtunnel_profiles",
+		"packtunnel_rule_files",
+		"video_projects",
 	}
 	for _, table := range tables {
 		if _, err := s.db.Exec(`ALTER TABLE ` + table + ` ALTER COLUMN workspace_id SET NOT NULL`); err != nil {
@@ -567,6 +580,10 @@ func (s *Server) backfillResourceWorkspaceIDs() error {
 		"iosdist_profiles",
 		"iosdist_asc_configs",
 		"llm_configs",
+		"bot_users",
+		"packtunnel_profiles",
+		"packtunnel_rule_files",
+		"video_projects",
 	}
 	for _, table := range tables {
 		// Single SQL statement per table. The personal team for each
@@ -587,6 +604,30 @@ func (s *Server) backfillResourceWorkspaceIDs() error {
 		}
 	}
 	return nil
+}
+
+// systemWorkspaceID returns the personal team id of the platform's
+// "system" user. Used by infrastructure-level modules whose data is
+// genuinely platform-wide (packtunnel today) — they need a stable
+// workspace_id to satisfy the FK + NOT NULL constraints, but they
+// shouldn't shard per real user. Cached after first lookup; the
+// system user's personal team is created at startup by
+// backfillPersonalTeams and never changes.
+var systemWorkspaceIDCache string
+
+func (s *Server) systemWorkspaceID() (string, error) {
+	if systemWorkspaceIDCache != "" {
+		return systemWorkspaceIDCache, nil
+	}
+	team, err := s.ensurePersonalTeam(systemUserID)
+	if err != nil {
+		return "", err
+	}
+	if team == nil {
+		return "", errors.New("system user has no personal team")
+	}
+	systemWorkspaceIDCache = team.ID
+	return team.ID, nil
 }
 
 // backfillPersonalTeams ensures every user has a personal team. Called
