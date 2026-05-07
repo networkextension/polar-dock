@@ -28,6 +28,8 @@ const workingHours = byId<HTMLInputElement>("workingHours");
 const applyDeadline = byId<HTMLInputElement>("applyDeadline");
 const postImages = byId<HTMLInputElement>("postImages");
 const postVideos = byId<HTMLInputElement>("postVideos");
+const postAttachments = byId<HTMLInputElement>("postAttachments");
+const postAttachmentChips = byId<HTMLElement>("postAttachmentChips");
 const postFormStatus = byId<HTMLElement>("postFormStatus");
 const postSubmitBtn = byId<HTMLButtonElement>("postSubmitBtn");
 const postAssistBotSelect = byId<HTMLSelectElement>("postAssistBot");
@@ -70,9 +72,18 @@ type Post = {
   image_items?: ImageItem[];
   videos?: string[];
   video_items?: VideoItem[];
+  attachments?: PostAttachment[];
   liked_by_me: boolean;
   like_count: number;
   task?: TaskMeta;
+};
+
+type PostAttachment = {
+  id: string;
+  filename: string;
+  size_bytes: number;
+  mime_type: string;
+  download_url: string;
 };
 
 type Tag = {
@@ -723,6 +734,7 @@ function renderPost(post: Post): void {
     ${taskInfo}
     <div class="post-images">${images}</div>
     ${videoSection}
+    ${renderPostAttachmentsList(post.attachments)}
     <div class="post-actions">
       <button id="detailLikeBtn" class="btn-inline btn-secondary" type="button">
         ${post.liked_by_me ? t("post.liked") : t("post.like")} · ${post.like_count}
@@ -1043,6 +1055,107 @@ function syncTaskFields(): void {
 
 postType.addEventListener("change", syncTaskFields);
 
+// ── Attachments (zip / pdf / doc / docx / ppt / pptx) ──────────────
+//
+// Files selected via the postAttachments input get uploaded
+// immediately to /api/attachments. The returned IDs are buffered
+// in pendingAttachmentIDs and submitted alongside the post create
+// form. Chips render below the input with a remove button (which
+// just drops the local reference; the row stays — author can
+// soft-delete via DELETE /api/attachments/:id later if they
+// really want to).
+
+type PendingAttachment = {
+  id: string;
+  filename: string;
+  size: number;
+};
+
+const pendingAttachments: PendingAttachment[] = [];
+
+function renderAttachmentChips(): void {
+  postAttachmentChips.innerHTML = pendingAttachments
+    .map(
+      (a, i) => `
+        <span class="tag-chip" style="display:inline-flex; gap:6px; align-items:center;">
+          📎 ${escapeAttachmentName(a.filename)}
+          <span style="color:var(--text-muted,#888); font-size:11px;">(${formatBytes(a.size)})</span>
+          <button type="button" data-rm-att="${i}" style="background:none; border:none; color:#c33; cursor:pointer; padding:0; font-size:14px; line-height:1;">×</button>
+        </span>`,
+    )
+    .join("");
+  postAttachmentChips.querySelectorAll<HTMLButtonElement>("[data-rm-att]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.getAttribute("data-rm-att"));
+      if (Number.isFinite(idx) && idx >= 0 && idx < pendingAttachments.length) {
+        pendingAttachments.splice(idx, 1);
+        renderAttachmentChips();
+      }
+    });
+  });
+}
+
+function escapeAttachmentName(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function renderPostAttachmentsList(items?: PostAttachment[]): string {
+  if (!items || items.length === 0) {
+    return "";
+  }
+  const rows = items
+    .map(
+      (a) => `
+        <li style="display:flex; gap:8px; align-items:center; padding:6px 8px; background:var(--card,#f7f7f9); border:1px solid var(--border,#ececf0); border-radius:6px;">
+          <span style="font-size:14px;">📎</span>
+          <a href="${a.download_url}" download style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeAttachmentName(a.filename)}</a>
+          <span style="color:var(--text-muted,#888); font-size:11px;">${formatBytes(a.size_bytes)}</span>
+        </li>`,
+    )
+    .join("");
+  return `<ul class="post-attachments" style="list-style:none; padding:0; margin:8px 0 0 0; display:flex; flex-direction:column; gap:6px;">${rows}</ul>`;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+postAttachments.addEventListener("change", async () => {
+  const files = Array.from(postAttachments.files || []);
+  if (!files.length) {
+    return;
+  }
+  postAttachments.disabled = true;
+  for (const file of files) {
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API_BASE}/api/attachments`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.attachment) {
+        postFormStatus.textContent = `附件 "${file.name}" 上传失败：${data.error || "服务器错误"}`;
+        continue;
+      }
+      pendingAttachments.push({
+        id: data.attachment.id,
+        filename: data.attachment.filename,
+        size: data.attachment.size_bytes,
+      });
+    } catch (err) {
+      postFormStatus.textContent = `附件 "${file.name}" 上传失败`;
+    }
+  }
+  postAttachments.value = "";
+  postAttachments.disabled = false;
+  renderAttachmentChips();
+});
+
 postForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const content = postContent.value.trim();
@@ -1079,6 +1192,9 @@ postForm.addEventListener("submit", async (event) => {
   Array.from(postVideos.files || []).forEach((file) => {
     formData.append("videos", file);
   });
+  for (const a of pendingAttachments) {
+    formData.append("attachment_ids", a.id);
+  }
 
   try {
     const res = await fetch(`${API_BASE}/api/posts`, {

@@ -45,6 +45,7 @@ type Post = {
   image_items?: ImageItem[];
   videos?: string[];
   video_items?: VideoItem[];
+  attachments?: PostAttachment[];
   liked_by_me: boolean;
   like_count: number;
   task?: {
@@ -56,6 +57,14 @@ type Post = {
     application_status: string;
     applicant_count?: number;
   };
+};
+
+type PostAttachment = {
+  id: string;
+  filename: string;
+  size_bytes: number;
+  mime_type: string;
+  download_url: string;
 };
 
 type Tag = {
@@ -84,6 +93,33 @@ let currentTags: Tag[] = [];
 
 initStoredTheme();
 bindThemeSync();
+
+function renderPostAttachments(items?: PostAttachment[]): string {
+  if (!items || items.length === 0) {
+    return "";
+  }
+  const rows = items
+    .map(
+      (a) => `
+        <li style="display:flex; gap:8px; align-items:center; padding:6px 8px; background:var(--card,#f7f7f9); border:1px solid var(--border,#ececf0); border-radius:6px;">
+          <span style="font-size:14px;">📎</span>
+          <a href="${a.download_url}" download style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapePostAttachmentText(a.filename)}</a>
+          <span style="color:var(--text-muted,#888); font-size:11px;">${formatPostAttachmentSize(a.size_bytes)}</span>
+        </li>`,
+    )
+    .join("");
+  return `<ul class="post-attachments" style="list-style:none; padding:0; margin:8px 0 0 0; display:flex; flex-direction:column; gap:6px;">${rows}</ul>`;
+}
+
+function escapePostAttachmentText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function formatPostAttachmentSize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function formatTime(value: string): string {
   return new Date(value).toLocaleString();
@@ -438,6 +474,7 @@ function createPostCard(post: Post): HTMLElement {
       : "";
   const tagName = getTagName(post.tag_id);
   const tagSummary = tagName ? `<span class="tag-chip">${tagName}</span>` : "";
+  const attachmentSection = renderPostAttachments(post.attachments);
 
   card.innerHTML = `
     <div class="post-header">
@@ -451,6 +488,7 @@ function createPostCard(post: Post): HTMLElement {
     ${taskSummary}
     <div class="post-images">${images}</div>
     ${videoSection}
+    ${attachmentSection}
     <div class="post-actions">
       <button class="btn-inline btn-secondary like-btn" type="button">
         ${post.liked_by_me ? t("posts.liked") : t("posts.like")} · ${post.like_count}

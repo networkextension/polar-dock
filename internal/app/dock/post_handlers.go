@@ -131,11 +131,45 @@ func (s *Server) handlePostCreate(c *gin.Context) {
 		}
 	}
 
+	workspaceID := strings.TrimSpace(c.GetString("workspace_id"))
+	if workspaceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少工作区上下文"})
+		return
+	}
+
+	// attachment_ids: comma-separated or repeated form field
+	// containing IDs from POST /api/attachments. Validated up front
+	// (must be in same workspace) so we don't half-create a post +
+	// then reject linking.
+	rawAttachmentIDs := c.Request.PostForm["attachment_ids"]
+	var attachmentIDs []string
+	for _, raw := range rawAttachmentIDs {
+		for _, part := range strings.Split(raw, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				attachmentIDs = append(attachmentIDs, trimmed)
+			}
+		}
+	}
+	if len(attachmentIDs) > 0 {
+		if _, err := s.validateAttachmentIDsForWorkspace(attachmentIDs, workspaceID); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "附件无效：" + err.Error()})
+			return
+		}
+	}
+
 	now := time.Now()
-	postID, err := s.createPost(userIDStr, tagID, postType, content, now)
+	postID, err := s.createPost(userIDStr, workspaceID, tagID, postType, content, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
+	}
+	if len(attachmentIDs) > 0 {
+		if err := s.linkAttachmentsToPost(postID, attachmentIDs); err != nil {
+			_, _ = s.deletePost(postID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "附件关联失败"})
+			return
+		}
 	}
 
 	if postType == "task" {

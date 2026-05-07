@@ -554,6 +554,7 @@ func (s *Server) enforceWorkspaceIDNotNull() error {
 		"packtunnel_profiles",
 		"packtunnel_rule_files",
 		"video_projects",
+		"posts",
 	}
 	for _, table := range tables {
 		if _, err := s.db.Exec(`ALTER TABLE ` + table + ` ALTER COLUMN workspace_id SET NOT NULL`); err != nil {
@@ -602,6 +603,20 @@ func (s *Server) backfillResourceWorkspaceIDs() error {
 		if _, err := s.db.Exec(query); err != nil {
 			return err
 		}
+	}
+	// posts uses user_id (not owner_user_id) — same logic, different
+	// column. Kept separate from the loop above so the loop's query
+	// stays clean and audited.
+	if _, err := s.db.Exec(`
+		UPDATE posts AS p
+		SET workspace_id = (
+			SELECT t.id FROM teams t
+			WHERE t.owner_user_id = p.user_id AND t.kind = 'personal'
+			LIMIT 1
+		)
+		WHERE p.workspace_id IS NULL
+	`); err != nil {
+		return err
 	}
 	return nil
 }

@@ -230,6 +230,16 @@ func NewServer(cfg Config) (*Server, error) {
 		log.Printf("teams: resource workspace_id backfill failed: %v", err)
 	}
 
+	// attachments-refactor: migrate legacy chat_messages.attachment
+	// JSON column into attachments + chat_message_attachments, then
+	// DROP COLUMN. Idempotent — no-op on fresh / already-migrated
+	// DBs (probes information_schema first). Must run BEFORE the
+	// NOT NULL enforcement below because DROP COLUMN runs against a
+	// table that the enforcement step also touches.
+	if err := server.migrateChatMessageAttachments(); err != nil {
+		log.Printf("attachments: chat message migration failed: %v", err)
+	}
+
 	// T6-D enforcement: lock workspace_id NOT NULL only AFTER the
 	// backfill above has had a chance to fill in legacy NULLs. This
 	// is the order that Postgres needs but the embedded schema
@@ -716,6 +726,15 @@ func (s *Server) registerRoutes() {
 		// dispatch endpoint that proves the WS round-trip without
 		// going through the LLM. ai_agent ↔ agent integration is
 		// the next phase.
+		// attachments: workspace-scoped uploads (zip/pdf/doc/docx/
+		// ppt/pptx). Backs posts + chat_messages via junction tables.
+		// markdown_entries are out of scope (their .md body stays
+		// path-based; future md→pdf renders will produce regular
+		// attachments here).
+		api.POST("/attachments", s.AuthMiddleware(), s.handleAttachmentUpload)
+		api.GET("/attachments/:id", s.AuthMiddleware(), s.handleAttachmentGet)
+		api.GET("/attachments/:id/download", s.AuthMiddleware(), s.handleAttachmentDownload)
+		api.DELETE("/attachments/:id", s.AuthMiddleware(), s.handleAttachmentDelete)
 		api.POST("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenCreate)
 		api.GET("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenList)
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
