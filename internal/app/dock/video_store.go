@@ -27,7 +27,7 @@ func (s *Server) listVideoLLMConfigsForUser(workspaceID string) ([]LLMConfig, er
 		        provider_kind, extras, (api_key <> '') AS has_api_key, created_at, updated_at
 		   FROM llm_configs
 		  WHERE provider_kind LIKE 'video.%'
-		    AND (workspace_id = $1 OR shared = TRUE)
+		    AND (workspace_id = $1 OR shared = TRUE OR is_platform = TRUE)
 		  ORDER BY (workspace_id = $1) DESC, updated_at DESC, id DESC`,
 		workspaceID,
 	)
@@ -64,7 +64,7 @@ func (s *Server) getVideoLLMConfigWithAPIKey(workspaceID string, id int64) (*LLM
 		   FROM llm_configs
 		  WHERE id = $1
 		    AND provider_kind LIKE 'video.%'
-		    AND (workspace_id = $2 OR shared = TRUE)`,
+		    AND (workspace_id = $2 OR shared = TRUE OR is_platform = TRUE)`,
 		id, workspaceID,
 	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.ProviderKind, &extras, &item.HasAPIKey, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {

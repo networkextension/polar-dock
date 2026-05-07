@@ -534,6 +534,7 @@ function renderLLMConfigList(configs: LLMConfig[]): void {
               <span class="tag-chip">${config.model}</span>
               ${config.has_api_key ? `<span class="tag-chip">${t("dashboard.keySaved")}</span>` : `<span class="tag-chip">${t("dashboard.noKey")}</span>`}
               ${config.shared ? `<span class="tag-chip">${t("dashboard.shared")}</span>` : `<span class="tag-chip">${t("dashboard.private")}</span>`}
+              ${config.is_platform ? `<span class="tag-chip" style="background:#3a7;color:#fff;">平台默认</span>` : ""}
             </div>
             <div class="tag-item-meta">${config.base_url}</div>
             <div class="tag-item-desc">${config.system_prompt || t("dashboard.noSystemPrompt")}</div>
@@ -558,7 +559,10 @@ function syncBotConfigOptions(configs: LLMConfig[]): void {
 
   const currentValue = editingBotUserId ? botUserConfigSelect.value : "";
   botUserConfigSelect.innerHTML = configs
-    .map((config) => `<option value="${config.id}">${config.name} · ${config.model}</option>`)
+    .map((config) => {
+      const tag = config.is_platform ? " (平台默认)" : "";
+      return `<option value="${config.id}">${config.name} · ${config.model}${tag}</option>`;
+    })
     .join("");
   if (currentValue && configs.some((config) => String(config.id) === currentValue)) {
     botUserConfigSelect.value = currentValue;

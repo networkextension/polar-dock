@@ -146,6 +146,7 @@ export type LLMConfig = {
   owner_user_id: string;
   share_id: string;
   shared: boolean;
+  is_platform?: boolean;
   name: string;
   base_url: string;
   model: string;

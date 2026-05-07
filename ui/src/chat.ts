@@ -426,7 +426,10 @@ function renderLLMThreadModelBar(): void {
     return;
   }
   chatModelSelect.innerHTML = currentLLMConfigs
-    .map((config) => `<option value="${config.id}">${escapeHtml(config.name)} · ${escapeHtml(config.model)}</option>`)
+    .map((config) => {
+      const tag = config.is_platform ? " (平台默认)" : "";
+      return `<option value="${config.id}">${escapeHtml(config.name)} · ${escapeHtml(config.model)}${tag}</option>`;
+    })
     .join("");
   if (activeThread.llm_config_id && currentLLMConfigs.some((config) => config.id === activeThread.llm_config_id)) {
     chatModelSelect.value = String(activeThread.llm_config_id);
