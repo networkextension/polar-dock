@@ -1,190 +1,183 @@
 # Polar-
 
-Polar- is an AI-assisted product prototyping project built to explore a practical question:
+Polar- is an AI-assisted product prototyping project built to explore one practical question:
 
 How far can a small but real full-stack application be pushed when design, implementation, iteration, and documentation are continuously developed with AI coding tools in the loop?
 
-This repository is not intended to be a large-scale production system. It is a working experience project: a compact, end-to-end web application used to validate ideas, refine UX decisions, test authentication flows, and evolve engineering structure through fast iteration.
-
-Today, the project includes account authentication, Markdown content management, Passkey support, login IP and geolocation tracking, a sidebar-based dashboard, and lightweight theming.
+The repository started as a compact auth + Markdown prototype and has grown into a multi-module platform. It is still **not** intended as a large-scale production system — it remains an active engineering experience project, optimized for AI-paired iteration speed, complete user journeys, and demonstrable product behavior.
 
 ## Project Character
 
-- AI-assisted by design, not as a one-off experiment but as an active development workflow
+- AI-assisted by design, not a one-off experiment but an active development workflow
 - Built as a usable prototype rather than a throwaway mock
-- Focused on complete user journeys over excessive abstraction
-- Optimized for iteration speed, clarity, and demonstrable product behavior
+- Complete user journeys before excessive abstraction
+- Optimized for iteration speed, clarity, and demo-ready behavior
 
-## Current Feature Set
+## Capabilities at a Glance
 
-### Authentication
+The platform is organized into modules. Each module is workspace-scoped (a workspace = a team; every user has at least a personal workspace).
 
-- Email/password registration and login
-- Access + refresh cookie pair with server-side session state
-  (30-minute access, 30-day rotating refresh, family-based replay detection)
-- Logout and authenticated user lookup
-- Redis-backed session persistence
+- **Authentication** — email/password, Passkey/WebAuthn, session cookies (30 min access + 30 day rotating refresh), Redis-backed sessions, login geolocation via GeoLite2.
+- **Teams / Workspaces** — every resource (LLM configs, bots, projects, posts, attachments, iOS apps, etc.) is keyed by `workspace_id`. Personal team is auto-created per user; multi-member teams support roles (owner / admin / member), invitations, and audit logs. See [`teams.md`](teams.md).
+- **Bots + Chat** — chat threads between users and bots. Bots route to LLMs via OpenAI-compatible / Anthropic / Gemini / xAI Responses / Volces (Doubao) Responses APIs. Multi-attachment chat messages backed by the unified attachments table.
+- **AI Agent Workflow (Projects)** — write a PRD → AI decomposes into features → user picks features → plan generated → tasks created → user "picks up" a task to a bot → bot starts working in chat. See [`DEV_PLAN.md`](DEV_PLAN.md).
+- **polar-agent CLI** — Go client that pairs a developer's Mac/Linux/Windows machine with a Polar bot. Two modes:
+  1. **Tool loop** — platform LLM drives `read_file` / `write_file` / `list_dir` / `run_cmd` calls, the agent executes them in a pinned working directory.
+  2. **Passthrough mode (`--kimi`)** — agent shells out to a local coding agent (today: kimi-cli) per chat message; the platform LLM is bypassed and the user's own subscription does the work. Streams stdout/stderr in real time. Multi-tool config (claude / codex / etc.) is on the roadmap.
+- **Posts** — text posts + image/video uploads + zip/pdf/doc/docx/ppt/pptx attachments. "Task" posts (gigs) have applications, results, deadlines.
+- **Markdown** — public and private Markdown entries with sharing links, summaries, cover images.
+- **iOS Distribution (iosdist)** — IPA upload, App Store Connect bridge (ASC profile import), zsign re-sign pipeline, codesign route as escape hatch, public OTA share links. See [`iosapp.md`](iosapp.md).
+- **Video Studio (Seedance)** — text-to-video generation via Volcano Engine Seedance, with project containers and asset library.
+- **Logs Service** — categorical append-only log table (sign / team_audit / deploy / agent / server) for admin debugging. Production environments will swap to Elasticsearch; the local table is dev-only.
+- **Latch** — admin tooling, service node management. See [`doc/latch.md`](doc/latch.md).
+- **Visual Themes** — default + monochrome, persisted per browser.
 
-### Markdown Workspace
+## Architecture
 
-- Create, read, update, and delete Markdown entries
-- Store Markdown metadata in PostgreSQL
-- Store Markdown source content on disk
-- Render Markdown previews in the dashboard and editor
+```text
+                ┌───────────────────────┐
+                │   ui/ (browser SPA)   │
+                │   esbuild + express   │
+                │   dev proxy at :3000  │
+                └────────────┬──────────┘
+                             │ /api/*
+                             ▼
+                ┌───────────────────────┐         ┌──────────────────┐
+                │   dock (Go + Gin)     │◀───────▶│  PostgreSQL      │
+                │   :8080               │         │  (workspaces,    │
+                │   - auth, teams       │         │   bots, posts,   │
+                │   - bots, ai_agent    │         │   chat, projects,│
+                │   - projects pipeline │         │   iosdist, ...)  │
+                │   - iosdist           │         └──────────────────┘
+                │   - chat WS hub       │         ┌──────────────────┐
+                │   - agent WS hub      │◀───────▶│  Redis           │
+                │   - markdown, posts   │         │  (sessions)      │
+                │   - logs, latch       │         └──────────────────┘
+                └─────┬───────────┬─────┘
+                      │           │
+            chat WS   │           │  /ws/agent
+                      ▼           ▼
+              ┌───────────┐  ┌──────────────────────────┐
+              │ browser   │  │ polar-agent (Go CLI)     │
+              │  client   │  │ - tool loop mode         │
+              └───────────┘  │ - kimi passthrough mode  │
+                             │ - exec(read_file/...)    │
+                             │ - spawn kimi-cli         │
+                             │   (or claude / codex     │
+                             │    when configured)      │
+                             └──────────────────────────┘
+                                       │
+                                       │  in workdir
+                                       ▼
+                             ┌──────────────────────────┐
+                             │ user's local repo        │
+                             │ (any OS — agent is       │
+                             │  cross-platform Go)      │
+                             └──────────────────────────┘
+```
 
-### Passkey / WebAuthn
+### Design notes
 
-- Bind Passkeys for authenticated users
-- Authenticate users via Passkey
-- Support a more modern, password-light login experience
-
-### Dashboard Experience
-
-- Sidebar-oriented dashboard layout
-- Centralized access to Markdown records
-- Inline content preview
-- Quick actions for editing, deleting, and creating content
-- Theme switcher directly available from the sidebar
-
-### Login IP and Geolocation
-
-- Record login IP addresses on successful sign-in
-- Resolve country, region, and city via GeoLite2 City
-- Track login method:
-  - Password login
-  - Register-and-login flow
-  - Passkey login
-- Display recent login activity in the sidebar
-
-### Visual Themes
-
-- Default visual mode
-- Monochrome mode
-- Theme preference persisted locally in the browser
-
-## Why This Project Exists
-
-Polar- exists as a hands-on exploration of AI-native software development.
-
-Instead of treating AI as a code generator used occasionally, this project treats AI as an active collaborator across:
-
-- feature implementation
-- UI refinement
-- documentation
-- structural cleanup
-- product iteration
-
-The value of the repository is not only in the code itself, but in the workflow it represents: rapid iteration with enough engineering discipline to keep the project understandable, extensible, and demo-ready.
+1. **Complete flows first.** A feature is shipped when register → login → use → produce-output works end-to-end. Speculative system design is deferred until the flow demands it.
+2. **Workspace model uniformly applied.** Every domain table carries `workspace_id`; routes pick it up via the `X-Workspace-Id` header (defaulted to the caller's personal team if absent). The platform's "system" workspace owns genuinely platform-wide resources (e.g., shared LLM configs, packtunnel).
+3. **Sessions, not JWTs.** Browser-first flows benefit from atomic Redis-backed revocation and a global `/api/token/refresh` interceptor. See [`doc/auth.md`](doc/auth.md), [`doc/auth-refresh.md`](doc/auth-refresh.md).
+4. **Lightweight frontend.** TypeScript + esbuild produces small bundles per page. No heavy framework — easy to inspect, modify, and refactor with AI assistance.
+5. **AI as an agent, not a code generator.** When the bot has a polar-agent attached, the chat itself becomes the runtime — content flows from chat → WS → local kimi-cli → stdout → chat. The platform routes bytes; the local tool does the work.
+6. **Attachments unified.** A single `attachments` table backs posts and chat (junction tables `post_attachments` / `chat_message_attachments`). Content-addressed by sha256 within each workspace, with a 100 MiB single-file cap. See [PR #54](https://github.com/networkextension/Polar/pull/54) for the refactor.
+7. **GeoLite + R2 + SMTP optional.** Missing GeoLite2 → login still works without geolocation. Missing R2 → uploads use local filesystem. Missing SMTP → email verification feature degrades but auth core stays alive.
 
 ## Technology Stack
 
 ### Backend
 
-- Go
-- Gin
-- PostgreSQL
-- Redis
-- WebAuthn
-- GeoLite2
+- Go (Gin)
+- PostgreSQL — embedded schema in `internal/app/dock/store.go::openDB()` with `IF NOT EXISTS` + ALTER TABLE migrations applied at boot
+- Redis — sessions
+- WebSocket (gorilla/websocket) — chat + polar-agent transport
+- WebAuthn — Passkey
+- GeoLite2 — login IP geolocation
+- AES-256-GCM at-rest encryption — iOS distribution resources via `IOSDIST_RESOURCE_KEY`
 
 ### Frontend
 
-- HTML
-- CSS
-- Vanilla JavaScript
+- TypeScript + esbuild
+- Vanilla JavaScript modules (no framework)
 - `marked` for Markdown rendering
 - `express` for local UI hosting and API proxying
 
-## Architecture Overview
+### Local Coding Agents (optional, paired via polar-agent)
 
-Polar- intentionally keeps the stack compact.
-
-### 1. Complete flows first
-
-The project prioritizes complete product flows over early abstraction. A feature is considered valuable when it works end to end:
-
-- register
-- sign in
-- enter dashboard
-- create Markdown
-- edit or delete content
-- bind Passkey
-- review login history
-
-This keeps development grounded in user-facing behavior instead of speculative system design.
-
-### 2. Metadata in the database, content on disk
-
-Markdown content is split into two layers:
-
-- PostgreSQL stores ownership, title, file path, and timestamps
-- the filesystem stores the raw Markdown body
-
-This design keeps the implementation lightweight while preserving enough structure for pagination, authorization, and future migration.
-
-### 3. Sessions instead of JWT
-
-Authentication is intentionally session-based:
-
-- more natural for browser-first flows
-- simpler logout semantics (revocation is an atomic Redis `DEL`)
-- straightforward server-side control
-- well suited to a prototype with evolving auth requirements
-
-The cookie keep-alive layer is a short-lived access cookie (30 min,
-`Path=/`) plus a long-lived rotating refresh cookie (30 days,
-`Path=/api/token`, `SameSite=Strict`). The browser client installs a
-single global 401-interceptor that serializes one `/api/token/refresh`
-call and retries the original request — see [doc/auth.md](./doc/auth.md)
-and [doc/auth-refresh.md](./doc/auth-refresh.md) for the full
-contract. Redis holds the session state so auth checks stay fast on
-the API path. Passkey support is layered on top of this foundation
-rather than replacing it.
-
-### 4. Lightweight frontend by choice
-
-The frontend deliberately avoids a heavy SPA framework at this stage.
-
-This makes iteration faster and keeps the UI:
-
-- easy to inspect
-- easy to modify
-- easy to refactor with AI assistance
-
-For a project centered on experimentation and velocity, this tradeoff is intentional.
-
-### 5. GeoLite as an enhancement, not a hard dependency
-
-Login geolocation is useful, but it should not be able to break sign-in.
-
-If the GeoLite database is unavailable:
-
-- authentication still works
-- login events can still be recorded with raw IP data
-- geolocation simply becomes unavailable
-
-This keeps the core product path resilient.
+- kimi-cli (Moonshot) — passthrough mode supported today
+- claude (Anthropic) — multi-tool config on roadmap
+- codex (OpenAI) — multi-tool config on roadmap
 
 ## Repository Structure
 
 ```text
 .
-├── cmd/dock                  # Application entrypoint
+├── cmd/dock                  # Backend entrypoint (Go)
+├── cmd/polar-agent           # Local-side CLI: pairs user's machine with a bot
 ├── internal/app/dock         # Core backend logic
-├── ui/public                 # Static frontend pages
-├── ui/server.js              # Local UI server and API proxy
-├── doc                       # Project documentation and work logs
-├── scripts                   # Setup and testing helpers
-└── data                      # Runtime data, Markdown files, GeoLite database
+│   ├── store.go              # Embedded SQL schema + most data access
+│   ├── ai_agent*.go          # AI agent dispatch (LLM call, tool loop, kimi passthrough)
+│   ├── attachments_*.go      # Workspace-scoped uploads + junctions
+│   ├── projects_*.go         # PRD decompose, plan generate, task pickup
+│   ├── teams_*.go            # Workspace + members + invitations
+│   ├── iosdist_*.go          # iOS distribution + ASC + signing
+│   └── ...
+├── ui/src                    # TypeScript sources (per-page entrypoints)
+├── ui/public                 # Static assets + built bundles
+├── ui/server.js              # Local UI dev server (express, proxies /api → :8080)
+├── doc                       # Module-level documentation
+├── scripts                   # Setup, migrations, release helpers
+└── data                      # Runtime data (uploads, GeoLite db, ...)
 ```
 
 ## Local Development
 
-For a full setup walkthrough (PostgreSQL/Redis bootstrap, env vars, AI agent, R2, troubleshooting) see [`doc/deploy-local.md`](doc/deploy-local.md). The migration script for upgrading an existing `gin_auth`/`gin_tester` database lives at `scripts/migrate_db_to_ideamesh.sh`.
+For a full setup walkthrough (PostgreSQL/Redis bootstrap, env vars, AI agent, R2, troubleshooting) see [`doc/deploy-local.md`](doc/deploy-local.md). The migration script for upgrading from earlier database names lives at `scripts/migrate_db_to_ideamesh.sh`.
+
+### Start the backend
+
+```bash
+cd /path/to/Polar-
+env GOCACHE=/tmp/polar-go-cache go run ./cmd/dock
+```
+
+Default backend address: `http://localhost:8080`.
+
+### Start the UI
+
+```bash
+cd /path/to/Polar-/ui
+npm install      # first time only
+npm run build    # produces public/scripts/*.js bundles
+node server.js
+```
+
+Default UI address: `http://localhost:3000`.
+
+### Optionally pair a coding agent
+
+```bash
+# build polar-agent for the local OS
+go build -o ~/.local/bin/polar-agent ./cmd/polar-agent
+
+# log in once
+polar-agent login --server=http://localhost:8080 --token=<raw token from /api/agent/tokens>
+
+# attach a bot to a working directory
+polar-agent attach --bot=<bot_user_id> --workdir=/path/to/repo --kimi --verbose
+
+# longer kimi-cli timeout (default 30 min)
+POLAR_KIMI_TIMEOUT=1h polar-agent attach --bot=... --workdir=... --kimi --verbose
+```
+
+The bot then becomes the chat-facing front-end of your local kimi-cli session. Every message you send the bot is piped to `kimi-cli --quiet --yolo --continue --prompt=<message>`; stdout streams back to chat.
 
 ## Evaluation Bundle (Sales / Trial)
 
-Release tarballs produced by `./release.sh` ship a self-contained evaluation kit in addition to the binary:
+Release tarballs produced by `./release.sh` ship a self-contained evaluation kit:
 
 - `QUICKSTART.md` (top-level eval guide focused on the LLM experience)
 - `doc/eval-quickstart.md`, `doc/deploy-local.md`
@@ -194,84 +187,41 @@ Release tarballs produced by `./release.sh` ship a self-contained evaluation kit
 
 Recipient flow: extract → install Postgres/Redis/Node → `./scripts/eval_start.sh` → open `http://localhost:3000`.
 
-### Start the backend
-
-```bash
-cd /path/to/Polar-
-env GOCACHE=/tmp/polar-go-cache go run ./cmd/dock
-```
-
-Default backend address:
-
-- `http://localhost:8080`
-
-### Start the UI
-
-```bash
-cd /path/to/Polar-/ui
-node server.js
-```
-
-Default UI address:
-
-- `http://localhost:3000`
-
 ## Environment Variables
 
-- `POSTGRES_DSN`
-  - PostgreSQL connection string
-- `REDIS_ADDR`
-  - Redis server address
-- `REDIS_PASSWORD`
-  - Redis password, if required
-- `REDIS_DB`
-  - Redis logical database index
-- `REDIS_PREFIX`
-  - key prefix used for session records
-- `MARKDOWN_DIR`
-  - directory used to store Markdown source files
-- `GEOLITE_DB_PATH`
-  - path to the GeoLite2 City database
-- `PASSKEY_ORIGIN`
-  - origin used for Passkey / WebAuthn validation
-- `PASSKEY_RP_ID`
-  - relying party ID for Passkey
-- `PASSKEY_RP_NAME`
-  - relying party display name
-- `PUBLIC_BASE_URL`
-  - public base URL used to build email verification links, for example `https://polar.example.com`
-- `APPLE_PUSH_TOPIC`
-  - default APNs topic, usually the iOS app bundle ID
-- `APPLE_PUSH_TOPIC_DEV`
-  - sandbox APNs topic, overrides `APPLE_PUSH_TOPIC`
-- `APPLE_PUSH_TOPIC_PROD`
-  - production APNs topic, overrides `APPLE_PUSH_TOPIC`
-- `APPLE_PUSH_KEY_ID`
-  - default APNs key ID for `.p8` auth
-- `APPLE_PUSH_KEY_ID_DEV`
-  - sandbox APNs key ID, overrides `APPLE_PUSH_KEY_ID`
-- `APPLE_PUSH_KEY_ID_PROD`
-  - production APNs key ID, overrides `APPLE_PUSH_KEY_ID`
-- `APPLE_PUSH_TEAM_ID`
-  - default Apple Developer Team ID for `.p8` auth
-- `APPLE_PUSH_TEAM_ID_DEV`
-  - sandbox APNs team ID, overrides `APPLE_PUSH_TEAM_ID`
-- `APPLE_PUSH_TEAM_ID_PROD`
-  - production APNs team ID, overrides `APPLE_PUSH_TEAM_ID`
-- `SMTP_HOST`
-  - SMTP server hostname, for example `smtp.mail.me.com`
-- `SMTP_PORT`
-  - SMTP server port, iCloud app-specific password typically uses `587`
-- `SMTP_USERNAME`
-  - SMTP login username, for iCloud usually your full iCloud email address
-- `SMTP_PASSWORD`
-  - SMTP login password, supports iCloud App-Specific Password
-- `SMTP_FROM_EMAIL`
-  - sender email address shown in outgoing verification emails
-- `SMTP_FROM_NAME`
-  - optional sender display name
+### Core
 
-### iCloud SMTP Example
+- `POSTGRES_DSN` — PostgreSQL connection string
+- `REDIS_ADDR` — Redis server address
+- `REDIS_PASSWORD` — Redis password (if required)
+- `REDIS_DB` — Redis logical database index
+- `REDIS_PREFIX` — key prefix for session records
+- `MARKDOWN_DIR` — directory for Markdown source files
+- `GEOLITE_DB_PATH` — GeoLite2 City database path (login geolocation, optional)
+- `PUBLIC_BASE_URL` — base URL used in email links and OTA share URLs (e.g. `https://polar.example.com`)
+
+### Passkey / WebAuthn
+
+- `PASSKEY_ORIGIN` — Passkey validation origin
+- `PASSKEY_RP_ID` — relying party ID
+- `PASSKEY_RP_NAME` — relying party display name
+
+### iOS Distribution (iosdist)
+
+- `IOSDIST_RESOURCE_KEY` — 32-byte hex key for AES-256-GCM at-rest encryption of certificates / profiles / keys
+
+### Apple Push (APNs)
+
+- `APPLE_PUSH_TOPIC`, `APPLE_PUSH_TOPIC_DEV`, `APPLE_PUSH_TOPIC_PROD`
+- `APPLE_PUSH_KEY_ID`, `APPLE_PUSH_KEY_ID_DEV`, `APPLE_PUSH_KEY_ID_PROD`
+- `APPLE_PUSH_TEAM_ID`, `APPLE_PUSH_TEAM_ID_DEV`, `APPLE_PUSH_TEAM_ID_PROD`
+
+### SMTP (email verification)
+
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
+- `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`
+
+### iCloud SMTP example
 
 ```bash
 export PUBLIC_BASE_URL="https://polar.example.com"
@@ -283,17 +233,11 @@ export SMTP_FROM_EMAIL="yourname@icloud.com"
 export SMTP_FROM_NAME="Polar-"
 ```
 
-After configuration, authenticated users can call:
+After configuration, authenticated users can call `POST /api/email-verification/send`; the verification email link points to `GET /api/email-verification/verify?token=...`.
 
-```text
-POST /api/email-verification/send
-```
+### polar-agent (client side)
 
-The verification email link points to:
-
-```text
-GET /api/email-verification/verify?token=...
-```
+- `POLAR_KIMI_TIMEOUT` — Go duration string (`30m`, `1h`, `90m`) overriding the default 30-minute kimi-cli timeout.
 
 ## GeoLite Setup
 
@@ -311,28 +255,36 @@ Or set it explicitly:
 GEOLITE_DB_PATH=/your/path/GeoLite2-City.mmdb
 ```
 
-If the file is missing, the application will continue to function normally, but location resolution will be unavailable.
+If the file is missing, login still works — geolocation simply becomes unavailable.
 
-## Existing Documentation
+## Reference Documentation
 
-- [Authentication Notes](./doc/auth.md)
-- [API Reference](./doc/api.md)
-- [Passkey Notes](./doc/passkey.md)
-- [Work Log: 2026-03-19](./doc/worklog-2026-03-19.md)
+### Architecture and design
 
-## Roadmap Directions
+- [`teams.md`](teams.md) — Workspace model, T6 migration, X-Workspace-Id header
+- [`iosapp.md`](iosapp.md) — iOS distribution module architecture
+- [`oauth.md`](oauth.md) — OAuth design (planned future work)
+- [`DEV_PLAN.md`](DEV_PLAN.md) — Roadmap and milestones for the AI agent workflow
+- [`FUTURE_WORK.md`](FUTURE_WORK.md) — Open backlog
 
-Potential next steps include:
+### Per-module guides
 
-- a dedicated login history page
-- suspicious login or location change alerts
-- search and tagging for Markdown entries
-- a richer editor experience
-- broader automated testing coverage
-- stronger UI consistency and design system patterns
+- [`doc/auth.md`](doc/auth.md) — Authentication contracts
+- [`doc/auth-refresh.md`](doc/auth-refresh.md) — Cookie keep-alive + 401 interceptor
+- [`doc/passkey.md`](doc/passkey.md) — WebAuthn flows
+- [`doc/api.md`](doc/api.md) — API reference
+- [`doc/chat.md`](doc/chat.md) — Chat thread + LLM topic model
+- [`doc/llm-bot.md`](doc/llm-bot.md), [`doc/llm-bot-guide.md`](doc/llm-bot-guide.md) — Bot creation + LLM provider routing
+- [`doc/posts.md`](doc/posts.md) — Posts + tasks (gigs)
+- [`doc/tasks.md`](doc/tasks.md) — Task post applications + results
+- [`doc/profile.md`](doc/profile.md) — Profile model
+- [`doc/video-studio.md`](doc/video-studio.md) — Seedance integration
+- [`doc/latch.md`](doc/latch.md) — Latch admin module
+- [`doc/i18n.md`](doc/i18n.md) — UI translation keys
+- [`doc/deploy-local.md`](doc/deploy-local.md), [`doc/eval-quickstart.md`](doc/eval-quickstart.md) — Local + eval setup
 
 ## Closing Note
 
 Polar- is best understood as a living prototype.
 
-It is a place where product thinking, engineering pragmatism, interface experimentation, and AI-assisted development meet in one repository. The codebase is intentionally small enough to move quickly, but complete enough to surface real architectural and UX decisions.
+It is a place where product thinking, engineering pragmatism, interface experimentation, and AI-assisted development meet in one repository. The codebase is intentionally compact enough to move quickly, but complete enough to surface real architectural and UX decisions.
