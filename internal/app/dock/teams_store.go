@@ -275,6 +275,170 @@ func (s *Server) ensurePersonalTeam(userID string) (*Team, error) {
 	return team, nil
 }
 
+// transferTeamOwnership atomically promotes newOwnerUserID to owner
+// of teamID, demotes the existing owner to admin, and updates the
+// teams.owner_user_id pointer. Caller must already have verified
+// that newOwnerUserID is a current member of the team.
+//
+// Personal teams cannot be transferred — the slug is derived from
+// the original user's id and the team is conceptually that user's
+// home workspace. Caller enforces.
+func (s *Server) transferTeamOwnership(teamID, newOwnerUserID string) error {
+	if teamID == "" || newOwnerUserID == "" {
+		return errors.New("missing required field")
+	}
+	now := time.Now().UTC()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var oldOwnerUserID, kind string
+	if err := tx.QueryRow(
+		`SELECT owner_user_id, kind FROM teams WHERE id = $1 FOR UPDATE`,
+		teamID,
+	).Scan(&oldOwnerUserID, &kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("team not found")
+		}
+		return err
+	}
+	if kind == TeamKindPersonal {
+		return errors.New("personal team ownership cannot be transferred")
+	}
+	if oldOwnerUserID == newOwnerUserID {
+		// No-op: caller's already the owner.
+		return tx.Commit()
+	}
+	// Sanity check: new owner must be a member.
+	var newOwnerExists string
+	if err := tx.QueryRow(
+		`SELECT user_id FROM team_members WHERE team_id = $1 AND user_id = $2`,
+		teamID, newOwnerUserID,
+	).Scan(&newOwnerExists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("new owner is not a member of this team")
+		}
+		return err
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE team_members SET role = $1 WHERE team_id = $2 AND user_id = $3`,
+		TeamRoleAdmin, teamID, oldOwnerUserID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE team_members SET role = $1 WHERE team_id = $2 AND user_id = $3`,
+		TeamRoleOwner, teamID, newOwnerUserID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE teams SET owner_user_id = $1, updated_at = $2 WHERE id = $3`,
+		newOwnerUserID, now, teamID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// updateTeamMemberRole changes a member's role. Caller must have
+// already verified the actor is admin+ and the rules:
+//   - cannot change the owner's role (ownership transfers via
+//     transferTeamOwnership instead)
+//   - cannot promote a member to 'owner' here (same reason)
+//   - cannot change one's own role
+func (s *Server) updateTeamMemberRole(teamID, userID, role string) error {
+	if teamID == "" || userID == "" || role == "" {
+		return errors.New("missing required field")
+	}
+	res, err := s.db.Exec(
+		`UPDATE team_members SET role = $1 WHERE team_id = $2 AND user_id = $3`,
+		role, teamID, userID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// removeTeamMember pulls a user out of a team. Caller enforces:
+//   - admin+ can kick anyone except the owner
+//   - any member can self-leave, except the owner (who must
+//     transfer first)
+//   - personal teams cannot have members removed (only one
+//     member, the owner)
+func (s *Server) removeTeamMember(teamID, userID string) error {
+	if teamID == "" || userID == "" {
+		return errors.New("missing required field")
+	}
+	res, err := s.db.Exec(
+		`DELETE FROM team_members WHERE team_id = $1 AND user_id = $2`,
+		teamID, userID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// teamResourceCounts is a per-table snapshot of how many rows still
+// belong to the team. Used for the pre-delete check so we don't
+// orphan resources when a team is deleted.
+type teamResourceCounts struct {
+	Apps         int `json:"apps"`
+	Certificates int `json:"certificates"`
+	Profiles     int `json:"profiles"`
+	ASCConfigs   int `json:"asc_configs"`
+	LLMConfigs   int `json:"llm_configs"`
+}
+
+// Total returns the sum across all migrated tables.
+func (c teamResourceCounts) Total() int {
+	return c.Apps + c.Certificates + c.Profiles + c.ASCConfigs + c.LLMConfigs
+}
+
+// countTeamResources tallies workspace_id-owned rows across the
+// migrated tables (T6 scope). Used by handleTeamDelete to refuse
+// deletion until the team is empty, and by the UI to show
+// "delete blocked because: 3 apps, 1 cert, ..." hints.
+func (s *Server) countTeamResources(teamID string) (teamResourceCounts, error) {
+	var c teamResourceCounts
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM iosdist_apps WHERE workspace_id = $1`, teamID).Scan(&c.Apps); err != nil {
+		return c, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM iosdist_certificates WHERE workspace_id = $1`, teamID).Scan(&c.Certificates); err != nil {
+		return c, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM iosdist_profiles WHERE workspace_id = $1`, teamID).Scan(&c.Profiles); err != nil {
+		return c, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM iosdist_asc_configs WHERE workspace_id = $1`, teamID).Scan(&c.ASCConfigs); err != nil {
+		return c, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM llm_configs WHERE workspace_id = $1`, teamID).Scan(&c.LLMConfigs); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
 // updateTeamMetadata patches the editable team fields. Slug, kind and
 // owner are not touched here — those go through dedicated APIs (slug
 // is immutable post-create; ownership transfer + kind change have

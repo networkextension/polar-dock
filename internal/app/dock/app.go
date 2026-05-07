@@ -627,6 +627,14 @@ func (s *Server) registerRoutes() {
 		api.PUT("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamUpdate)
 		api.DELETE("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleOwner), s.handleTeamDelete)
 		api.GET("/teams/:id/members", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamMembers)
+		// T7: member ops + ownership transfer. Auth via the
+		// member-context middleware; the handlers themselves do the
+		// finer-grained gates (admin can demote members but only
+		// owner can touch admins; everyone can self-leave; owner
+		// must transfer before leaving; etc).
+		api.PUT("/teams/:id/members/:user_id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamMemberRoleUpdate)
+		api.DELETE("/teams/:id/members/:user_id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamMemberRemove)
+		api.POST("/teams/:id/transfer", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleOwner), s.handleTeamTransfer)
 		// T3 invitations: admin-side (under team) + invitee-side
 		// (token-based) + inbox (under user/me, separate path to
 		// avoid Gin's literal-vs-wildcard collision at /invitations/*).
@@ -637,6 +645,7 @@ func (s *Server) registerRoutes() {
 		api.POST("/invitations/:token/accept", s.AuthMiddleware(), s.handleInvitationAccept)
 		api.POST("/invitations/:token/decline", s.handleInvitationDecline)
 		api.GET("/users/me/invitations", s.AuthMiddleware(), s.handleInvitationInbox)
+		api.GET("/users/me/invitations/count", s.AuthMiddleware(), s.handleInvitationInboxCount)
 		// iOS distribution module (M1 — owner-scoped CRUD + IPA upload + OTA token).
 		// Signing pipeline lands in M2, see DEV_PLAN.md.
 		api.GET("/iosdist/apps", s.AuthMiddleware(), s.handleIOSAppList)

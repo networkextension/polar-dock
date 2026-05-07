@@ -3,12 +3,15 @@ import type {
   AdminInvitationCreatePayload,
   AdminInvitationCreateResponse,
   AdminInvitationListResponse,
+  InboxCountResponse,
   InboxInvitationListResponse,
   TeamCreatePayload,
   TeamCreateResponse,
   TeamDetailResponse,
   TeamListResponse,
+  TeamMemberRoleUpdatePayload,
   TeamMembersResponse,
+  TeamTransferPayload,
   TeamUpdatePayload,
   TeamUpdateResponse,
 } from "../types/teams.js";
@@ -64,10 +67,37 @@ export async function revokeTeamInvitation(id: string, invID: string) {
   });
 }
 
+// ---- members + ownership (T7) -------------------------------------
+
+export async function updateTeamMemberRole(id: string, userID: string, payload: TeamMemberRoleUpdatePayload) {
+  return requestJson<{ ok: boolean }>(
+    `/api/teams/${encodeURIComponent(id)}/members/${encodeURIComponent(userID)}`,
+    { method: "PUT", body: payload },
+  );
+}
+
+export async function removeTeamMember(id: string, userID: string) {
+  return requestJson<{ ok: boolean; self_left: boolean }>(
+    `/api/teams/${encodeURIComponent(id)}/members/${encodeURIComponent(userID)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function transferTeamOwnership(id: string, payload: TeamTransferPayload) {
+  return requestJson<{ ok: boolean }>(
+    `/api/teams/${encodeURIComponent(id)}/transfer`,
+    { method: "POST", body: payload },
+  );
+}
+
 // ---- invitations (recipient-side) ---------------------------------
 
 export async function fetchMyInvitations() {
   return requestJson<InboxInvitationListResponse>("/api/users/me/invitations");
+}
+
+export async function fetchMyInvitationCount() {
+  return requestJson<InboxCountResponse>("/api/users/me/invitations/count");
 }
 
 export async function acceptInvitation(token: string) {

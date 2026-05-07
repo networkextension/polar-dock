@@ -381,6 +381,31 @@ func (s *Server) handleInvitationDecline(c *gin.Context) {
 
 // ---- inbox -------------------------------------------------------
 
+// handleInvitationInboxCount is the cheap polling endpoint that
+// powers the workspace switcher's red-dot indicator. Just the
+// number, no listing.
+func (s *Server) handleInvitationInboxCount(c *gin.Context) {
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	user, err := s.getUserByID(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+		return
+	}
+	n, err := s.countMyPendingInvitations(user.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"count": n})
+}
+
 func (s *Server) handleInvitationInbox(c *gin.Context) {
 	userID, ok := requireUserID(c)
 	if !ok {
