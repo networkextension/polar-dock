@@ -7,18 +7,20 @@ import (
 	"log"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// runAgentLoop opens a WebSocket to /ws/agent, reads tool_call
-// messages, dispatches them to the local executor, and sends back
-// tool_result. Reconnects with exponential backoff on disconnect.
-func runAgentLoop(cfg AgentConfig, botID, workdir string, verbose bool) error {
+// runAgentLoop opens a WebSocket to /ws/agent, reads tool_call /
+// chat_message envelopes, dispatches them appropriately, and sends
+// back tool_result / chat_reply. Reconnects with exponential
+// backoff on disconnect.
+func runAgentLoop(cfg AgentConfig, botID, workdir string, verbose, kimi bool) error {
 	backoff := 1 * time.Second
 	for {
-		err := runOneSession(cfg, botID, workdir, verbose)
+		err := runOneSession(cfg, botID, workdir, verbose, kimi)
 		if err == nil {
 			return nil
 		}
@@ -27,12 +29,10 @@ func runAgentLoop(cfg AgentConfig, botID, workdir string, verbose bool) error {
 		if backoff < 30*time.Second {
 			backoff *= 2
 		}
-		// Reset backoff after a successful long-lived session ?
-		// Track via err nil for >60s; left out for MVP.
 	}
 }
 
-func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool) error {
+func runOneSession(cfg AgentConfig, botID, workdir string, verbose, kimi bool) error {
 	wsURL, err := buildWSURL(cfg.Server, cfg.Token, botID, workdir)
 	if err != nil {
 		return err
@@ -45,14 +45,24 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool) error {
 	defer conn.Close()
 	log.Printf("connected to %s", strings.SplitN(wsURL, "?", 2)[0])
 
-	// Optional handshake: tell the server who we are.
+	// Serialize all writes — gorilla/websocket forbids concurrent
+	// writers and we have multiple goroutines (one per tool_call /
+	// chat_message) producing replies.
+	var writeMu sync.Mutex
+	send := func(payload []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteMessage(websocket.TextMessage, payload)
+	}
+
 	hello := map[string]any{
 		"kind":    "hello",
-		"version": "polar-agent 0.1",
+		"version": "polar-agent 0.2",
 		"workdir": workdir,
+		"capabilities": helloCapabilities(kimi),
 	}
 	if b, err := json.Marshal(hello); err == nil {
-		_ = conn.WriteMessage(websocket.TextMessage, b)
+		_ = send(b)
 	}
 
 	conn.SetReadLimit(8 << 20)
@@ -88,17 +98,55 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool) error {
 			go func(c toolCall) {
 				result := exec.dispatch(ctx, c)
 				if b, err := json.Marshal(result); err == nil {
-					if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
+					if err := send(b); err != nil {
 						log.Printf("write tool_result: %v", err)
 					}
 				}
 			}(call)
+		case "chat_message":
+			var msg chatMessage
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				log.Printf("chat_message parse: %v", err)
+				continue
+			}
+			if !kimi {
+				// Server should never route here when capability
+				// wasn't declared, but be defensive.
+				emitChatReply(send, &chatReply{
+					Kind:  "chat_reply",
+					ID:    msg.ID,
+					OK:    false,
+					Error: "agent not started in --kimi mode",
+				})
+				continue
+			}
+			go func(m chatMessage) {
+				reply, err := kimiInvoke(ctx, workdir, m, verbose)
+				if err != nil {
+					emitChatReply(send, &chatReply{
+						Kind:  "chat_reply",
+						ID:    m.ID,
+						OK:    false,
+						Error: err.Error(),
+					})
+					return
+				}
+				emitChatReply(send, reply)
+			}(msg)
 		case "ping":
 			// app-level ping (websocket protocol pings handled above)
 		default:
 			log.Printf("unknown kind=%s", head.Kind)
 		}
 	}
+}
+
+func helloCapabilities(kimi bool) []string {
+	caps := []string{"tools"}
+	if kimi {
+		caps = append(caps, "kimi")
+	}
+	return caps
 }
 
 func buildWSURL(server, token, botID, workdir string) (string, error) {

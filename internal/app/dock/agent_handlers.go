@@ -161,6 +161,7 @@ func (s *Server) handleAgentWS(c *gin.Context) {
 		send:        make(chan []byte, 64),
 		close:       make(chan struct{}),
 		pending:     map[string]chan agentToolResult{},
+		chatPending: map[string]chan agentChatReply{},
 	}
 	if displaced := s.agentHub.register(ac); displaced != nil {
 		log.Printf("[agent ws] kicking previous connection bot=%s", botUserID)
@@ -236,9 +237,24 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 				continue
 			}
 			ac.deliverResult(r)
+		case "chat_reply":
+			var r agentChatReply
+			if err := json.Unmarshal(raw, &r); err != nil {
+				log.Printf("[agent ws] chat_reply parse failed bot=%s: %v", ac.botUserID, err)
+				continue
+			}
+			ac.deliverChatReply(r)
 		case "hello":
-			// Optional handshake echo (agent describes itself).
-			log.Printf("[agent ws] hello bot=%s payload=%s", ac.botUserID, truncateForLog(string(raw), 200))
+			var h struct {
+				Kind         string   `json:"kind"`
+				Version      string   `json:"version"`
+				Capabilities []string `json:"capabilities"`
+			}
+			if err := json.Unmarshal(raw, &h); err == nil {
+				ac.capabilities = h.Capabilities
+			}
+			log.Printf("[agent ws] hello bot=%s caps=%v payload=%s",
+				ac.botUserID, ac.capabilities, truncateForLog(string(raw), 200))
 		default:
 			log.Printf("[agent ws] unknown kind=%s bot=%s", head.Kind, ac.botUserID)
 		}

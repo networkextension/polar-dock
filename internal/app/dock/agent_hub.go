@@ -45,19 +45,38 @@ type agentToolResult struct {
 }
 
 // agentConn is one live polar-agent. The receive loop dispatches
-// incoming messages by Kind; pending tool calls are tracked in
-// pending so the platform can wait for the matching result.
+// incoming messages by Kind; pending tool calls + chat replies are
+// each tracked separately so the platform can match responses to
+// requests.
 type agentConn struct {
 	tokenID    string
 	userID     string
 	botUserID  string
 	workspaceID string
 	workdir    string
+	// Capabilities the agent declared in its hello frame. Today
+	// the only meaningful one is "kimi" which means the agent has
+	// kimi-cli installed and is willing to pipe chat content
+	// through it (passthrough mode). Bots without this capability
+	// stay on the platform-driven tool_call loop.
+	capabilities []string
 	send       chan []byte
 	close      chan struct{}
 
 	pendingMu sync.Mutex
 	pending   map[string]chan agentToolResult
+
+	chatPendingMu sync.Mutex
+	chatPending   map[string]chan agentChatReply
+}
+
+func (c *agentConn) hasCapability(name string) bool {
+	for _, cap := range c.capabilities {
+		if cap == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *agentConn) trackPending(id string) chan agentToolResult {
@@ -75,6 +94,47 @@ func (c *agentConn) deliverResult(r agentToolResult) {
 		delete(c.pending, r.ID)
 	}
 	c.pendingMu.Unlock()
+	if ok {
+		ch <- r
+	}
+}
+
+// agentChatMessage is the platform → agent envelope when routing a
+// user-typed chat message into a kimi-cli passthrough agent. The
+// agent spawns its local kimi-cli with this Content as input
+// (resuming the per-thread session) and pipes stdout back as
+// agentChatReply.
+type agentChatMessage struct {
+	Kind     string `json:"kind"` // "chat_message"
+	ID       string `json:"id"`
+	ThreadID int64  `json:"thread_id"`
+	Content  string `json:"content"`
+}
+
+type agentChatReply struct {
+	Kind    string `json:"kind"` // "chat_reply"
+	ID      string `json:"id"`
+	OK      bool   `json:"ok"`
+	Content string `json:"content,omitempty"`
+	Stderr  string `json:"stderr,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+func (c *agentConn) trackChatPending(id string) chan agentChatReply {
+	ch := make(chan agentChatReply, 1)
+	c.chatPendingMu.Lock()
+	c.chatPending[id] = ch
+	c.chatPendingMu.Unlock()
+	return ch
+}
+
+func (c *agentConn) deliverChatReply(r agentChatReply) {
+	c.chatPendingMu.Lock()
+	ch, ok := c.chatPending[r.ID]
+	if ok {
+		delete(c.chatPending, r.ID)
+	}
+	c.chatPendingMu.Unlock()
 	if ok {
 		ch <- r
 	}
@@ -155,9 +215,54 @@ func (h *agentHub) dispatchToolCall(botUserID, callID, tool string, args map[str
 	}
 }
 
+// dispatchChatMessage sends a chat_message envelope to the agent
+// (kimi-cli passthrough mode) and waits for the chat_reply. Long
+// timeout — kimi can take a few minutes on big tasks.
+func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content string) (*agentChatReply, error) {
+	conn := h.lookup(botUserID)
+	if conn == nil {
+		return nil, errAgentNotAttached
+	}
+	if !conn.hasCapability("kimi") {
+		return nil, errAgentNoKimiCapability
+	}
+	id := generateResourceID()
+	payload, err := json.Marshal(agentChatMessage{
+		Kind:     "chat_message",
+		ID:       id,
+		ThreadID: threadID,
+		Content:  content,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resultCh := conn.trackChatPending(id)
+	select {
+	case conn.send <- payload:
+	case <-conn.close:
+		return nil, errAgentDisconnected
+	case <-time.After(5 * time.Second):
+		return nil, errAgentSendTimeout
+	}
+	select {
+	case r := <-resultCh:
+		return &r, nil
+	case <-conn.close:
+		return nil, errAgentDisconnected
+	case <-time.After(agentChatTimeout):
+		conn.chatPendingMu.Lock()
+		delete(conn.chatPending, id)
+		conn.chatPendingMu.Unlock()
+		return nil, errAgentTimeout
+	}
+}
+
+const agentChatTimeout = 10 * time.Minute
+
 var (
-	errAgentNotAttached  = errors.New("agent not attached to this bot")
-	errAgentDisconnected = errors.New("agent disconnected before result arrived")
-	errAgentSendTimeout  = errors.New("agent send buffer full")
-	errAgentTimeout      = errors.New("agent did not return tool_result in time")
+	errAgentNotAttached       = errors.New("agent not attached to this bot")
+	errAgentDisconnected      = errors.New("agent disconnected before result arrived")
+	errAgentSendTimeout       = errors.New("agent send buffer full")
+	errAgentTimeout           = errors.New("agent did not return tool_result in time")
+	errAgentNoKimiCapability  = errors.New("agent does not have kimi capability")
 )
