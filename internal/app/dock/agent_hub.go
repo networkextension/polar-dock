@@ -54,12 +54,22 @@ type agentConn struct {
 	botUserID  string
 	workspaceID string
 	workdir    string
-	// Capabilities the agent declared in its hello frame. Today
-	// the only meaningful one is "kimi" which means the agent has
-	// kimi-cli installed and is willing to pipe chat content
-	// through it (passthrough mode). Bots without this capability
-	// stay on the platform-driven tool_call loop.
+	// Capabilities the agent declared in its hello frame.
+	// Recognized today:
+	//   "tools"       — supports the tool_call/tool_result protocol
+	//                   (read_file/write_file/list_dir/run_cmd)
+	//   "passthrough" — wants chat_message envelopes routed verbatim;
+	//                   replies via chat_reply
+	//   "kimi"        — legacy alias, accepted for backward compat
+	//                   with v1 polar-agent clients that only had
+	//                   --kimi
+	// Bots whose attached agent has neither passthrough nor kimi
+	// stay on the platform tool_call loop.
 	capabilities []string
+	// tool is the passthrough tool name from the hello frame
+	// ("kimi" / "claude" / "codex" / custom). Empty for tool-loop
+	// agents. UI uses this to render the bot status badge text.
+	tool string
 	send       chan []byte
 	close      chan struct{}
 
@@ -77,6 +87,13 @@ func (c *agentConn) hasCapability(name string) bool {
 		}
 	}
 	return false
+}
+
+// hasPassthrough returns true if the agent supports the
+// chat_message/chat_reply passthrough protocol. Accepts either the
+// new "passthrough" capability or the legacy "kimi" alias.
+func (c *agentConn) hasPassthrough() bool {
+	return c.hasCapability("passthrough") || c.hasCapability("kimi")
 }
 
 func (c *agentConn) trackPending(id string) chan agentToolResult {
@@ -223,7 +240,7 @@ func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content
 	if conn == nil {
 		return nil, errAgentNotAttached
 	}
-	if !conn.hasCapability("kimi") {
+	if !conn.hasPassthrough() {
 		return nil, errAgentNoKimiCapability
 	}
 	id := generateResourceID()

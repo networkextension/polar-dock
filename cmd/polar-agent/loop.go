@@ -16,11 +16,12 @@ import (
 // runAgentLoop opens a WebSocket to /ws/agent, reads tool_call /
 // chat_message envelopes, dispatches them appropriately, and sends
 // back tool_result / chat_reply. Reconnects with exponential
-// backoff on disconnect.
-func runAgentLoop(cfg AgentConfig, botID, workdir string, verbose, kimi bool) error {
+// backoff on disconnect. spec is non-nil when running in
+// passthrough mode (kimi/claude/codex/...); nil = tool-call loop.
+func runAgentLoop(cfg AgentConfig, botID, workdir string, verbose bool, spec *toolSpec) error {
 	backoff := 1 * time.Second
 	for {
-		err := runOneSession(cfg, botID, workdir, verbose, kimi)
+		err := runOneSession(cfg, botID, workdir, verbose, spec)
 		if err == nil {
 			return nil
 		}
@@ -32,7 +33,7 @@ func runAgentLoop(cfg AgentConfig, botID, workdir string, verbose, kimi bool) er
 	}
 }
 
-func runOneSession(cfg AgentConfig, botID, workdir string, verbose, kimi bool) error {
+func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *toolSpec) error {
 	wsURL, err := buildWSURL(cfg.Server, cfg.Token, botID, workdir)
 	if err != nil {
 		return err
@@ -56,10 +57,13 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose, kimi bool) e
 	}
 
 	hello := map[string]any{
-		"kind":    "hello",
-		"version": "polar-agent 0.2",
-		"workdir": workdir,
-		"capabilities": helloCapabilities(kimi),
+		"kind":         "hello",
+		"version":      "polar-agent 0.3",
+		"workdir":      workdir,
+		"capabilities": helloCapabilities(spec != nil),
+	}
+	if spec != nil {
+		hello["tool"] = spec.Name
 	}
 	if b, err := json.Marshal(hello); err == nil {
 		_ = send(b)
@@ -109,19 +113,19 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose, kimi bool) e
 				log.Printf("chat_message parse: %v", err)
 				continue
 			}
-			if !kimi {
-				// Server should never route here when capability
-				// wasn't declared, but be defensive.
+			if spec == nil {
+				// Server shouldn't route a chat_message here without
+				// the passthrough capability, but be defensive.
 				emitChatReply(send, &chatReply{
 					Kind:  "chat_reply",
 					ID:    msg.ID,
 					OK:    false,
-					Error: "agent not started in --kimi mode",
+					Error: "agent not started in passthrough mode (--tool=<name>)",
 				})
 				continue
 			}
 			go func(m chatMessage) {
-				reply, err := kimiInvoke(ctx, workdir, m, verbose)
+				reply, err := invokeTool(ctx, spec, workdir, m, verbose)
 				if err != nil {
 					emitChatReply(send, &chatReply{
 						Kind:  "chat_reply",
@@ -141,10 +145,14 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose, kimi bool) e
 	}
 }
 
-func helloCapabilities(kimi bool) []string {
+func helloCapabilities(passthrough bool) []string {
 	caps := []string{"tools"}
-	if kimi {
-		caps = append(caps, "kimi")
+	if passthrough {
+		// "passthrough" is the new generic capability. "kimi" is
+		// kept alongside for backward compat with platforms that
+		// haven't been updated yet — they keyed routing on the
+		// literal "kimi" string.
+		caps = append(caps, "passthrough", "kimi")
 	}
 	return caps
 }

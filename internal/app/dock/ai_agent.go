@@ -538,9 +538,13 @@ func (a *aiAgent) generateReply(task aiAgentTask, runtimeConfig aiRuntimeConfig)
 	// agent is attached.
 	if a.server != nil && a.server.agentHub != nil && task.ResponderUserID != "" {
 		if conn := a.server.agentHub.lookup(task.ResponderUserID); conn != nil {
-			if conn.hasCapability("kimi") {
-				log.Printf("[ai-agent] bot=%s using kimi passthrough (workdir=%s)", task.ResponderUserID, conn.workdir)
-				return a.generateReplyWithKimi(task, conn)
+			if conn.hasPassthrough() {
+				toolName := conn.tool
+				if toolName == "" {
+					toolName = "kimi"
+				}
+				log.Printf("[ai-agent] bot=%s using passthrough tool=%s (workdir=%s)", task.ResponderUserID, toolName, conn.workdir)
+				return a.generateReplyWithPassthrough(task, conn)
 			}
 			log.Printf("[ai-agent] bot=%s using tool loop (workdir=%s)", task.ResponderUserID, conn.workdir)
 			return a.generateReplyWithTools(task, runtimeConfig, task.ResponderUserID, conn.workdir)

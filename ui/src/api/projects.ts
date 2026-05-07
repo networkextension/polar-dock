@@ -109,6 +109,11 @@ export type AgentBotStatus = {
   attached: boolean;
   workdir?: string;
   capabilities?: string[];
+  // tool: passthrough tool name from the agent's hello frame
+  // ("kimi" / "claude" / "codex" / custom). Empty when the agent
+  // is in tool-call loop mode (capability list contains "tools"
+  // but not "passthrough"/"kimi").
+  tool?: string;
 };
 
 // Agent attach status for a single bot. Used by bots.ts to show a
