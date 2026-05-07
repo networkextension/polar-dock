@@ -1018,6 +1018,18 @@ ALTER TABLE posts
 	ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_posts_workspace ON posts(workspace_id, created_at DESC);
 
+-- Project structured constraints (added so the AI 拆解 prompt can
+-- be tightened with concrete environment + scenario hints, instead
+-- of producing wide / generic feature lists). Free text strings —
+-- frontend supplies a curated dropdown but doesn't enforce; an
+-- empty value means "no constraint".
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS runtime_env TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS business_scenario TEXT NOT NULL DEFAULT '';
+-- code_provider: preferred coding agent for this project's tasks
+-- ("kimi" / "claude" / "codex" / custom tool name; '' = no
+-- preference). Used at task pickup to highlight matching bots.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS code_provider TEXT NOT NULL DEFAULT '';
+
 -- attachments: workspace-scoped file uploads with content-addressed
 -- storage. Backs posts + chat_messages today via junction tables;
 -- markdown_entries' .md body and cover stay separate (the body is

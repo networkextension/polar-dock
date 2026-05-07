@@ -154,6 +154,39 @@
           <label class="form-label" for="projectsCreateDescription">产品描述（可后填）</label>
           <textarea id="projectsCreateDescription" class="input textarea" rows="4" placeholder="描述你想做的 app —— 它做什么、为谁、有哪些核心场景"></textarea>
 
+          <label class="form-label" for="projectsCreateRuntimeEnv">运行环境</label>
+          <select id="projectsCreateRuntimeEnv" class="input">
+            <option value="">（不指定，AI 自由发挥）</option>
+            <option value="ios_swiftui">iOS · SwiftUI 单 app（推荐）</option>
+            <option value="ios_uikit">iOS · UIKit</option>
+            <option value="macos_native">macOS · 桌面应用</option>
+            <option value="web_static">Web · 纯静态 HTML/CSS/JS（无后端）</option>
+            <option value="web_react">Web · React + Vite + TS</option>
+            <option value="web_nextjs">Web · Next.js（轻后端）</option>
+            <option value="cli_tool">CLI 工具（Python/Go/Bash）</option>
+            <option value="chrome_ext">Chrome 扩展（manifest v3）</option>
+          </select>
+
+          <label class="form-label" for="projectsCreateBusinessScenario">业务场景</label>
+          <select id="projectsCreateBusinessScenario" class="input">
+            <option value="">（不指定）</option>
+            <option value="creative_game">创意小游戏</option>
+            <option value="content_app">文学/历史/地理/教育内容</option>
+            <option value="productivity">生产力工具</option>
+            <option value="social">社交互动</option>
+            <option value="data_viz">数据可视化</option>
+            <option value="commerce">商业/交易（支付走 mock）</option>
+            <option value="media">媒体/内容消费</option>
+          </select>
+
+          <label class="form-label" for="projectsCreateCodeProvider">首选编码工具（可选，对比测试时方便）</label>
+          <select id="projectsCreateCodeProvider" class="input">
+            <option value="">（不指定，pickup 时手选 bot）</option>
+            <option value="kimi">kimi-cli</option>
+            <option value="claude">claude</option>
+            <option value="codex">codex</option>
+          </select>
+
           <div id="projectsCreateStatus" class="status-text"></div>
           <div class="modal-actions">
             <button id="projectsCreateSubmitBtn" class="btn-secondary" type="submit">创建</button>

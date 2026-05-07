@@ -20,9 +20,12 @@ const aiDecomposeTimeout = 90 * time.Second
 // ---- project CRUD --------------------------------------------------
 
 type projectCreateRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Template    string `json:"template"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Template         string `json:"template"`
+	RuntimeEnv       string `json:"runtime_env"`
+	BusinessScenario string `json:"business_scenario"`
+	CodeProvider     string `json:"code_provider"`
 }
 
 func (s *Server) handleProjectCreate(c *gin.Context) {
@@ -45,12 +48,15 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		return
 	}
 	p := &Project{
-		WorkspaceID:   workspaceID,
-		CreatorUserID: userID,
-		Name:          name,
-		Description:   strings.TrimSpace(req.Description),
-		Template:      strings.TrimSpace(req.Template),
-		Status:        ProjectStatusDraft,
+		WorkspaceID:      workspaceID,
+		CreatorUserID:    userID,
+		Name:             name,
+		Description:      strings.TrimSpace(req.Description),
+		Template:         strings.TrimSpace(req.Template),
+		RuntimeEnv:       strings.TrimSpace(req.RuntimeEnv),
+		BusinessScenario: strings.TrimSpace(req.BusinessScenario),
+		CodeProvider:     strings.TrimSpace(req.CodeProvider),
+		Status:           ProjectStatusDraft,
 	}
 	if err := s.createProject(p); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -101,10 +107,13 @@ func (s *Server) handleProjectDetail(c *gin.Context) {
 }
 
 type projectUpdateRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
-	Template    string `json:"template"`
+	Name             *string `json:"name"`
+	Description      *string `json:"description"`
+	Status           *string `json:"status"`
+	Template         *string `json:"template"`
+	RuntimeEnv       *string `json:"runtime_env"`
+	BusinessScenario *string `json:"business_scenario"`
+	CodeProvider     *string `json:"code_provider"`
 }
 
 func (s *Server) handleProjectUpdate(c *gin.Context) {
@@ -123,15 +132,40 @@ func (s *Server) handleProjectUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
 		return
 	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		name = existing.Name
+	u := ProjectMetaUpdate{}
+	if req.Name != nil {
+		v := strings.TrimSpace(*req.Name)
+		if v != "" {
+			u.Name = &v
+		}
 	}
-	status := strings.TrimSpace(req.Status)
-	if status == "" {
-		status = existing.Status
+	if req.Description != nil {
+		v := strings.TrimSpace(*req.Description)
+		u.Description = &v
 	}
-	if err := s.updateProjectMetadata(id, workspaceID, name, strings.TrimSpace(req.Description), status, strings.TrimSpace(req.Template)); err != nil {
+	if req.Status != nil {
+		v := strings.TrimSpace(*req.Status)
+		if v != "" {
+			u.Status = &v
+		}
+	}
+	if req.Template != nil {
+		v := strings.TrimSpace(*req.Template)
+		u.Template = &v
+	}
+	if req.RuntimeEnv != nil {
+		v := strings.TrimSpace(*req.RuntimeEnv)
+		u.RuntimeEnv = &v
+	}
+	if req.BusinessScenario != nil {
+		v := strings.TrimSpace(*req.BusinessScenario)
+		u.BusinessScenario = &v
+	}
+	if req.CodeProvider != nil {
+		v := strings.TrimSpace(*req.CodeProvider)
+		u.CodeProvider = &v
+	}
+	if err := s.updateProjectMetadata(id, workspaceID, u); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
@@ -154,18 +188,122 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 
 // ---- decompose -----------------------------------------------------
 
-const projectDecomposeSystemPrompt = `你是一个 iOS 应用产品经理助手。用户会提供一个产品想法（自然语言），你的任务是把它拆解成 5-12 个独立的功能（feature）。每个功能要可以单独实现、单独测试。
+// projectDecomposeBasePrompt is the constant top of the system
+// prompt — JSON shape, complexity definitions, ordering rules.
+// Per-project context (runtime env + business scenario) is
+// inserted between this header and the closing instruction by
+// buildDecomposePrompt.
+const projectDecomposeBasePrompt = `你是一个产品经理助手。用户会提供一个产品想法（自然语言），你的任务是把它拆解成 5-12 个独立的功能（feature）。每个功能要可以单独实现、单独测试。
 
 返回严格的 JSON 数组（不要 markdown 代码块、不要解释），每项包含：
 - "title": 简短标题（中文，不超过 20 字）
 - "description": 1-2 句话描述这个功能要做什么、用户会怎么用
-- "complexity": "simple" | "medium" | "complex"，参考标准：simple = 一两个 SwiftUI view + 静态数据；medium = 多 view + 一些状态管理；complex = 涉及自定义动画、网络、持久化、设备能力
+- "complexity": "simple" | "medium" | "complex"，参考标准：simple = 单视图 + 静态数据；medium = 多视图 + 状态管理；complex = 涉及自定义动画、网络、持久化、设备能力
 
-对于「创意小游戏 / 文学+地理+历史 + 图 + 动画」类应用，重点关注表现层：UI 屏幕、内容展示方式、交互手势、动画效果。不要假设有后端 API（默认资源是 bundled 静态文件）。
+按用户预期的开发顺序排列功能（先做基础结构，再加内容，最后做动画 / 收尾）。`
 
-按用户预期的开发顺序排列功能（先做基础结构，再加内容，最后做动画 / 收尾）。
+const projectDecomposeClosingPrompt = `只返回 JSON 数组，不要任何其他文字。`
 
-只返回 JSON 数组，不要任何其他文字。`
+// runtimeEnvLabel returns a human-readable description of the
+// runtime_env code stored on the project. Empty input → empty
+// output (no constraint added to the prompt).
+func runtimeEnvLabel(code string) string {
+	switch strings.TrimSpace(code) {
+	case "ios_swiftui":
+		return "iOS native (SwiftUI) — 所有功能必须是单 app bundle 内可实现的，不假设有 backend API；资源用 bundle 静态文件"
+	case "ios_uikit":
+		return "iOS native (UIKit) — 同上但 UI 用 UIKit"
+	case "macos_native":
+		return "macOS native (SwiftUI / AppKit) — 桌面应用，可用本地文件系统"
+	case "web_static":
+		return "Web 静态页 (HTML + CSS + 原生 JS) — 没有后端，状态用 localStorage / IndexedDB"
+	case "web_react":
+		return "Web React 单页应用 — 用 Vite + React + TypeScript；没有后端假设"
+	case "web_nextjs":
+		return "Web Next.js 应用 — 可用 API routes 做轻量后端"
+	case "cli_tool":
+		return "命令行工具 (Python / Go / Bash 脚本) — 单文件可执行优先"
+	case "chrome_ext":
+		return "Chrome 扩展 (manifest v3) — 内容脚本 + 弹窗"
+	}
+	return ""
+}
+
+// businessScenarioLabel maps the curated dropdown code to a
+// natural-language hint for the decompose prompt.
+func businessScenarioLabel(code string) string {
+	switch strings.TrimSpace(code) {
+	case "creative_game":
+		return "创意小游戏 — 关注核心交互手势、关卡 / 关进阶、动画反馈"
+	case "content_app":
+		return "文学 / 历史 / 地理 / 教育内容应用 — 关注内容展示、检索、收藏、阅读体验"
+	case "productivity":
+		return "生产力 / 工具 — 关注核心任务流、键盘快捷键、稳定性"
+	case "social":
+		return "社交 / 互动 — 关注好友 / 互动 / 通知 / 分享"
+	case "data_viz":
+		return "数据可视化 — 关注图表类型、交互筛选、性能"
+	case "commerce":
+		return "商业 / 交易 — 关注商品展示、下单、支付链路（注意：本平台 MVP 不接真实支付，用 mock）"
+	case "media":
+		return "媒体 / 内容消费 — 关注播放、订阅、推荐"
+	}
+	return ""
+}
+
+// buildPickupBody composes the first chat message we send the bot
+// when a task is picked up. It prepends a constraint header
+// derived from the project's runtime_env + business_scenario so
+// the downstream coding tool stays inside the right stack/context
+// instead of free-styling. Empty constraints are skipped (no
+// header at all if project has neither set).
+func buildPickupBody(project *Project, title, description string) string {
+	header := []string{}
+	if env := runtimeEnvLabel(project.RuntimeEnv); env != "" {
+		header = append(header, "运行环境："+env)
+	}
+	if scen := businessScenarioLabel(project.BusinessScenario); scen != "" {
+		header = append(header, "业务场景："+scen)
+	}
+	if project.CodeProvider != "" {
+		// Soft signal — the tool may or may not be the one actually
+		// running, but echoing the user's preference here primes the
+		// agent's tone (e.g. claude-style explanations vs codex
+		// brevity).
+		header = append(header, "首选编码工具："+project.CodeProvider)
+	}
+	body := strings.TrimSpace(title)
+	if len(header) > 0 {
+		body = "【任务约束】\n" + strings.Join(header, "\n") + "\n\n【任务】\n" + body
+	}
+	if d := strings.TrimSpace(description); d != "" {
+		body += "\n\n" + d
+	}
+	return body
+}
+
+// buildDecomposePrompt assembles the per-project system prompt by
+// stitching the base prompt + any non-empty runtime_env /
+// business_scenario hints + the closing instruction. When neither
+// constraint is set, fall back to the legacy iOS-flavored hint
+// so existing behavior is preserved for projects created before
+// this PR.
+func buildDecomposePrompt(p *Project) string {
+	parts := []string{projectDecomposeBasePrompt}
+	if env := runtimeEnvLabel(p.RuntimeEnv); env != "" {
+		parts = append(parts, "运行环境约束：\n  "+env+"\n所有 feature 必须在这个环境下可实现；不假设其他平台能力。")
+	}
+	if scen := businessScenarioLabel(p.BusinessScenario); scen != "" {
+		parts = append(parts, "业务场景约束：\n  "+scen+"\n拆解时聚焦此场景的核心交互。")
+	}
+	if p.RuntimeEnv == "" && p.BusinessScenario == "" {
+		// Legacy fallback — keep the old hint so projects created
+		// before this PR still get coherent output.
+		parts = append(parts, `对于「创意小游戏 / 文学+地理+历史 + 图 + 动画」类应用，重点关注表现层：UI 屏幕、内容展示方式、交互手势、动画效果。不要假设有后端 API（默认资源是 bundled 静态文件）。`)
+	}
+	parts = append(parts, projectDecomposeClosingPrompt)
+	return strings.Join(parts, "\n\n")
+}
 
 type decomposedFeature struct {
 	Title       string `json:"title"`
@@ -222,7 +360,7 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 		APIKey:       apiKey,
 		BaseURL:      cfg.BaseURL,
 		Model:        cfg.Model,
-		SystemPrompt: projectDecomposeSystemPrompt,
+		SystemPrompt: buildDecomposePrompt(project),
 	}
 	payload := aiChatCompletionRequest{
 		Model: runtimeConfig.Model,
@@ -287,7 +425,8 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 	}
 	// Bump status to planning (unless we're already past it)
 	if project.Status == ProjectStatusDraft {
-		_ = s.updateProjectMetadata(project.ID, workspaceID, project.Name, project.Description, ProjectStatusPlanning, project.Template)
+		st := ProjectStatusPlanning
+		_ = s.updateProjectMetadata(project.ID, workspaceID, ProjectMetaUpdate{Status: &st})
 	}
 	c.JSON(http.StatusOK, gin.H{"features": features})
 }
@@ -407,12 +546,17 @@ func (s *Server) handleProjectTaskPickup(c *gin.Context) {
 		return
 	}
 	projectID := strings.TrimSpace(c.Param("id"))
-	if _, err := s.getProject(projectID, workspaceID); err != nil {
+	project, err := s.getProject(projectID, workspaceID)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if project == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
 	}
 	taskID := strings.TrimSpace(c.Param("task_id"))
@@ -500,14 +644,13 @@ func (s *Server) handleProjectTaskPickup(c *gin.Context) {
 		return
 	}
 
-	// First message body: title + description so the bot has full
-	// context. Don't bother with extra prompt scaffolding — the
-	// system prompt is already on the bot, and kimi-cli passthrough
-	// would skip it anyway.
-	body := task.Title
-	if strings.TrimSpace(task.Description) != "" {
-		body += "\n\n" + task.Description
-	}
+	// First message body: title + project constraints (runtime env
+	// + business scenario) + description. The constraint header is
+	// what stops the local coding tool from picking the wrong stack
+	// — without it, kimi/claude/codex tend to default to whatever
+	// they're freshest on (often Web React when the project is
+	// supposed to be SwiftUI).
+	body := buildPickupBody(project, task.Title, task.Description)
 	username, _ := c.Get("username")
 	senderName, _ := username.(string)
 	llmThreadIDPtr := &llmThread.ID

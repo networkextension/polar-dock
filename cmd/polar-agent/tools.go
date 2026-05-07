@@ -48,6 +48,17 @@ type toolSpec struct {
 	// TimeoutSeconds: per-tool timeout. 0 means use the runtime
 	// default (POLAR_KIMI_TIMEOUT env var or 30 minutes).
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// Env: per-tool environment variable overrides. Merged on top
+	// of the parent process's env (parent inheritance preserved
+	// for keys not listed here, override for keys that are).
+	// Common use cases:
+	//   - per-tool proxy: claude needs https_proxy but codex doesn't
+	//   - per-tool API key: ANTHROPIC_API_KEY for claude only
+	// Values support {{workdir}} substitution but no shell
+	// expansion ($FOO is literal). If you need to indirect through
+	// the operator's existing env, just don't list the key here
+	// and let inheritance handle it.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 type toolsConfig struct {
@@ -230,6 +241,9 @@ func runTool(ctx context.Context, spec *toolSpec, workdir string, msg chatMessag
 	}
 	cmd := exec.CommandContext(cctx, spec.Binary, args...)
 	cmd.Dir = cwd
+	if len(spec.Env) > 0 {
+		cmd.Env = mergeEnv(os.Environ(), spec.Env, workdir)
+	}
 
 	stdoutBuf := &capBuffer{cap: kimiMaxStdout}
 	stderrBuf := &capBuffer{cap: kimiMaxStderr}
@@ -277,6 +291,42 @@ func runTool(ctx context.Context, spec *toolSpec, workdir string, msg chatMessag
 		reply.Content = fmt.Sprintf("(%s 没有 stdout，详见 stderr)", spec.Name)
 	}
 	return reply, false, nil
+}
+
+// mergeEnv produces the child process environment by merging
+// per-tool overrides on top of the parent's. Override values
+// support {{workdir}} substitution. Existing keys in parent are
+// replaced; new keys are appended.
+func mergeEnv(parent []string, overrides map[string]string, workdir string) []string {
+	if len(overrides) == 0 {
+		return parent
+	}
+	resolved := make(map[string]string, len(overrides))
+	for k, v := range overrides {
+		resolved[k] = strings.ReplaceAll(v, "{{workdir}}", workdir)
+	}
+	out := make([]string, 0, len(parent)+len(resolved))
+	seen := map[string]bool{}
+	for _, kv := range parent {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			out = append(out, kv)
+			continue
+		}
+		key := kv[:i]
+		if newV, ok := resolved[key]; ok {
+			out = append(out, key+"="+newV)
+			seen[key] = true
+		} else {
+			out = append(out, kv)
+		}
+	}
+	for k, v := range resolved {
+		if !seen[k] {
+			out = append(out, k+"="+v)
+		}
+	}
+	return out
 }
 
 // redactPrompt elides the prompt portion of args for log lines
