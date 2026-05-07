@@ -385,6 +385,7 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 		BaseURL:      cfg.BaseURL,
 		Model:        cfg.Model,
 		SystemPrompt: buildDecomposePrompt(project),
+		ProxyURL:     cfg.ProxyURL,
 	}
 	payload := aiChatCompletionRequest{
 		Model: runtimeConfig.Model,
