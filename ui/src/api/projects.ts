@@ -42,9 +42,10 @@ export async function deleteProject(id: string) {
   });
 }
 
-export async function decomposeProject(id: string) {
+export async function decomposeProject(id: string, llmConfigID?: number) {
   return requestJson<ProjectDecomposeResponse>(`/api/projects/${encodeURIComponent(id)}/decompose`, {
     method: "POST",
+    body: llmConfigID && llmConfigID > 0 ? { llm_config_id: llmConfigID } : {},
   });
 }
 
