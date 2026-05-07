@@ -556,34 +556,33 @@ async function changeTaskStatus(taskID: string, status: TaskStatus): Promise<voi
 }
 
 // syncDispatchAllBotOptions populates the "派全部" bot dropdown
-// from availableBots. Bots whose attached agent's tool matches
-// the project's code_provider are pre-selected (single-click
-// dispatch in the common case). Re-runnable on each task render
-// since botToolMap fills in async after page load.
+// with ONLY currently-attached bots. botToolMap[id] is non-empty
+// when fetchAgentBotStatus reported attached=true; everything
+// else is filtered out. Picking a detached bot would 503 from
+// the pickup handler's agent precheck, which is not the failure
+// mode the user can act on through this UI.
 function syncDispatchAllBotOptions(): void {
-  if (availableBots.length === 0) {
-    dispatchAllBotSelect.innerHTML = `<option value="">没有 bot</option>`;
+  const attached = availableBots.filter((b) => (botToolMap[b.bot_user_id] || "") !== "");
+  if (attached.length === 0) {
+    dispatchAllBotSelect.innerHTML = `<option value="">没有 attached bot（请先 polar-agent attach）</option>`;
     return;
   }
   const preferred = activeProject?.code_provider || "";
-  const sorted = [...availableBots].sort((a, b) => {
+  const sorted = [...attached].sort((a, b) => {
     const at = botToolMap[a.bot_user_id] || "";
     const bt = botToolMap[b.bot_user_id] || "";
     const aMatch = preferred && at === preferred ? 1 : 0;
     const bMatch = preferred && bt === preferred ? 1 : 0;
     if (aMatch !== bMatch) return bMatch - aMatch;
-    return (bt ? 1 : 0) - (at ? 1 : 0);
+    return a.name.localeCompare(b.name);
   });
   const previous = dispatchAllBotSelect.value;
   const opts = ['<option value="">选 bot…</option>'];
   for (const b of sorted) {
     const tool = botToolMap[b.bot_user_id] || "";
-    const tag = tool ? ` [${tool}]` : "";
-    opts.push(`<option value="${escapeHTML(b.bot_user_id)}">${escapeHTML(b.name)}${tag}</option>`);
+    opts.push(`<option value="${escapeHTML(b.bot_user_id)}">${escapeHTML(b.name)} [${escapeHTML(tool)}]</option>`);
   }
   dispatchAllBotSelect.innerHTML = opts.join("");
-  // Restore previous selection if still present, else auto-pick
-  // the top-sorted option matching the preferred tool.
   if (previous && sorted.some((b) => b.bot_user_id === previous)) {
     dispatchAllBotSelect.value = previous;
   } else if (preferred) {
@@ -619,6 +618,7 @@ async function dispatchAllTodos(): Promise<void> {
   dispatchAllBtn.disabled = true;
   let done = 0;
   let failed = 0;
+  let lastError = "";
   for (const t of todos) {
     setStatus(dispatchAllStatusEl, `派单中 ${done + 1}/${todos.length} · ${escapeHTML(t.title)}`, false);
     try {
@@ -631,15 +631,26 @@ async function dispatchAllTodos(): Promise<void> {
         done++;
       } else {
         failed++;
+        const err = (data as { error?: string }).error;
+        if (err) lastError = err;
+        // Stop on first failure — when the precheck (e.g. agent
+        // not attached, 503) fails for one task, every following
+        // task will fail the same way. No point hammering.
+        if (response.status === 503) {
+          break;
+        }
       }
-    } catch {
+    } catch (e) {
       failed++;
+      lastError = String(e);
     }
     renderTasks();
   }
   setStatus(
     dispatchAllStatusEl,
-    failed === 0 ? `✅ 全部 ${done} 条派单完成` : `${done} 条成功 / ${failed} 条失败`,
+    failed === 0
+      ? `✅ 全部 ${done} 条派单完成`
+      : `${done} 条成功 / ${failed} 条失败${lastError ? "：" + lastError : ""}`,
     failed > 0,
   );
 }
