@@ -10,6 +10,7 @@ import {
   updateBotUser,
   updateLLMConfig,
 } from "./api/dashboard.js";
+import { fetchAgentBotStatus } from "./api/projects.js";
 import { logout, fetchCurrentUser } from "./api/session.js";
 import { byId } from "./lib/dom.js";
 import { LLM_PROVIDER_PRESETS, getPresetByID, matchPresetByBaseURL, matchPresetForConfig, resolvePresetEndpoint, resolvePresetExtras, resolvePresetProviderKind } from "./lib/llm_presets.js";
@@ -192,6 +193,7 @@ function renderBotUserList(bots: BotUser[]): void {
             <div class="tag-item-header">
               <strong>${bot.name}</strong>
               <span class="tag-chip">${bot.config_name}</span>
+              <span class="bot-agent-badge" data-bot-agent-badge="${bot.bot_user_id}"></span>
             </div>
             <div class="tag-item-meta">${t("dashboard.botUserId", { id: bot.bot_user_id })}</div>
           </div>
@@ -201,6 +203,44 @@ function renderBotUserList(bots: BotUser[]): void {
       `;
     })
     .join("");
+  void hydrateBotAgentBadges(bots);
+}
+
+// hydrateBotAgentBadges fans out one /api/agent/bots/<id>/status call
+// per bot row (parallel) and slips an inline badge into the
+// data-bot-agent-badge slot when the bot has a polar-agent attached.
+// Today the only meaningful capability is "kimi" (passthrough mode);
+// when present we show a badge so users realize the bot's configured
+// model field is being bypassed by their local kimi-cli.
+async function hydrateBotAgentBadges(bots: BotUser[]): Promise<void> {
+  await Promise.all(bots.map(async (bot) => {
+    try {
+      const { response, data } = await fetchAgentBotStatus(bot.bot_user_id);
+      if (!response.ok || !data.attached) {
+        return;
+      }
+      const slot = document.querySelector<HTMLElement>(
+        `[data-bot-agent-badge="${bot.bot_user_id}"]`,
+      );
+      if (!slot) {
+        return;
+      }
+      const caps = data.capabilities || [];
+      const workdir = data.workdir || "";
+      if (caps.includes("kimi")) {
+        slot.innerHTML = `<span class="tag-chip tag-chip-accent" title="本地 polar-agent 用 kimi-cli 接管，bot 的模型配置被旁路。workdir=${escapeAttr(workdir)}">🤖 kimi-cli 接管</span>`;
+      } else {
+        slot.innerHTML = `<span class="tag-chip" title="polar-agent 已附着，走平台 tool loop。workdir=${escapeAttr(workdir)}">⚙️ agent 已连接</span>`;
+      }
+    } catch {
+      // network / 4xx — leave badge slot empty rather than render a
+      // misleading "disconnected" state we can't actually verify.
+    }
+  }));
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 async function loadData(): Promise<void> {

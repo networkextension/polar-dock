@@ -354,7 +354,11 @@ func (s *Server) handleAgentWhoAmI(c *gin.Context) {
 	})
 }
 
-// handleAgentStatus tells the UI whether a bot has an agent attached.
+// handleAgentStatus tells the UI whether a bot has an agent attached
+// and which capabilities the agent declared at hello time. The UI
+// uses capabilities to render passthrough mode badges (e.g. "本地
+// kimi-cli 接管中"), avoiding confusion when the bot's configured
+// model is bypassed by an external runtime.
 func (s *Server) handleAgentStatus(c *gin.Context) {
 	botID := strings.TrimSpace(c.Param("bot_id"))
 	if botID == "" {
@@ -366,8 +370,13 @@ func (s *Server) handleAgentStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"attached": false})
 		return
 	}
+	caps := conn.capabilities
+	if caps == nil {
+		caps = []string{}
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"attached": true,
-		"workdir":  conn.workdir,
+		"attached":     true,
+		"workdir":      conn.workdir,
+		"capabilities": caps,
 	})
 }

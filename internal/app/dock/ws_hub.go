@@ -121,9 +121,12 @@ func (h *wsHub) run() {
 						delete(group, client)
 					}
 				}
-				if len(group) == 0 && delivered == 0 {
-					log.Printf("ws broadcast: no live clients for user=%s (chat broadcast lost)", userID)
-				}
+				// "no live clients" is the routine case for any
+				// recipient who isn't currently connected (every bot
+				// always; humans whenever they close the tab). The
+				// broadcaster intentionally fans out to all
+				// participants without checking liveness, so logging
+				// each miss as a "lost" event was misleading noise.
 			}
 		}
 	}
