@@ -709,6 +709,17 @@ func (s *Server) registerRoutes() {
 		api.GET("/video-projects/:id/download", s.AuthMiddleware(), s.handleVideoProjectDownload)
 		api.GET("/video-projects/:id/shots.zip", s.AuthMiddleware(), s.handleVideoProjectShotsZip)
 		api.GET("/system-agent", s.AuthMiddleware(), s.handleSystemAgentStatus)
+		// projects (workspace-scoped product container with AI
+		// requirement decomposition + plan generation).
+		api.GET("/projects", s.AuthMiddleware(), s.handleProjectList)
+		api.POST("/projects", s.AuthMiddleware(), s.handleProjectCreate)
+		api.GET("/projects/:id", s.AuthMiddleware(), s.handleProjectDetail)
+		api.PUT("/projects/:id", s.AuthMiddleware(), s.handleProjectUpdate)
+		api.DELETE("/projects/:id", s.AuthMiddleware(), s.handleProjectDelete)
+		api.POST("/projects/:id/decompose", s.AuthMiddleware(), s.handleProjectDecompose)
+		api.PUT("/projects/:id/features/:feature_id", s.AuthMiddleware(), s.handleProjectFeatureUpdate)
+		api.POST("/projects/:id/plan", s.AuthMiddleware(), s.handleProjectGeneratePlan)
+		api.PUT("/projects/:id/tasks/:task_id", s.AuthMiddleware(), s.handleProjectTaskUpdate)
 		// teams (collaboration workspaces). T2 = CRUD + read-only members
 		// list. T3 = invitations. T5 = RequireTeamRole middleware
 		// chained on team-scoped routes (replaces inline role checks).
