@@ -428,22 +428,24 @@ type ApplePushCertificate struct {
 }
 
 type Post struct {
-	ID         int64       `json:"id"`
-	UserID     string      `json:"user_id"`
-	Username   string      `json:"username"`
-	UserIcon   string      `json:"user_icon"`
-	TagID      *int64      `json:"tag_id,omitempty"`
-	PostType   string      `json:"post_type"`
-	Content    string      `json:"content"`
-	CreatedAt  time.Time   `json:"created_at"`
-	LikeCount  int         `json:"like_count"`
-	ReplyCount int         `json:"reply_count"`
-	LikedByMe  bool        `json:"liked_by_me"`
-	Images     []string    `json:"images"`
-	ImageItems []PostImage `json:"image_items,omitempty"`
-	Videos     []string    `json:"videos"`
-	VideoItems []PostVideo `json:"video_items,omitempty"`
-	Task       *TaskPost   `json:"task,omitempty"`
+	ID          int64        `json:"id"`
+	UserID      string       `json:"user_id"`
+	Username    string       `json:"username"`
+	UserIcon    string       `json:"user_icon"`
+	WorkspaceID string       `json:"workspace_id,omitempty"`
+	TagID       *int64       `json:"tag_id,omitempty"`
+	PostType    string       `json:"post_type"`
+	Content     string       `json:"content"`
+	CreatedAt   time.Time    `json:"created_at"`
+	LikeCount   int          `json:"like_count"`
+	ReplyCount  int          `json:"reply_count"`
+	LikedByMe   bool         `json:"liked_by_me"`
+	Images      []string     `json:"images"`
+	ImageItems  []PostImage  `json:"image_items,omitempty"`
+	Videos      []string     `json:"videos"`
+	VideoItems  []PostVideo  `json:"video_items,omitempty"`
+	Task        *TaskPost    `json:"task,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 type PostImage struct {
@@ -1012,6 +1014,59 @@ CREATE TABLE IF NOT EXISTS posts (
 
 ALTER TABLE posts
 	ADD COLUMN IF NOT EXISTS post_type TEXT NOT NULL DEFAULT 'standard';
+ALTER TABLE posts
+	ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_posts_workspace ON posts(workspace_id, created_at DESC);
+
+-- attachments: workspace-scoped file uploads with content-addressed
+-- storage. Backs posts + chat_messages today via junction tables;
+-- markdown_entries' .md body and cover stay separate (the body is
+-- mutable and doesn't fit immutability of sha256-keyed storage).
+--
+-- storage_kind:
+--   'local_fs' → storage_ref is a path relative to UploadDir
+--                (new uploads: attachments/<ws>/<sha2>/<sha256>;
+--                 migrated chat rows: original /uploads/<filename>)
+--   'remote'   → storage_ref is an absolute URL (R2 etc.); download
+--                handler 302-redirects rather than streaming
+--
+-- sha256 may be NULL for legacy migrated rows where we don't want
+-- to hash large existing files at boot.
+CREATE TABLE IF NOT EXISTS attachments (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	uploader_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	filename TEXT NOT NULL,
+	mime_type TEXT NOT NULL DEFAULT '',
+	size_bytes BIGINT NOT NULL DEFAULT 0,
+	storage_kind TEXT NOT NULL DEFAULT 'local_fs',
+	storage_ref TEXT NOT NULL,
+	sha256 TEXT,
+	width INT,
+	height INT,
+	thumbnail_url TEXT,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_workspace ON attachments(workspace_id, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_attachments_uploader ON attachments(uploader_user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_workspace_sha ON attachments(workspace_id, sha256) WHERE sha256 IS NOT NULL AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS post_attachments (
+	post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+	attachment_id TEXT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+	ord INT NOT NULL DEFAULT 0,
+	PRIMARY KEY (post_id, attachment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_post_attachments_post ON post_attachments(post_id, ord);
+
+CREATE TABLE IF NOT EXISTS chat_message_attachments (
+	message_id BIGINT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+	attachment_id TEXT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+	ord INT NOT NULL DEFAULT 0,
+	PRIMARY KEY (message_id, attachment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_message_attachments_msg ON chat_message_attachments(message_id, ord);
 
 CREATE TABLE IF NOT EXISTS task_posts (
 	post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
@@ -1190,8 +1245,12 @@ ALTER TABLE chat_messages
 ALTER TABLE chat_messages
 	ADD COLUMN IF NOT EXISTS llm_thread_id BIGINT REFERENCES llm_threads(id) ON DELETE SET NULL;
 
-ALTER TABLE chat_messages
-	ADD COLUMN IF NOT EXISTS attachment TEXT;
+-- chat_messages.attachment (JSONB inline column) was migrated to
+-- attachments + chat_message_attachments junction in the
+-- attachments-refactor PR. The ADD COLUMN line that used to live
+-- here is intentionally absent so a fresh boot leaves the column
+-- gone; old DBs hit migrateChatMessageAttachments at startup,
+-- which copies + DROP COLUMNs.
 
 ALTER TABLE chat_messages
 	ADD COLUMN IF NOT EXISTS latency_ms INTEGER;
@@ -4370,16 +4429,17 @@ func (s *Server) deleteTag(id int64) error {
 	return err
 }
 
-func (s *Server) createPost(userID string, tagID *int64, postType, content string, createdAt time.Time) (int64, error) {
+func (s *Server) createPost(userID, workspaceID string, tagID *int64, postType, content string, createdAt time.Time) (int64, error) {
 	if postType == "" {
 		postType = "standard"
 	}
 	var id int64
 	err := s.db.QueryRow(
-		`INSERT INTO posts (user_id, tag_id, post_type, content, created_at)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO posts (user_id, workspace_id, tag_id, post_type, content, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 RETURNING id`,
 		userID,
+		workspaceID,
 		tagID,
 		postType,
 		content,
@@ -4555,6 +4615,9 @@ func (s *Server) listPosts(userID string, limit, offset int, filterTagID *int64,
 	if err := s.attachPostMedia(posts, postIDs); err != nil {
 		return posts, hasMore, err
 	}
+	if err := s.attachPostAttachments(posts, postIDs); err != nil {
+		return posts, hasMore, err
+	}
 	if err := s.attachTaskData(posts, userID); err != nil {
 		return posts, hasMore, err
 	}
@@ -4627,6 +4690,70 @@ func (s *Server) attachPostMedia(posts []Post, postIDs []int64) error {
 		posts[i].ImageItems = imageItemMap[posts[i].ID]
 		posts[i].Videos = videoMap[posts[i].ID]
 		posts[i].VideoItems = videoItemMap[posts[i].ID]
+	}
+	return nil
+}
+
+// attachPostAttachments fans out junction lookups for the new
+// attachments table (zip/pdf/doc/ppt). Image/video continue to use
+// the legacy post_images/post_videos tables — those have
+// per-format processing (resize, poster) that doesn't fit the
+// generic attachments model.
+func (s *Server) attachPostAttachments(posts []Post, postIDs []int64) error {
+	if len(postIDs) == 0 {
+		return nil
+	}
+	rows, err := s.db.Query(
+		`SELECT pa.post_id, a.id, a.workspace_id, a.uploader_user_id, a.filename, a.mime_type, a.size_bytes,
+		        a.storage_kind, a.storage_ref, a.sha256, a.width, a.height, a.thumbnail_url, a.created_at, a.deleted_at
+		   FROM post_attachments pa
+		   JOIN attachments a ON a.id = pa.attachment_id
+		  WHERE pa.post_id = ANY($1) AND a.deleted_at IS NULL
+		  ORDER BY pa.post_id, pa.ord ASC, a.created_at ASC`,
+		pq.Array(postIDs),
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byPost := map[int64][]Attachment{}
+	for rows.Next() {
+		var postID int64
+		var sha, thumb sql.NullString
+		var width, height sql.NullInt64
+		var deletedAt sql.NullTime
+		var a Attachment
+		if err := rows.Scan(
+			&postID,
+			&a.ID, &a.WorkspaceID, &a.UploaderUserID, &a.Filename, &a.MimeType, &a.SizeBytes,
+			&a.StorageKind, &a.StorageRef, &sha, &width, &height, &thumb, &a.CreatedAt, &deletedAt,
+		); err != nil {
+			return err
+		}
+		if sha.Valid {
+			a.Sha256 = sha.String
+		}
+		if thumb.Valid {
+			a.ThumbnailURL = thumb.String
+		}
+		if width.Valid {
+			a.Width = int(width.Int64)
+		}
+		if height.Valid {
+			a.Height = int(height.Int64)
+		}
+		if deletedAt.Valid {
+			t := deletedAt.Time
+			a.DeletedAt = &t
+		}
+		a.DownloadURL = a.attachmentDownloadURL()
+		byPost[postID] = append(byPost[postID], a)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range posts {
+		posts[i].Attachments = byPost[posts[i].ID]
 	}
 	return nil
 }
@@ -4735,6 +4862,12 @@ func (s *Server) getPostByID(userID string, postID int64) (*Post, error) {
 		}
 		post.Task = task
 	}
+
+	atts, err := s.listAttachmentsForPost(post.ID)
+	if err != nil {
+		return nil, err
+	}
+	post.Attachments = resolveDownloadURLs(atts)
 
 	return &post, nil
 }
@@ -5764,7 +5897,7 @@ func (s *Server) listChatMessages(threadID int64, llmThreadID *int64, limit, off
 	if offset < 0 {
 		offset = 0
 	}
-	query := `SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.attachment, m.created_at, m.deleted_at, m.deleted_by
+	query := `SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.created_at, m.deleted_at, m.deleted_by
 		   FROM chat_messages m
 		   JOIN users u ON u.id = m.sender_id
 		  WHERE m.thread_id = $1`
@@ -5789,7 +5922,6 @@ func (s *Server) listChatMessages(threadID int64, llmThreadID *int64, limit, off
 		var markdownEntryID sql.NullInt64
 		var latencyMs sql.NullInt64
 		var updatedAt sql.NullTime
-		var attachmentJSON sql.NullString
 		var deletedAt sql.NullTime
 		var deletedBy sql.NullString
 		if err := rows.Scan(
@@ -5808,7 +5940,6 @@ func (s *Server) listChatMessages(threadID int64, llmThreadID *int64, limit, off
 			&msg.Streaming,
 			&msg.Seq,
 			&updatedAt,
-			&attachmentJSON,
 			&msg.CreatedAt,
 			&deletedAt,
 			&deletedBy,
@@ -5835,12 +5966,6 @@ func (s *Server) listChatMessages(threadID int64, llmThreadID *int64, limit, off
 		if deletedBy.Valid {
 			msg.DeletedBy = deletedBy.String
 		}
-		if attachmentJSON.Valid && attachmentJSON.String != "" {
-			var att ChatMessageAttachment
-			if jsonErr := json.Unmarshal([]byte(attachmentJSON.String), &att); jsonErr == nil {
-				msg.Attachment = &att
-			}
-		}
 		messages = append(messages, msg)
 	}
 	if err := rows.Err(); err != nil {
@@ -5852,7 +5977,88 @@ func (s *Server) listChatMessages(threadID int64, llmThreadID *int64, limit, off
 		hasMore = true
 		messages = messages[:limit]
 	}
+	if err := s.attachChatMessageAttachments(messages); err != nil {
+		return nil, false, err
+	}
 	return messages, hasMore, nil
+}
+
+// attachChatMessageAttachments hydrates the .Attachment field on
+// each message in the slice via a single bulk lookup against
+// chat_message_attachments + attachments. The legacy
+// ChatMessageAttachment struct only models one attachment per
+// message, so we surface the first linked one (ord ASC, then
+// created_at) for wire compatibility. Soft-deleted attachments
+// are skipped.
+func (s *Server) attachChatMessageAttachments(messages []ChatMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(messages))
+	for _, m := range messages {
+		ids = append(ids, m.ID)
+	}
+	rows, err := s.db.Query(
+		`SELECT cma.message_id, a.filename, a.mime_type, a.size_bytes, a.storage_kind, a.storage_ref, a.thumbnail_url, a.width, a.height, a.id
+		   FROM chat_message_attachments cma
+		   JOIN attachments a ON a.id = cma.attachment_id
+		  WHERE cma.message_id = ANY($1) AND a.deleted_at IS NULL
+		  ORDER BY cma.message_id, cma.ord ASC, a.created_at ASC`,
+		pq.Array(ids),
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	first := map[int64]*ChatMessageAttachment{}
+	for rows.Next() {
+		var msgID int64
+		var filename, mimeType, storageKind, storageRef string
+		var thumb sql.NullString
+		var width, height sql.NullInt64
+		var size int64
+		var attID string
+		if err := rows.Scan(&msgID, &filename, &mimeType, &size, &storageKind, &storageRef, &thumb, &width, &height, &attID); err != nil {
+			return err
+		}
+		if _, exists := first[msgID]; exists {
+			continue
+		}
+		var url string
+		if storageKind == AttachmentStorageRemote {
+			url = storageRef
+		} else if strings.HasPrefix(storageRef, "/uploads/") {
+			// migrated chat row — ref is already an absolute path.
+			url = storageRef
+		} else {
+			url = "/api/attachments/" + attID + "/download"
+		}
+		att := &ChatMessageAttachment{
+			URL:      url,
+			FileName: filename,
+			Size:     size,
+			MimeType: mimeType,
+		}
+		if thumb.Valid {
+			att.ThumbnailURL = thumb.String
+		}
+		if width.Valid {
+			att.Width = int(width.Int64)
+		}
+		if height.Valid {
+			att.Height = int(height.Int64)
+		}
+		first[msgID] = att
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range messages {
+		if a, ok := first[messages[i].ID]; ok {
+			messages[i].Attachment = a
+		}
+	}
+	return nil
 }
 
 func (s *Server) markChatRead(threadID int64, userID string, readAt time.Time, lastReadMessageID *int64) error {
@@ -6217,10 +6423,34 @@ func (s *Server) createChatMessageWithMetadata(threadID int64, llmThreadID *int6
 }
 
 func (s *Server) createAttachmentChatMessage(threadID int64, senderID, preview string, att ChatMessageAttachment, createdAt time.Time) (int64, error) {
-	attJSON, err := json.Marshal(att)
+	// Sender's personal team owns the attachment row. Chat
+	// attachments don't pass through the auth-gated download
+	// endpoint (their URL stays /uploads/<filename> for FE
+	// compat); the workspace_id is purely an audit + data-locality
+	// field here.
+	workspaceID, err := s.personalWorkspaceForUser(senderID)
 	if err != nil {
 		return 0, err
 	}
+	attRow := &Attachment{
+		WorkspaceID:    workspaceID,
+		UploaderUserID: senderID,
+		Filename:       att.FileName,
+		MimeType:       att.MimeType,
+		SizeBytes:      att.Size,
+		StorageKind:    AttachmentStorageLocalFS,
+		StorageRef:     att.URL, // /uploads/<filename> or remote URL
+		Width:          att.Width,
+		Height:         att.Height,
+		ThumbnailURL:   att.ThumbnailURL,
+	}
+	if strings.HasPrefix(att.URL, "http://") || strings.HasPrefix(att.URL, "https://") {
+		attRow.StorageKind = AttachmentStorageRemote
+	}
+	if err := s.insertAttachment(attRow); err != nil {
+		return 0, err
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -6233,16 +6463,22 @@ func (s *Server) createAttachmentChatMessage(threadID int64, senderID, preview s
 
 	var id int64
 	err = tx.QueryRow(
-		`INSERT INTO chat_messages (thread_id, sender_id, message_type, failed, content, attachment, created_at)
-		 VALUES ($1, $2, 'attachment', FALSE, $3, $4, $5)
+		`INSERT INTO chat_messages (thread_id, sender_id, message_type, failed, content, created_at)
+		 VALUES ($1, $2, 'attachment', FALSE, $3, $4)
 		 RETURNING id`,
 		threadID,
 		senderID,
 		preview,
-		string(attJSON),
 		createdAt,
 	).Scan(&id)
 	if err != nil {
+		return 0, err
+	}
+
+	if _, err = tx.Exec(
+		`INSERT INTO chat_message_attachments (message_id, attachment_id, ord) VALUES ($1, $2, 0)`,
+		id, attRow.ID,
+	); err != nil {
 		return 0, err
 	}
 
@@ -6260,6 +6496,23 @@ func (s *Server) createAttachmentChatMessage(threadID int64, senderID, preview s
 
 	if err = tx.Commit(); err != nil {
 		return 0, err
+	}
+	return id, nil
+}
+
+// personalWorkspaceForUser returns the personal-team workspace id
+// for a given user. Used by call paths that need a workspace_id
+// for an attachment but don't have one threaded through (chat
+// uploads are the obvious case — the sender's personal team is
+// the natural owner).
+func (s *Server) personalWorkspaceForUser(userID string) (string, error) {
+	var id string
+	err := s.db.QueryRow(
+		`SELECT id FROM teams WHERE owner_user_id = $1 AND kind = 'personal' LIMIT 1`,
+		userID,
+	).Scan(&id)
+	if err != nil {
+		return "", err
 	}
 	return id, nil
 }
@@ -6399,9 +6652,8 @@ func (s *Server) getChatMessageByID(messageID int64) (*ChatMessage, error) {
 	var updatedAt sql.NullTime
 	var deletedAt sql.NullTime
 	var deletedBy sql.NullString
-	var attachmentJSON sql.NullString
 	err := s.db.QueryRow(
-		`SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.attachment, m.created_at, m.deleted_at, m.deleted_by
+		`SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.created_at, m.deleted_at, m.deleted_by
 		   FROM chat_messages m
 		   JOIN users u ON u.id = m.sender_id
 		  WHERE m.id = $1`,
@@ -6422,7 +6674,6 @@ func (s *Server) getChatMessageByID(messageID int64) (*ChatMessage, error) {
 		&msg.Streaming,
 		&msg.Seq,
 		&updatedAt,
-		&attachmentJSON,
 		&msg.CreatedAt,
 		&deletedAt,
 		&deletedBy,
@@ -6453,20 +6704,18 @@ func (s *Server) getChatMessageByID(messageID int64) (*ChatMessage, error) {
 	if deletedBy.Valid {
 		msg.DeletedBy = deletedBy.String
 	}
-	if attachmentJSON.Valid && attachmentJSON.String != "" {
-		var att ChatMessageAttachment
-		if jsonErr := json.Unmarshal([]byte(attachmentJSON.String), &att); jsonErr == nil {
-			msg.Attachment = &att
-		}
+	one := []ChatMessage{msg}
+	if err := s.attachChatMessageAttachments(one); err != nil {
+		return nil, err
 	}
-	return &msg, nil
+	return &one[0], nil
 }
 
 func (s *Server) listRecentChatMessages(threadID int64, llmThreadID *int64, limit int) ([]ChatMessage, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	query := `SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.attachment, m.created_at, m.deleted_at, m.deleted_by
+	query := `SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.created_at, m.deleted_at, m.deleted_by
 		   FROM chat_messages m
 		   JOIN users u ON u.id = m.sender_id
 		  WHERE m.thread_id = $1`
@@ -6491,7 +6740,6 @@ func (s *Server) listRecentChatMessages(threadID int64, llmThreadID *int64, limi
 		var markdownEntryID sql.NullInt64
 		var latencyMs sql.NullInt64
 		var updatedAt sql.NullTime
-		var attachmentJSON sql.NullString
 		var deletedAt sql.NullTime
 		var deletedBy sql.NullString
 		if err := rows.Scan(
@@ -6510,7 +6758,6 @@ func (s *Server) listRecentChatMessages(threadID int64, llmThreadID *int64, limi
 			&msg.Streaming,
 			&msg.Seq,
 			&updatedAt,
-			&attachmentJSON,
 			&msg.CreatedAt,
 			&deletedAt,
 			&deletedBy,
@@ -6536,12 +6783,6 @@ func (s *Server) listRecentChatMessages(threadID int64, llmThreadID *int64, limi
 		if deletedBy.Valid {
 			msg.DeletedBy = deletedBy.String
 		}
-		if attachmentJSON.Valid && attachmentJSON.String != "" {
-			var att ChatMessageAttachment
-			if jsonErr := json.Unmarshal([]byte(attachmentJSON.String), &att); jsonErr == nil {
-				msg.Attachment = &att
-			}
-		}
 		items = append(items, msg)
 	}
 	if err := rows.Err(); err != nil {
@@ -6549,6 +6790,9 @@ func (s *Server) listRecentChatMessages(threadID int64, llmThreadID *int64, limi
 	}
 	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
 		items[i], items[j] = items[j], items[i]
+	}
+	if err := s.attachChatMessageAttachments(items); err != nil {
+		return nil, err
 	}
 	return items, nil
 }
@@ -6558,7 +6802,7 @@ func (s *Server) findRetrySourceMessage(threadID int64, targetMessage *ChatMessa
 		return nil, nil
 	}
 
-	query := `SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.attachment, m.created_at, m.deleted_at, m.deleted_by
+	query := `SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.created_at, m.deleted_at, m.deleted_by
 	   FROM chat_messages m
 	   JOIN users u ON u.id = m.sender_id
 	  WHERE m.thread_id = $1
@@ -6580,7 +6824,6 @@ func (s *Server) findRetrySourceMessage(threadID int64, targetMessage *ChatMessa
 	var markdownEntryID sql.NullInt64
 	var latencyMs sql.NullInt64
 	var updatedAt sql.NullTime
-	var attachmentJSON sql.NullString
 	var deletedAt sql.NullTime
 	var deletedBy sql.NullString
 	err := row.Scan(
@@ -6599,7 +6842,6 @@ func (s *Server) findRetrySourceMessage(threadID int64, targetMessage *ChatMessa
 		&msg.Streaming,
 		&msg.Seq,
 		&updatedAt,
-		&attachmentJSON,
 		&msg.CreatedAt,
 		&deletedAt,
 		&deletedBy,
@@ -6629,13 +6871,11 @@ func (s *Server) findRetrySourceMessage(threadID int64, targetMessage *ChatMessa
 	if deletedBy.Valid {
 		msg.DeletedBy = deletedBy.String
 	}
-	if attachmentJSON.Valid && attachmentJSON.String != "" {
-		var att ChatMessageAttachment
-		if jsonErr := json.Unmarshal([]byte(attachmentJSON.String), &att); jsonErr == nil {
-			msg.Attachment = &att
-		}
+	one := []ChatMessage{msg}
+	if err := s.attachChatMessageAttachments(one); err != nil {
+		return nil, err
 	}
-	return &msg, nil
+	return &one[0], nil
 }
 
 func (s *Server) markChatMessageFailedResolved(threadID, messageID int64, deletedAt time.Time) (bool, error) {

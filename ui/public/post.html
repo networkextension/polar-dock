@@ -141,6 +141,10 @@
               <label class="form-label" for="postVideos" data-i18n="post.videosLabel">Videos (optional, multiple allowed)</label>
               <input id="postVideos" class="input" type="file" accept="video/*" multiple />
 
+              <label class="form-label" for="postAttachments">附件（zip / pdf / doc / docx / ppt / pptx，单个 ≤ 100MB）</label>
+              <input id="postAttachments" type="file" accept=".zip,.pdf,.doc,.docx,.ppt,.pptx,application/zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" multiple style="margin-bottom: 8px;" />
+              <div id="postAttachmentChips" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;"></div>
+
               <div id="postFormStatus" class="status-text"></div>
               <div class="post-form-actions">
                 <button id="postSubmitBtn" class="btn-secondary" type="submit" data-i18n="post.publish">Publish</button>
