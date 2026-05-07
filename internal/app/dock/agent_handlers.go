@@ -320,6 +320,40 @@ func (s *Server) handleAgentDispatch(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"call_id": callID, "result": result})
 }
 
+// handleAgentWhoAmI authenticates an agent token bearer (the same
+// way /ws/agent does) and returns the token id + user id. Used by
+// the polar-agent CLI's `login` / `status` commands to verify a
+// raw token without needing a user session — agent tokens aren't
+// valid on the user-session endpoints, so /api/agent/tokens GET
+// can't double as a verify probe.
+func (s *Server) handleAgentWhoAmI(c *gin.Context) {
+	raw := strings.TrimSpace(c.Query("token"))
+	if raw == "" {
+		auth := c.GetHeader("Authorization")
+		if strings.HasPrefix(auth, "Bearer ") {
+			raw = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+		}
+	}
+	if raw == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing agent token"})
+		return
+	}
+	tokenID, userID, err := s.resolveAgentToken(raw)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if tokenID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "agent token invalid or revoked"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":       true,
+		"token_id": tokenID,
+		"user_id":  userID,
+	})
+}
+
 // handleAgentStatus tells the UI whether a bot has an agent attached.
 func (s *Server) handleAgentStatus(c *gin.Context) {
 	botID := strings.TrimSpace(c.Param("bot_id"))
