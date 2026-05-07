@@ -2806,12 +2806,12 @@ func (s *Server) deleteBotUser(workspaceID string, id int64) (bool, error) {
 func (s *Server) getBotUserByUserID(botUserID string) (*BotUser, error) {
 	var item BotUser
 	err := s.db.QueryRow(
-		`SELECT b.id, b.owner_user_id, b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, b.created_at, b.updated_at
+		`SELECT b.id, b.owner_user_id, b.workspace_id, b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, b.created_at, b.updated_at
 		   FROM bot_users b
 		   JOIN llm_configs c ON c.id = b.llm_config_id
 		  WHERE b.bot_user_id = $1`,
 		botUserID,
-	).Scan(&item.ID, &item.OwnerUserID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.ConfigName, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID, &item.Name, &item.Description, &item.SystemPrompt, &item.LLMConfigID, &item.ConfigName, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
