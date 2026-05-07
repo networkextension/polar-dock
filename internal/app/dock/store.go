@@ -1601,22 +1601,13 @@ ALTER TABLE iosdist_asc_configs DROP CONSTRAINT IF EXISTS iosdist_asc_configs_pk
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_iosdist_asc_configs_workspace
 	ON iosdist_asc_configs(workspace_id) WHERE workspace_id IS NOT NULL;
 
--- T6-D: lock workspace_id to NOT NULL on the migrated tables. By
--- this point: T6-A backfill ran on every restart (every legacy
--- row has workspace_id set) and T6-B/C handlers all write
--- workspace_id on INSERT, so the constraint should never have a
--- row to reject. SET NOT NULL is idempotent on Postgres —
--- re-applying on an already-NOT-NULL column is a no-op. If a
--- NULL slips in (e.g. an out-of-band INSERT during a rolling
--- deploy), the schema apply at next start will fail loudly
--- rather than silently corrupting; that's intentional. If you
--- hit that, restart again — the backfill at the top of NewServer
--- will fix any NULL rows before the schema re-runs.
-ALTER TABLE iosdist_apps         ALTER COLUMN workspace_id SET NOT NULL;
-ALTER TABLE iosdist_certificates ALTER COLUMN workspace_id SET NOT NULL;
-ALTER TABLE iosdist_profiles     ALTER COLUMN workspace_id SET NOT NULL;
-ALTER TABLE iosdist_asc_configs  ALTER COLUMN workspace_id SET NOT NULL;
-ALTER TABLE llm_configs          ALTER COLUMN workspace_id SET NOT NULL;
+-- T6-D: locking workspace_id to NOT NULL on the migrated tables
+-- happens AFTER backfill, not here. Doing it inline in this
+-- bootstrap string would race the backfill: the schema runs at
+-- openDB() time, but backfillPersonalTeams + backfillResourceWorkspaceIDs
+-- run later in NewServer(). On a fresh upgrade with legacy rows
+-- still NULL, the inline ALTER would 23502 and crash the boot.
+-- See enforceWorkspaceIDNotNull(), called after the backfill.
 
 -- The owner_user_id column (still NOT NULL) keeps an in-DB
 -- comment as a hint that its semantics changed in T6: it's now
