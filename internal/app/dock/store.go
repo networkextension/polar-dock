@@ -1643,6 +1643,73 @@ COMMENT ON COLUMN video_projects.owner_user_id        IS 'audit: who created/ups
 -- still NULL, the inline ALTER would 23502 and crash the boot.
 -- See enforceWorkspaceIDNotNull(), called after the backfill.
 
+-- projects: top-level container for an AI-driven product. One row =
+-- "the thing being built". The chat-with-AI flow lives under it:
+-- user description → decomposed features → selected features → tasks
+-- (one task per selected feature, 1:1 to a chat thread when a bot
+-- picks it up). Workspace-scoped from day one, no T6-style migration.
+--
+-- Status state machine:
+--   draft    — user just created, no decompose yet
+--   planning — features generated, user is selecting
+--   building — tasks created, bot(s) working
+--   beta     — first build out, in TF / OTA
+--   shipped  — public beta or live
+--   archived — done / shelved
+CREATE TABLE IF NOT EXISTS projects (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	creator_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'draft',
+	template TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
+-- project_features: AI-decomposed feature list. selected drives
+-- which ones make it into tasks when the user clicks "生成计划".
+-- Re-decomposing replaces the list (DELETE + re-INSERT inside a tx)
+-- so users can iterate on the prompt without leftover stale items.
+CREATE TABLE IF NOT EXISTS project_features (
+	id TEXT PRIMARY KEY,
+	project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+	ord INT NOT NULL DEFAULT 0,
+	title TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	complexity TEXT NOT NULL DEFAULT 'medium',
+	selected BOOLEAN NOT NULL DEFAULT TRUE,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_features_project ON project_features(project_id, ord);
+
+-- project_tasks: created from selected features when the user
+-- generates the plan. 1:1 to a chat_thread (chat_thread_id set
+-- when a bot picks it up). Sub-table of projects but cascades on
+-- feature delete? No — features can be re-decomposed, but tasks
+-- are the persistent execution record; nullable feature_id
+-- preserves them across re-decompose.
+CREATE TABLE IF NOT EXISTS project_tasks (
+	id TEXT PRIMARY KEY,
+	project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+	feature_id TEXT REFERENCES project_features(id) ON DELETE SET NULL,
+	title TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'todo',
+	bot_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+	chat_thread_id BIGINT REFERENCES chat_threads(id) ON DELETE SET NULL,
+	ord INT NOT NULL DEFAULT 0,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	started_at TIMESTAMPTZ,
+	completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_project_tasks_project ON project_tasks(project_id, ord);
+CREATE INDEX IF NOT EXISTS idx_project_tasks_status ON project_tasks(project_id, status);
+
 -- logs_entries: append-only structured log table. Spans three
 -- scopes: site-wide (workspace_id NULL — admin-only readable),
 -- workspace (workspace_id set — readable by team members), and
