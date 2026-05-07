@@ -70,7 +70,7 @@ Tool whitelist (executed in workdir, default tool-call mode):
 
 --tool=<name> passthrough mode: chat content forwarded to the named local tool.
               Built-ins: kimi (kimi-cli), claude, codex. Override or add via
-              ~/.polar/tools.json (see toolSpec / builtinTools in tools.go).
+              ~/.polar/tools.json (template at cmd/polar-agent/tools.example.json).
               Platform LLM is bypassed; the local tool IS the agent.
 
 --kimi (legacy alias for --tool=kimi).
