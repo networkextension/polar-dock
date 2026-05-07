@@ -1643,6 +1643,22 @@ COMMENT ON COLUMN video_projects.owner_user_id        IS 'audit: who created/ups
 -- still NULL, the inline ALTER would 23502 and crash the boot.
 -- See enforceWorkspaceIDNotNull(), called after the backfill.
 
+-- agent_tokens: long-lived bearer tokens issued to local agent
+-- (polar-agent CLI) instances. token_hash stored as SHA-256 hex
+-- of the raw token; raw is shown to the user once at issue time
+-- and never persisted server-side. last_used_at bumped on each
+-- WS connect. revoked_at non-NULL = no longer valid.
+CREATE TABLE IF NOT EXISTS agent_tokens (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL DEFAULT '',
+	token_hash TEXT NOT NULL UNIQUE,
+	last_used_at TIMESTAMPTZ,
+	revoked_at TIMESTAMPTZ,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tokens_user ON agent_tokens(user_id, created_at DESC);
+
 -- projects: top-level container for an AI-driven product. One row =
 -- "the thing being built". The chat-with-AI flow lives under it:
 -- user description → decomposed features → selected features → tasks

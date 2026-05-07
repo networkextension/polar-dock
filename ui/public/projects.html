@@ -70,6 +70,7 @@
         <div class="lp-topbar">
           <span class="lp-topbar-title" data-i18n="projects.title">项目</span>
           <div class="lp-topbar-end" style="display:flex; align-items:center; gap:8px;">
+            <button id="projectsAgentTokensBtn" class="btn-inline btn-secondary" type="button" title="管理 polar-agent 凭据">🔑 Agent Tokens</button>
             <button id="projectsNewBtn" class="btn-inline btn-secondary" type="button">＋ 新建项目</button>
             <a class="lp-topbar-back" href="/dashboard.html">Dashboard</a>
           </div>
@@ -158,6 +159,43 @@
             <button id="projectsCreateSubmitBtn" class="btn-secondary" type="submit">创建</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Agent tokens modal -->
+    <div id="agentTokensModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" style="max-width:600px;">
+        <div class="modal-header">
+          <h3>polar-agent Tokens</h3>
+          <button id="agentTokensModalCloseBtn" class="btn-inline btn-secondary" type="button">关闭</button>
+        </div>
+        <div class="modal-body" style="display:flex; flex-direction:column; gap:14px;">
+          <div style="font-size:12px; color:var(--text-muted,#888);">
+            polar-agent 是本地 Go 二进制，跑在你的 Mac 上，接收来自 bot 的 tool call 在指定工作目录执行（read_file / write_file / list_dir / run_cmd）。下面发的 token 给 <code>polar-agent login --token</code> 用。
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input id="agentTokenName" class="input" type="text" placeholder="token 名字 (例: my-mac)" maxlength="60" style="flex:1; min-width:200px;" />
+            <button id="agentTokenCreateBtn" class="btn-inline btn-secondary" type="button">＋ 新建 token</button>
+          </div>
+
+          <div id="agentTokenJustCreated" hidden style="padding:12px; background:#fff7e6; border:1px solid #f5d28a; border-radius:6px;">
+            <div style="font-weight:600; font-size:13px; color:#8a5a00;">⚠ 这是 raw token，只显示一次：</div>
+            <div style="margin-top:6px; padding:8px; background:#fff; border:1px solid #f5d28a; border-radius:4px; font-family:monospace; font-size:12px; word-break:break-all;" id="agentTokenJustCreatedRaw"></div>
+            <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              <button id="agentTokenCopyBtn" class="btn-inline btn-secondary" type="button" style="font-size:12px;">复制</button>
+              <code style="font-size:11px;">polar-agent login --server=&lt;url&gt; --token=&lt;raw&gt;</code>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">已发的 token</div>
+            <div id="agentTokensList" style="display:flex; flex-direction:column; gap:6px;">
+              <div class="chat-empty">加载中...</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
