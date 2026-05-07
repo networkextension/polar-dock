@@ -127,6 +127,7 @@ const (
 	aiProviderOpenAICompatible aiProvider = "openai_compatible"
 	aiProviderGemini           aiProvider = "gemini"
 	aiProviderXAIResponses     aiProvider = "xai_responses"
+	aiProviderVolcesResponses  aiProvider = "volces_responses"
 	aiProviderAnthropic        aiProvider = "anthropic_messages"
 )
 
@@ -614,6 +615,8 @@ func (a *aiAgent) requestChatCompletion(runtimeConfig aiRuntimeConfig, payload a
 		return a.requestGeminiContent(runtimeConfig, payload)
 	case aiProviderXAIResponses:
 		return a.requestXAIResponses(runtimeConfig, payload)
+	case aiProviderVolcesResponses:
+		return a.requestVolcesResponses(runtimeConfig, payload)
 	default:
 		return a.requestOpenAICompatibleChatCompletion(runtimeConfig, payload)
 	}
@@ -785,6 +788,91 @@ func (a *aiAgent) requestXAIResponses(runtimeConfig aiRuntimeConfig, payload aiC
 	}, nil
 }
 
+// requestVolcesResponses calls Volces' OpenAI Responses-compatible
+// endpoint. Same wire shape as xAI (input array, output_text or
+// output[].content[].text), but without the xAI-specific
+// web_search tool — Volces returns 400 if you include it.
+// Auth header: standard Bearer.
+func (a *aiAgent) requestVolcesResponses(runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest) (*aiChatCompletionResponse, error) {
+	reqURL := strings.TrimSpace(runtimeConfig.BaseURL)
+	if reqURL == "" {
+		return nil, errors.New("Volces 配置缺少 Base URL")
+	}
+
+	bodyPayload := convertToVolcesResponsesRequest(payload)
+	body, err := json.Marshal(bodyPayload)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("ai agent request: provider=volces url=%s model=%s payload=%s", reqURL, runtimeConfig.Model, compactLogJSON(body))
+
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+runtimeConfig.APIKey)
+
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("ai agent response: provider=volces status=%d body=%s", resp.StatusCode, compactLogJSON(responseBody))
+
+	var result xAIResponsesResponse
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		if message := parseAIErrorMessage(result.Error); message != "" {
+			return nil, errors.New(message)
+		}
+		return nil, fmt.Errorf("volces api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+
+	text := extractXAIResponseText(result)
+	return &aiChatCompletionResponse{
+		Choices: []aiChatCompletionChoice{
+			{
+				Message: aiChatCompletionMessage{
+					Role:    "assistant",
+					Content: text,
+				},
+			},
+		},
+	}, nil
+}
+
+func convertToVolcesResponsesRequest(payload aiChatCompletionRequest) xAIResponsesRequest {
+	req := xAIResponsesRequest{
+		Model: payload.Model,
+		Input: make([]xAIResponsesMessage, 0, len(payload.Messages)),
+	}
+	for _, msg := range payload.Messages {
+		text := strings.TrimSpace(msg.Content)
+		if text == "" {
+			continue
+		}
+		role := strings.TrimSpace(msg.Role)
+		switch role {
+		case "system", "assistant", "user":
+		default:
+			role = "user"
+		}
+		req.Input = append(req.Input, xAIResponsesMessage{
+			Role:    role,
+			Content: text,
+		})
+	}
+	return req
+}
+
 func (a *aiAgent) requestAnthropicMessages(runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest) (*aiChatCompletionResponse, error) {
 	reqURL, err := buildAnthropicMessagesRequestURL(runtimeConfig.BaseURL)
 	if err != nil {
@@ -952,6 +1040,14 @@ func detectAIProvider(baseURL string) aiProvider {
 	}
 	if strings.Contains(text, "api.x.ai") {
 		return aiProviderXAIResponses
+	}
+	// Volcano Engine (字节豆包) exposes both Chat Completions
+	// (/api/v3/chat/completions) and Responses API
+	// (/api/v3/responses). The latter rejects {"messages": [...]}
+	// payload with `unknown field "messages"` since it expects
+	// {"input": [...]} like OpenAI's Responses API.
+	if strings.Contains(text, "volces.com") && strings.Contains(text, "/responses") {
+		return aiProviderVolcesResponses
 	}
 	return aiProviderOpenAICompatible
 }
