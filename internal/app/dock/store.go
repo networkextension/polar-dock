@@ -1717,12 +1717,15 @@ CREATE TABLE IF NOT EXISTS project_tasks (
 	status TEXT NOT NULL DEFAULT 'todo',
 	bot_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
 	chat_thread_id BIGINT REFERENCES chat_threads(id) ON DELETE SET NULL,
+	llm_thread_id BIGINT REFERENCES llm_threads(id) ON DELETE SET NULL,
 	ord INT NOT NULL DEFAULT 0,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 	updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 	started_at TIMESTAMPTZ,
 	completed_at TIMESTAMPTZ
 );
+ALTER TABLE project_tasks
+	ADD COLUMN IF NOT EXISTS llm_thread_id BIGINT REFERENCES llm_threads(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_project_tasks_project ON project_tasks(project_id, ord);
 CREATE INDEX IF NOT EXISTS idx_project_tasks_status ON project_tasks(project_id, status);
 

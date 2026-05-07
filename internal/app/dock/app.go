@@ -733,6 +733,7 @@ func (s *Server) registerRoutes() {
 		api.PUT("/projects/:id/features/:feature_id", s.AuthMiddleware(), s.handleProjectFeatureUpdate)
 		api.POST("/projects/:id/plan", s.AuthMiddleware(), s.handleProjectGeneratePlan)
 		api.PUT("/projects/:id/tasks/:task_id", s.AuthMiddleware(), s.handleProjectTaskUpdate)
+		api.POST("/projects/:id/tasks/:task_id/pickup", s.AuthMiddleware(), s.handleProjectTaskPickup)
 		// teams (collaboration workspaces). T2 = CRUD + read-only members
 		// list. T3 = invitations. T5 = RequireTeamRole middleware
 		// chained on team-scoped routes (replaces inline role checks).

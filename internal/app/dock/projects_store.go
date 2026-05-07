@@ -65,6 +65,7 @@ type ProjectTask struct {
 	Status        string     `json:"status"`
 	BotUserID     *string    `json:"bot_user_id,omitempty"`
 	ChatThreadID  *int64     `json:"chat_thread_id,omitempty"`
+	LLMThreadID   *int64     `json:"llm_thread_id,omitempty"`
 	Ord           int        `json:"ord"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
@@ -302,7 +303,7 @@ func (s *Server) generatePlanFromSelectedFeatures(projectID string) ([]ProjectTa
 
 func (s *Server) listProjectTasks(projectID string) ([]ProjectTask, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, feature_id, title, description, status, bot_user_id, chat_thread_id, ord, created_at, updated_at, started_at, completed_at
+		`SELECT id, project_id, feature_id, title, description, status, bot_user_id, chat_thread_id, llm_thread_id, ord, created_at, updated_at, started_at, completed_at
 		 FROM project_tasks WHERE project_id = $1 ORDER BY ord ASC, created_at ASC`,
 		projectID,
 	)
@@ -314,9 +315,9 @@ func (s *Server) listProjectTasks(projectID string) ([]ProjectTask, error) {
 	for rows.Next() {
 		var t ProjectTask
 		var featureID, botUserID sql.NullString
-		var chatThreadID sql.NullInt64
+		var chatThreadID, llmThreadID sql.NullInt64
 		var startedAt, completedAt sql.NullTime
-		if err := rows.Scan(&t.ID, &t.ProjectID, &featureID, &t.Title, &t.Description, &t.Status, &botUserID, &chatThreadID, &t.Ord, &t.CreatedAt, &t.UpdatedAt, &startedAt, &completedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectID, &featureID, &t.Title, &t.Description, &t.Status, &botUserID, &chatThreadID, &llmThreadID, &t.Ord, &t.CreatedAt, &t.UpdatedAt, &startedAt, &completedAt); err != nil {
 			return nil, err
 		}
 		if featureID.Valid {
@@ -331,6 +332,10 @@ func (s *Server) listProjectTasks(projectID string) ([]ProjectTask, error) {
 			v := chatThreadID.Int64
 			t.ChatThreadID = &v
 		}
+		if llmThreadID.Valid {
+			v := llmThreadID.Int64
+			t.LLMThreadID = &v
+		}
 		if startedAt.Valid {
 			v := startedAt.Time
 			t.StartedAt = &v
@@ -342,6 +347,48 @@ func (s *Server) listProjectTasks(projectID string) ([]ProjectTask, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// loadProjectTask is the single-row variant of listProjectTasks.
+// Used by pickup to fetch the task we're updating.
+func (s *Server) loadProjectTask(projectID, taskID string) (*ProjectTask, error) {
+	row := s.db.QueryRow(
+		`SELECT id, project_id, feature_id, title, description, status, bot_user_id, chat_thread_id, llm_thread_id, ord, created_at, updated_at, started_at, completed_at
+		 FROM project_tasks WHERE project_id = $1 AND id = $2`,
+		projectID, taskID,
+	)
+	var t ProjectTask
+	var featureID, botUserID sql.NullString
+	var chatThreadID, llmThreadID sql.NullInt64
+	var startedAt, completedAt sql.NullTime
+	if err := row.Scan(&t.ID, &t.ProjectID, &featureID, &t.Title, &t.Description, &t.Status, &botUserID, &chatThreadID, &llmThreadID, &t.Ord, &t.CreatedAt, &t.UpdatedAt, &startedAt, &completedAt); err != nil {
+		return nil, err
+	}
+	if featureID.Valid {
+		v := featureID.String
+		t.FeatureID = &v
+	}
+	if botUserID.Valid {
+		v := botUserID.String
+		t.BotUserID = &v
+	}
+	if chatThreadID.Valid {
+		v := chatThreadID.Int64
+		t.ChatThreadID = &v
+	}
+	if llmThreadID.Valid {
+		v := llmThreadID.Int64
+		t.LLMThreadID = &v
+	}
+	if startedAt.Valid {
+		v := startedAt.Time
+		t.StartedAt = &v
+	}
+	if completedAt.Valid {
+		v := completedAt.Time
+		t.CompletedAt = &v
+	}
+	return &t, nil
 }
 
 type ProjectTaskUpdate struct {
