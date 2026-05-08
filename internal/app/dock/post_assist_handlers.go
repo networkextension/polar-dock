@@ -8,40 +8,54 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func buildPostAssistSystemPrompt(botPrompt, instruction string) string {
-	base := []string{
-		"你是一个中文社交帖子写作助手。你的任务是基于用户草稿润色或生成帖子正文，保持用户的核心观点、语气和立场。",
-		"必须遵循：",
-		"1) 保留用户的关键事实、观点与结论，不擅自新增未提及的事实。",
-		"2) 输出控制在 280 字以内，适合社交平台发布；段落短，观点清晰。",
-		"3) 如果用户给了明确风格要求按要求润色；否则默认自然、真诚。",
-		"4) 仅输出最终可直接发布的正文，不要前后缀、不要解释、不要引号包裹。",
-	}
-	if strings.TrimSpace(botPrompt) != "" {
-		base = append(base, "Bot 额外写作偏好：\n"+strings.TrimSpace(botPrompt))
-	}
-	if strings.TrimSpace(instruction) != "" {
-		base = append(base, "本次写作要求：\n"+strings.TrimSpace(instruction))
-	}
-	return strings.Join(base, "\n\n")
+const defaultPostAssistTemplate = `你是一个中文社交帖子写作助手。你的任务是基于用户草稿润色或生成帖子正文，保持用户的核心观点、语气和立场。
+
+必须遵循：
+1) 保留用户的关键事实、观点与结论，不擅自新增未提及的事实。
+2) 输出控制在 280 字以内，适合社交平台发布；段落短，观点清晰。
+3) 如果用户给了明确风格要求按要求润色；否则默认自然、真诚。
+4) 仅输出最终可直接发布的正文，不要前后缀、不要解释、不要引号包裹。
+{{- if .BotPrompt }}
+
+Bot 额外写作偏好：
+{{.BotPrompt}}
+{{- end -}}
+{{- if .Instruction }}
+
+本次写作要求：
+{{.Instruction}}
+{{- end }}`
+
+const defaultReplyAssistTemplate = `你是一个中文评论写作助手。你的任务是基于原帖与用户草稿生成一条简洁、得体、真诚的评论。
+
+必须遵循：
+1) 先理解原帖内容与作者立场，评论要具体、不空泛。
+2) 长度 20-140 字之间，语气友好，避免说教，避免过度敬语。
+3) 保留用户草稿中的核心观点；若草稿为空，根据原帖给出一个合理角度。
+4) 仅输出最终可直接发布的评论内容，不要前后缀、不要解释。
+{{- if .BotPrompt }}
+
+Bot 额外写作偏好：
+{{.BotPrompt}}
+{{- end -}}
+{{- if .Instruction }}
+
+本次评论要求：
+{{.Instruction}}
+{{- end }}`
+
+func (s *Server) buildPostAssistSystemPrompt(botPrompt, instruction string) string {
+	return s.renderPrompt(promptSlugPostAssist, assistData{
+		BotPrompt:   strings.TrimSpace(botPrompt),
+		Instruction: strings.TrimSpace(instruction),
+	}, defaultPostAssistTemplate)
 }
 
-func buildReplyAssistSystemPrompt(botPrompt, instruction string) string {
-	base := []string{
-		"你是一个中文评论写作助手。你的任务是基于原帖与用户草稿生成一条简洁、得体、真诚的评论。",
-		"必须遵循：",
-		"1) 先理解原帖内容与作者立场，评论要具体、不空泛。",
-		"2) 长度 20-140 字之间，语气友好，避免说教，避免过度敬语。",
-		"3) 保留用户草稿中的核心观点；若草稿为空，根据原帖给出一个合理角度。",
-		"4) 仅输出最终可直接发布的评论内容，不要前后缀、不要解释。",
-	}
-	if strings.TrimSpace(botPrompt) != "" {
-		base = append(base, "Bot 额外写作偏好：\n"+strings.TrimSpace(botPrompt))
-	}
-	if strings.TrimSpace(instruction) != "" {
-		base = append(base, "本次评论要求：\n"+strings.TrimSpace(instruction))
-	}
-	return strings.Join(base, "\n\n")
+func (s *Server) buildReplyAssistSystemPrompt(botPrompt, instruction string) string {
+	return s.renderPrompt(promptSlugPostReplyAssist, assistData{
+		BotPrompt:   strings.TrimSpace(botPrompt),
+		Instruction: strings.TrimSpace(instruction),
+	}, defaultReplyAssistTemplate)
 }
 
 // handlePostAssistWithBot drafts or refines a post body using an LLM bot.
@@ -85,7 +99,7 @@ func (s *Server) handlePostAssistWithBot(c *gin.Context) {
 		writeAssistError(c, err)
 		return
 	}
-	runtimeConfig.SystemPrompt = buildPostAssistSystemPrompt(bot.SystemPrompt, req.Instruction)
+	runtimeConfig.SystemPrompt = s.buildPostAssistSystemPrompt(bot.SystemPrompt, req.Instruction)
 
 	promptLines := []string{"请基于以下信息写一条帖子正文："}
 	if topic != "" {
@@ -183,7 +197,7 @@ func (s *Server) handleReplyAssistWithBot(c *gin.Context) {
 		writeAssistError(c, err)
 		return
 	}
-	runtimeConfig.SystemPrompt = buildReplyAssistSystemPrompt(bot.SystemPrompt, req.Instruction)
+	runtimeConfig.SystemPrompt = s.buildReplyAssistSystemPrompt(bot.SystemPrompt, req.Instruction)
 
 	userPrompt := strings.Join([]string{
 		"原帖作者：@" + post.Username,

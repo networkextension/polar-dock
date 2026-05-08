@@ -43,6 +43,7 @@ type Server struct {
 	agentHub            *agentHub
 	workDir             string
 	aiAgent             *aiAgent
+	promptCache         *promptCache
 	chatStorage         AttachmentStorage
 	backgroundCtx       context.Context
 	backgroundStop      context.CancelFunc
@@ -287,6 +288,15 @@ func NewServer(cfg Config) (*Server, error) {
 		}(recoverIDs)
 	}
 	go server.runIOSSignWorker(server.backgroundCtx)
+
+	// Bootstrap prompt template registry — inserts any newly-added
+	// slugs and refreshes the default_content column on every start.
+	// Existing user edits in `content` are preserved; only the
+	// "default" snapshot is updated. Failure is logged but not fatal
+	// — handlers fall back to the code-baked default at render time.
+	if err := server.bootstrapPromptTemplates(promptTemplateDefaults()); err != nil {
+		log.Printf("prompts: bootstrap failed: %v", err)
+	}
 
 	server.aiAgent = newAIAgent(server, cfg)
 	if server.aiAgent != nil {
@@ -574,6 +584,9 @@ func (s *Server) registerRoutes() {
 		api.GET("/users/:id/following", s.AuthMiddleware(), s.handleUserFollowing)
 		api.GET("/site-settings", s.handleSiteSettingsGet)
 		api.PUT("/site-settings", s.AuthMiddleware(), s.AdminMiddleware(), s.handleSiteSettingsUpdate)
+		api.GET("/prompts", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateList)
+		api.GET("/prompts/:slug", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateGet)
+		api.PUT("/prompts/:slug", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateUpdate)
 		api.GET("/site-settings/invite-codes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleInviteCodeList)
 		api.POST("/site-settings/invite-codes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleInviteCodeGenerate)
 		api.POST("/site-settings/icon", s.AuthMiddleware(), s.AdminMiddleware(), s.handleSiteIconUpload)

@@ -1860,6 +1860,23 @@ CREATE INDEX IF NOT EXISTS idx_project_tasks_project ON project_tasks(project_id
 CREATE INDEX IF NOT EXISTS idx_project_tasks_status ON project_tasks(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_project_tasks_project_sprint ON project_tasks(project_id, sprint_number, ord);
 
+-- prompt_templates: site-wide admin-managed prompt strings used
+-- across the platform (AI 拆解、pickup body、markdown/post 助手、
+-- AI default system prompt, tool-use addendum, etc.). slug is the
+-- stable identifier referenced by code; content is the live
+-- editable text (Go text/template syntax); default_content is the
+-- code-baked default — refreshed on every server start so admins
+-- can see "what code thinks the default is" and reset to it. Only
+-- the editable content column is preserved across deploys.
+CREATE TABLE IF NOT EXISTS prompt_templates (
+	slug TEXT PRIMARY KEY,
+	name TEXT NOT NULL DEFAULT '',
+	description TEXT NOT NULL DEFAULT '',
+	content TEXT NOT NULL DEFAULT '',
+	default_content TEXT NOT NULL DEFAULT '',
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- logs_entries: append-only structured log table. Spans three
 -- scopes: site-wide (workspace_id NULL — admin-only readable),
 -- workspace (workspace_id set — readable by team members), and

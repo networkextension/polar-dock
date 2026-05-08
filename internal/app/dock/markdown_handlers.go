@@ -10,22 +10,37 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func buildMarkdownAssistSystemPrompt(botPrompt, instruction string) string {
-	base := []string{
-		"你是一个中文写作润色助手。你的任务是基于用户原文做改写与润色，而不是替用户重新发明核心观点。",
-		"必须遵循：",
-		"1) 保留用户核心事实、观点、立场与结论，不擅自新增关键事实。",
-		"2) 优先做表达优化：结构、语序、逻辑、可读性、措辞、语法。",
-		"3) 如果用户给了明确风格要求，按要求润色；若无要求，默认清晰、自然、专业。",
-		"4) 输出只返回最终可直接粘贴的正文内容，不要解释、不要前后缀。",
-	}
-	if strings.TrimSpace(botPrompt) != "" {
-		base = append(base, "Bot 额外写作偏好：\n"+strings.TrimSpace(botPrompt))
-	}
-	if strings.TrimSpace(instruction) != "" {
-		base = append(base, "本次润色要求：\n"+strings.TrimSpace(instruction))
-	}
-	return strings.Join(base, "\n\n")
+// assistData feeds markdown.assist / post.assist / post.reply_assist
+// — three templates with the same shape: a base ruleset plus
+// optional bot-side preferences and per-call instruction.
+type assistData struct {
+	BotPrompt   string
+	Instruction string
+}
+
+const defaultMarkdownAssistTemplate = `你是一个中文写作润色助手。你的任务是基于用户原文做改写与润色，而不是替用户重新发明核心观点。
+
+必须遵循：
+1) 保留用户核心事实、观点、立场与结论，不擅自新增关键事实。
+2) 优先做表达优化：结构、语序、逻辑、可读性、措辞、语法。
+3) 如果用户给了明确风格要求，按要求润色；若无要求，默认清晰、自然、专业。
+4) 输出只返回最终可直接粘贴的正文内容，不要解释、不要前后缀。
+{{- if .BotPrompt }}
+
+Bot 额外写作偏好：
+{{.BotPrompt}}
+{{- end -}}
+{{- if .Instruction }}
+
+本次润色要求：
+{{.Instruction}}
+{{- end }}`
+
+func (s *Server) buildMarkdownAssistSystemPrompt(botPrompt, instruction string) string {
+	return s.renderPrompt(promptSlugMarkdownAssist, assistData{
+		BotPrompt:   strings.TrimSpace(botPrompt),
+		Instruction: strings.TrimSpace(instruction),
+	}, defaultMarkdownAssistTemplate)
 }
 
 func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
@@ -103,7 +118,7 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 		APIKey:       strings.TrimSpace(apiKey),
 		BaseURL:      strings.TrimSpace(llmConfig.BaseURL),
 		Model:        strings.TrimSpace(llmConfig.Model),
-		SystemPrompt: buildMarkdownAssistSystemPrompt(bot.SystemPrompt, req.Instruction),
+		SystemPrompt: s.buildMarkdownAssistSystemPrompt(bot.SystemPrompt, req.Instruction),
 		ProxyURL:     strings.TrimSpace(llmConfig.ProxyURL),
 	}
 

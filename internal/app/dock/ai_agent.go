@@ -741,7 +741,7 @@ func (a *aiAgent) testRuntimeConfig(runtimeConfig aiRuntimeConfig) error {
 		return errors.New("API Key、Base URL 和 Model 不能为空")
 	}
 	if strings.TrimSpace(runtimeConfig.SystemPrompt) == "" {
-		runtimeConfig.SystemPrompt = "你是一个用于连通性验证的 AI 助手，请简短回复 ok。"
+		runtimeConfig.SystemPrompt = a.server.renderPrompt(promptSlugAITestSystem, nil, "你是一个用于连通性验证的 AI 助手，请简短回复 ok。")
 	}
 
 	payload := aiChatCompletionRequest{
@@ -1141,7 +1141,7 @@ func (a *aiAgent) runtimeConfig(threadID int64, llmThreadID *int64, responderUse
 	}
 	systemPrompt := strings.TrimSpace(botUser.SystemPrompt)
 	if systemPrompt == "" {
-		systemPrompt = "你是站内的 AI 助手，请基于上下文和当前问题，用清晰、可靠、结构化的中文回复。"
+		systemPrompt = a.server.renderPrompt(promptSlugAIDefaultSystem, nil, "你是站内的 AI 助手，请基于上下文和当前问题，用清晰、可靠、结构化的中文回复。")
 	}
 	return aiRuntimeConfig{
 		APIKey:       strings.TrimSpace(apiKey),
