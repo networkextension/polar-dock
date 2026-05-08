@@ -98,13 +98,14 @@ func agentToolSpecs(workdir string) []aiToolSpec {
 	}
 }
 
-// agentToolSystemAddendum is appended to the bot's system prompt
-// whenever an agent is attached. Tells the LLM the rules of the
-// road — most importantly, "use tools, don't dump code in chat."
-func agentToolSystemAddendum(workdir string) string {
-	return fmt.Sprintf(`
+// agentToolsAddendumData drives the agent.tools_addendum template.
+type agentToolsAddendumData struct {
+	Workdir string
+}
+
+const defaultAgentToolsAddendumTemplate = `
 You have a polar-agent attached on the user's Mac. The working
-directory is: %s
+directory is: {{.Workdir}}
 
 Use the provided tools (read_file / write_file / list_dir / run_cmd)
 to inspect and modify the codebase. Important rules:
@@ -119,7 +120,15 @@ to inspect and modify the codebase. Important rules:
 - When done, give a short summary in chat (what was changed, how
   to test, anything that still needs human attention).
 - If a command fails, read the stderr carefully and fix the root
-  cause; don't blindly retry.`, workdir)
+  cause; don't blindly retry.`
+
+// agentToolSystemAddendum is appended to the bot's system prompt
+// whenever an agent is attached. Tells the LLM the rules of the
+// road — most importantly, "use tools, don't dump code in chat."
+func (s *Server) agentToolSystemAddendum(workdir string) string {
+	return s.renderPrompt(promptSlugAgentToolsAddendum, agentToolsAddendumData{
+		Workdir: workdir,
+	}, defaultAgentToolsAddendumTemplate)
 }
 
 // generateReplyWithTools runs the agent-aware multi-turn loop.
@@ -136,7 +145,7 @@ func (a *aiAgent) generateReplyWithTools(
 	if err != nil {
 		log.Printf("build ai context failed: %v", err)
 	}
-	systemPrompt := strings.TrimSpace(runtimeConfig.SystemPrompt) + agentToolSystemAddendum(workdir)
+	systemPrompt := strings.TrimSpace(runtimeConfig.SystemPrompt) + a.server.agentToolSystemAddendum(workdir)
 	messages := []aiChatCompletionMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "system", Content: contextText},

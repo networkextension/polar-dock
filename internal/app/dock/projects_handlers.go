@@ -196,21 +196,51 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 
 // ---- decompose -----------------------------------------------------
 
-// projectDecomposeBasePrompt is the constant top of the system
-// prompt — JSON shape, complexity definitions, ordering rules.
-// Per-project context (runtime env + business scenario) is
-// inserted between this header and the closing instruction by
-// buildDecomposePrompt.
-const projectDecomposeBasePrompt = `你是一个产品经理助手。用户会提供一个产品想法（自然语言），你的任务是把它拆解成 5-12 个独立的功能（feature）。每个功能要可以单独实现、单独测试。
+// decomposeData drives the project.decompose template. Persona is
+// the bot's system_prompt (empty when no bot is selected for the
+// run); EnvLabel and ScenarioLabel come from the project's
+// runtime_env / business_scenario codes after label-mapping.
+type decomposeData struct {
+	Persona       string
+	EnvLabel      string
+	ScenarioLabel string
+}
+
+// defaultDecomposeTemplate is the in-code fallback. Mirrors the
+// canonical default in promptTemplateDefaults() so behavior is
+// identical to a fresh install.
+const defaultDecomposeTemplate = `{{- if .Persona -}}
+{{.Persona}}
+
+---
+
+{{ end -}}
+你是一个产品经理助手。用户会提供一个产品想法（自然语言），你的任务是把它拆解成 5-12 个独立的功能（feature）。每个功能要可以单独实现、单独测试。
 
 返回严格的 JSON 数组（不要 markdown 代码块、不要解释），每项包含：
 - "title": 简短标题（中文，不超过 20 字）
 - "description": 1-2 句话描述这个功能要做什么、用户会怎么用
 - "complexity": "simple" | "medium" | "complex"，参考标准：simple = 单视图 + 静态数据；medium = 多视图 + 状态管理；complex = 涉及自定义动画、网络、持久化、设备能力
 
-按用户预期的开发顺序排列功能（先做基础结构，再加内容，最后做动画 / 收尾）。`
+按用户预期的开发顺序排列功能（先做基础结构，再加内容，最后做动画 / 收尾）。
+{{- if .EnvLabel }}
 
-const projectDecomposeClosingPrompt = `只返回 JSON 数组，不要任何其他文字。`
+运行环境约束：
+  {{.EnvLabel}}
+所有 feature 必须在这个环境下可实现；不假设其他平台能力。
+{{- end -}}
+{{- if .ScenarioLabel }}
+
+业务场景约束：
+  {{.ScenarioLabel}}
+拆解时聚焦此场景的核心交互。
+{{- end -}}
+{{- if and (not .EnvLabel) (not .ScenarioLabel) }}
+
+对于「创意小游戏 / 文学+地理+历史 + 图 + 动画」类应用，重点关注表现层：UI 屏幕、内容展示方式、交互手势、动画效果。不要假设有后端 API（默认资源是 bundled 静态文件）。
+{{- end }}
+
+只返回 JSON 数组，不要任何其他文字。`
 
 // runtimeEnvLabel returns a human-readable description of the
 // runtime_env code stored on the project. Empty input → empty
@@ -259,75 +289,81 @@ func businessScenarioLabel(code string) string {
 	return ""
 }
 
+// pickupBodyData carries every variable the project.pickup_body
+// template can reference. Keep field names + tags in sync with
+// the default template — adding a field here is a contract change
+// that admins editing the template need to know about.
+type pickupBodyData struct {
+	EnvLabel      string
+	ScenarioLabel string
+	CodeProvider  string
+	GitRemoteURL  string
+	Title         string
+	Description   string
+}
+
 // buildPickupBody composes the first chat message we send the bot
-// when a task is picked up. It prepends a constraint header
-// derived from the project's runtime_env + business_scenario so
-// the downstream coding tool stays inside the right stack/context
-// instead of free-styling. Empty constraints are skipped (no
-// header at all if project has neither set).
-func buildPickupBody(project *Project, title, description string) string {
-	header := []string{}
-	if env := runtimeEnvLabel(project.RuntimeEnv); env != "" {
-		header = append(header, "运行环境："+env)
+// when a task is picked up. The template lives in DB
+// (prompt_templates.project.pickup_body); admins can edit without
+// a redeploy. The fallback in code defends against bad edits.
+func (s *Server) buildPickupBody(project *Project, title, description string) string {
+	data := pickupBodyData{
+		EnvLabel:      runtimeEnvLabel(project.RuntimeEnv),
+		ScenarioLabel: businessScenarioLabel(project.BusinessScenario),
+		CodeProvider:  strings.TrimSpace(project.CodeProvider),
+		GitRemoteURL:  strings.TrimSpace(project.GitRemoteURL),
+		Title:         strings.TrimSpace(title),
+		Description:   strings.TrimSpace(description),
 	}
-	if scen := businessScenarioLabel(project.BusinessScenario); scen != "" {
-		header = append(header, "业务场景："+scen)
-	}
-	if project.CodeProvider != "" {
-		// Soft signal — the tool may or may not be the one actually
-		// running, but echoing the user's preference here primes the
-		// agent's tone (e.g. claude-style explanations vs codex
-		// brevity).
-		header = append(header, "首选编码工具："+project.CodeProvider)
-	}
-	body := strings.TrimSpace(title)
-	if len(header) > 0 {
-		body = "【任务约束】\n" + strings.Join(header, "\n") + "\n\n【任务】\n" + body
-	}
-	if d := strings.TrimSpace(description); d != "" {
-		body += "\n\n" + d
-	}
-	return body
+	return s.renderPrompt(promptSlugProjectPickupBody, data, defaultPickupBodyTemplate)
 }
 
-// buildDecomposePromptWithPersona is the bot-aware variant of
-// buildDecomposePrompt. When the user picks a specific bot for
-// the decompose run, we prepend that bot's system_prompt as a
-// "persona" header so the output reflects the bot's tone /
-// expertise. The structured (JSON shape, runtime / scenario
-// constraints) parts come AFTER the persona so format
-// requirements always win — a chatty persona prompt still has
-// to return JSON.
-func buildDecomposePromptWithPersona(p *Project, persona string) string {
-	base := buildDecomposePrompt(p)
-	persona = strings.TrimSpace(persona)
-	if persona == "" {
-		return base
-	}
-	return persona + "\n\n---\n\n" + base
+// defaultPickupBodyTemplate is the in-code fallback used when the
+// DB row is missing AND we want to keep serving requests. Mirrors
+// promptTemplateDefaults() so behavior is identical to a fresh
+// install.
+const defaultPickupBodyTemplate = `{{- $hasHeader := or .EnvLabel .ScenarioLabel -}}
+{{- $hasHeader = or $hasHeader .CodeProvider -}}
+{{- $hasHeader = or $hasHeader .GitRemoteURL -}}
+{{- if $hasHeader -}}
+【任务约束】
+{{- if .EnvLabel }}
+运行环境：{{.EnvLabel}}
+{{- end -}}
+{{- if .ScenarioLabel }}
+业务场景：{{.ScenarioLabel}}
+{{- end -}}
+{{- if .CodeProvider }}
+首选编码工具：{{.CodeProvider}}
+{{- end -}}
+{{- if .GitRemoteURL }}
+Git 远端：{{.GitRemoteURL}}（polar-agent 已 chdir 到 cwd 并配好 origin；只在 cwd 操作，不要 cd 到兄弟目录）
+{{- end }}
+
+【任务】
+{{ end -}}
+{{ .Title }}
+{{- if .Description }}
+
+{{ .Description }}
+{{- end }}`
+
+// buildDecomposePromptWithPersona renders the project.decompose
+// template against the project + optional bot persona. Persona
+// is prepended inside the template (not concatenated outside) so
+// admins can rearrange or remove it via the editable template
+// without code changes.
+func (s *Server) buildDecomposePromptWithPersona(p *Project, persona string) string {
+	return s.renderPrompt(promptSlugProjectDecompose, decomposeData{
+		Persona:       strings.TrimSpace(persona),
+		EnvLabel:      runtimeEnvLabel(p.RuntimeEnv),
+		ScenarioLabel: businessScenarioLabel(p.BusinessScenario),
+	}, defaultDecomposeTemplate)
 }
 
-// buildDecomposePrompt assembles the per-project system prompt by
-// stitching the base prompt + any non-empty runtime_env /
-// business_scenario hints + the closing instruction. When neither
-// constraint is set, fall back to the legacy iOS-flavored hint
-// so existing behavior is preserved for projects created before
-// this PR.
-func buildDecomposePrompt(p *Project) string {
-	parts := []string{projectDecomposeBasePrompt}
-	if env := runtimeEnvLabel(p.RuntimeEnv); env != "" {
-		parts = append(parts, "运行环境约束：\n  "+env+"\n所有 feature 必须在这个环境下可实现；不假设其他平台能力。")
-	}
-	if scen := businessScenarioLabel(p.BusinessScenario); scen != "" {
-		parts = append(parts, "业务场景约束：\n  "+scen+"\n拆解时聚焦此场景的核心交互。")
-	}
-	if p.RuntimeEnv == "" && p.BusinessScenario == "" {
-		// Legacy fallback — keep the old hint so projects created
-		// before this PR still get coherent output.
-		parts = append(parts, `对于「创意小游戏 / 文学+地理+历史 + 图 + 动画」类应用，重点关注表现层：UI 屏幕、内容展示方式、交互手势、动画效果。不要假设有后端 API（默认资源是 bundled 静态文件）。`)
-	}
-	parts = append(parts, projectDecomposeClosingPrompt)
-	return strings.Join(parts, "\n\n")
+// buildDecomposePrompt is the no-persona convenience wrapper.
+func (s *Server) buildDecomposePrompt(p *Project) string {
+	return s.buildDecomposePromptWithPersona(p, "")
 }
 
 type decomposedFeature struct {
@@ -437,7 +473,7 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 		APIKey:       apiKey,
 		BaseURL:      cfg.BaseURL,
 		Model:        cfg.Model,
-		SystemPrompt: buildDecomposePromptWithPersona(project, botPersona),
+		SystemPrompt: s.buildDecomposePromptWithPersona(project, botPersona),
 		ProxyURL:     cfg.ProxyURL,
 	}
 	payload := aiChatCompletionRequest{
@@ -752,7 +788,7 @@ func (s *Server) handleProjectTaskPickup(c *gin.Context) {
 	// — without it, kimi/claude/codex tend to default to whatever
 	// they're freshest on (often Web React when the project is
 	// supposed to be SwiftUI).
-	body := buildPickupBody(project, task.Title, task.Description)
+	body := s.buildPickupBody(project, task.Title, task.Description)
 	username, _ := c.Get("username")
 	senderName, _ := username.(string)
 	llmThreadIDPtr := &llmThread.ID
