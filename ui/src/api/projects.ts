@@ -42,10 +42,17 @@ export async function deleteProject(id: string) {
   });
 }
 
-export async function decomposeProject(id: string, llmConfigID?: number) {
+export async function decomposeProject(
+  id: string,
+  llmConfigID?: number,
+  botUserID?: string,
+) {
+  const body: Record<string, unknown> = {};
+  if (llmConfigID && llmConfigID > 0) body.llm_config_id = llmConfigID;
+  if (botUserID && botUserID.trim() !== "") body.bot_user_id = botUserID.trim();
   return requestJson<ProjectDecomposeResponse>(`/api/projects/${encodeURIComponent(id)}/decompose`, {
     method: "POST",
-    body: llmConfigID && llmConfigID > 0 ? { llm_config_id: llmConfigID } : {},
+    body,
   });
 }
 

@@ -60,6 +60,7 @@ const saveDescBtn = byId<HTMLButtonElement>("projectsSaveDescBtn");
 const decomposeBtn = byId<HTMLButtonElement>("projectsDecomposeBtn");
 const decomposeStatusEl = byId<HTMLElement>("projectsDecomposeStatus");
 const decomposeLLMSelect = byId<HTMLSelectElement>("projectsDecomposeLLMSelect");
+const decomposeBotSelect = byId<HTMLSelectElement>("projectsDecomposeBotSelect");
 
 const featuresSection = byId<HTMLElement>("projectsFeaturesSection");
 const featuresListEl = byId<HTMLElement>("projectsFeaturesList");
@@ -528,7 +529,8 @@ async function decompose(): Promise<void> {
   setStatus(decomposeStatusEl, "AI 正在拆解功能（最多 90 秒）...", false);
   const llmIDRaw = decomposeLLMSelect.value;
   const llmID = llmIDRaw ? Number(llmIDRaw) : undefined;
-  const { response, data } = await decomposeProject(activeProject.id, llmID);
+  const botID = decomposeBotSelect.value || undefined;
+  const { response, data } = await decomposeProject(activeProject.id, llmID, botID);
   decomposeBtn.disabled = false;
   if (!response.ok) {
     setStatus(decomposeStatusEl, data.error || "拆解失败", true);
@@ -784,6 +786,27 @@ async function loadDecomposeLLMs(): Promise<void> {
   decomposeLLMSelect.innerHTML = opts.join("");
 }
 
+// loadDecomposeBots fills the bot dropdown next to "AI 拆解".
+// Only **classic** bots — passthrough bots have no LLM config so
+// they can't drive a chat completion call. Each option label is
+// the bot name; the bot's bound LLM config is what actually runs.
+function loadDecomposeBots(): void {
+  const classicBots = availableBots.filter((b) => b.bot_kind === "classic");
+  if (classicBots.length === 0) {
+    decomposeBotSelect.innerHTML = `<option value="">Bot 角色（无可用 classic bot）</option>`;
+    return;
+  }
+  const previous = decomposeBotSelect.value;
+  const opts = ['<option value="">Bot 角色（不用 bot persona）</option>'];
+  for (const b of classicBots) {
+    opts.push(`<option value="${escapeHTML(b.bot_user_id)}">${escapeHTML(b.name)}（${escapeHTML(b.config_name)}）</option>`);
+  }
+  decomposeBotSelect.innerHTML = opts.join("");
+  if (previous && classicBots.some((b) => b.bot_user_id === previous)) {
+    decomposeBotSelect.value = previous;
+  }
+}
+
 async function doPickup(taskID: string, botUserID: string): Promise<void> {
   if (!activeProject) return;
   pickerOpenForTaskID = null;
@@ -997,6 +1020,9 @@ async function init(): Promise<void> {
   }
   renderSidebarFoot(data);
   await Promise.all([loadProjects(), loadBots(), loadDecomposeLLMs()]);
+  // loadDecomposeBots reads availableBots which loadBots populated;
+  // sequential so it sees the data.
+  loadDecomposeBots();
   if (projects.length > 0) {
     void openProject(projects[0].id);
   }
