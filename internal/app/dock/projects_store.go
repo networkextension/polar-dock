@@ -12,6 +12,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 const (
@@ -480,6 +482,31 @@ func (s *Server) updateProjectTask(projectID, taskID string, u ProjectTaskUpdate
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// bulkUpdateProjectTaskStatus updates every task in the project
+// (optionally filtered by current status) to a single new
+// status. started_at / completed_at are stamped when transitioning
+// to in_progress / done so the per-task timestamps stay coherent
+// with the per-task updateProjectTask path. Returns the number
+// of rows affected so the FE can show "已取消 5 个任务" etc.
+func (s *Server) bulkUpdateProjectTaskStatus(projectID, target string, fromStatuses []string) (int64, error) {
+	args := []any{target, projectID}
+	q := `UPDATE project_tasks
+	         SET status = $1,
+	             updated_at = NOW(),
+	             started_at = CASE WHEN $1 = 'in_progress' THEN COALESCE(started_at, NOW()) ELSE started_at END,
+	             completed_at = CASE WHEN $1 = 'done' THEN NOW() ELSE completed_at END
+	       WHERE project_id = $2`
+	if len(fromStatuses) > 0 {
+		args = append(args, pq.Array(fromStatuses))
+		q += ` AND status = ANY($3)`
+	}
+	res, err := s.db.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // itoa lives in video_store.go — reusing it here.

@@ -69,6 +69,23 @@ export async function updateProjectTask(id: string, taskID: string, payload: Pro
   );
 }
 
+// bulkUpdateProjectTaskStatus updates many tasks in one request.
+// from_statuses (optional) filters which tasks to touch — leave
+// empty to apply to every task in the project.
+export async function bulkUpdateProjectTaskStatus(
+  id: string,
+  status: string,
+  fromStatuses?: string[],
+) {
+  return requestJson<{ ok: boolean; updated: number }>(
+    `/api/projects/${encodeURIComponent(id)}/tasks/bulk-status`,
+    {
+      method: "POST",
+      body: { status, from_statuses: fromStatuses ?? [] },
+    },
+  );
+}
+
 export type ProjectTaskPickupResponse = {
   task: ProjectTask;
   chat_thread_id: number;
