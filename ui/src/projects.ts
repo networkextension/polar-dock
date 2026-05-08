@@ -71,6 +71,9 @@ const planStatusEl = byId<HTMLElement>("projectsPlanStatus");
 const tasksSection = byId<HTMLElement>("projectsTasksSection");
 const tasksListEl = byId<HTMLElement>("projectsTasksList");
 const tasksCountEl = byId<HTMLElement>("projectsTasksCount");
+const featuresCollapseBtn = byId<HTMLButtonElement>("projectsFeaturesCollapseBtn");
+const featuresBodyEl = byId<HTMLElement>("projectsFeaturesBody");
+const tasksCollapseBtn = byId<HTMLButtonElement>("projectsTasksCollapseBtn");
 const dispatchAllBotSelect = byId<HTMLSelectElement>("projectsDispatchAllBot");
 const dispatchAllBtn = byId<HTMLButtonElement>("projectsDispatchAllBtn");
 const finishAllBtn = byId<HTMLButtonElement>("projectsFinishAllBtn");
@@ -986,6 +989,53 @@ createModal.addEventListener("click", (e) => {
 createForm.addEventListener("submit", (e) => void submitCreate(e));
 saveDescBtn.addEventListener("click", () => void saveDescription());
 decomposeBtn.addEventListener("click", () => void decompose());
+
+// ── Section collapse ────────────────────────────────────────────
+//
+// Each section's hidden state lives in localStorage so the user's
+// preference survives reloads. The chevron is a tiny stateless
+// "▼" / "▶" toggle: ▼ = expanded, ▶ = collapsed.
+
+const COLLAPSE_FEATURES_KEY = "polar_projects_features_collapsed";
+const COLLAPSE_TASKS_KEY = "polar_projects_tasks_collapsed";
+
+function applyCollapse(btn: HTMLButtonElement, body: HTMLElement, collapsed: boolean): void {
+  body.style.display = collapsed ? "none" : "";
+  btn.textContent = collapsed ? "▶" : "▼";
+}
+
+function readCollapse(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+function writeCollapse(key: string, collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(key, collapsed ? "1" : "0");
+  } catch {
+    // Storage might be unavailable in private mode; collapsing
+    // still works for the current session, just doesn't persist.
+  }
+}
+
+// Restore on page load.
+applyCollapse(featuresCollapseBtn, featuresBodyEl, readCollapse(COLLAPSE_FEATURES_KEY));
+// tasksListEl is the collapsable body of the tasks section
+// (the dispatch row above it is the header and stays visible).
+applyCollapse(tasksCollapseBtn, tasksListEl, readCollapse(COLLAPSE_TASKS_KEY));
+
+featuresCollapseBtn.addEventListener("click", () => {
+  const next = !readCollapse(COLLAPSE_FEATURES_KEY);
+  writeCollapse(COLLAPSE_FEATURES_KEY, next);
+  applyCollapse(featuresCollapseBtn, featuresBodyEl, next);
+});
+tasksCollapseBtn.addEventListener("click", () => {
+  const next = !readCollapse(COLLAPSE_TASKS_KEY);
+  writeCollapse(COLLAPSE_TASKS_KEY, next);
+  applyCollapse(tasksCollapseBtn, tasksListEl, next);
+});
 generatePlanBtn.addEventListener("click", () => void generatePlan());
 deleteBtn.addEventListener("click", () => void doDeleteProject());
 dispatchAllBtn.addEventListener("click", () => void dispatchAllTodos());
