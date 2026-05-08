@@ -1077,6 +1077,11 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS code_provider TEXT NOT NULL DEFAUL
 -- those features inherit the same sprint_number. Old sprints
 -- stay visible in the UI grouped by sprint.
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS current_sprint INT NOT NULL DEFAULT 0;
+-- git_remote_url: where polar-agent pushes coder-tool output after
+-- a task. Empty = no push (agent skips git work entirely). Phase 1
+-- relies on the host having git auth configured (SSH key or HTTPS
+-- credential helper); per-project deploy keys land in Phase 2.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS git_remote_url TEXT NOT NULL DEFAULT '';
 
 -- attachments: workspace-scoped file uploads with content-addressed
 -- storage. Backs posts + chat_messages today via junction tables;

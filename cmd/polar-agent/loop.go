@@ -177,6 +177,24 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 					}
 					effectiveWorkdir = sub
 				}
+
+				// Pre-task git plumbing — only when the platform
+				// asked for it via git_remote_url. Failure here is
+				// surfaced in the reply but doesn't abort the tool;
+				// running a coder task on a not-yet-pushable repo
+				// is still useful (output stays local).
+				var preHEAD string
+				var gitPrepErr error
+				if remote := strings.TrimSpace(m.GitRemoteURL); remote != "" {
+					log.Printf("[git] prepare workdir=%s remote=%s", effectiveWorkdir, remote)
+					preHEAD, gitPrepErr = gitPrepare(ctx, effectiveWorkdir, remote)
+					if gitPrepErr != nil {
+						log.Printf("[git] prepare failed (continuing): %v", gitPrepErr)
+					} else {
+						log.Printf("[git] prepare ok preHEAD=%s", shortSHA(preHEAD))
+					}
+				}
+
 				reply, err := invokeTool(ctx, spec, effectiveWorkdir, m, verbose)
 				if err != nil {
 					emitChatReply(send, &chatReply{
@@ -186,6 +204,20 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 						Error: err.Error(),
 					})
 					return
+				}
+
+				// Post-task git: stage tail, push. Only when the
+				// platform set git_remote_url AND the pre step
+				// succeeded enough to have a usable repo. Errors are
+				// appended to the reply text — we never downgrade
+				// reply.OK because git failed; the tool's output
+				// is the user's value.
+				if remote := strings.TrimSpace(m.GitRemoteURL); remote != "" && gitPrepErr == nil {
+					commits, pushed, finErr := gitFinalize(ctx, effectiveWorkdir, preHEAD, "")
+					log.Printf("[git] finalize commits=%d pushed=%v err=%v", len(commits), pushed, finErr)
+					reply.Content += renderGitSummary(commits, pushed, finErr, remote)
+				} else if gitPrepErr != nil {
+					reply.Content += "\n\n---\n⚠️ git 准备失败：" + gitPrepErr.Error()
 				}
 				emitChatReply(send, reply)
 			}(msg)

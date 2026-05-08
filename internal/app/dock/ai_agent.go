@@ -56,6 +56,13 @@ type aiAgentTask struct {
 	// the project id so e.g. tasks for project A and project B
 	// don't trample each other's files in $workdir/.
 	WorkdirSubpath string
+	// GitRemoteURL, if non-empty, asks the agent to (1) ensure the
+	// effective workdir is a git repo with this remote configured,
+	// (2) commit + push everything coder produced after the task,
+	// (3) report commit SHAs back in the chat reply. Empty disables
+	// the post-task git step entirely. Phase 1: relies on host's
+	// own git auth (SSH key / credential helper).
+	GitRemoteURL string
 }
 
 type aiRuntimeConfig struct {
