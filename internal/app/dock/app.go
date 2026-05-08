@@ -584,6 +584,8 @@ func (s *Server) registerRoutes() {
 		api.GET("/users/:id/following", s.AuthMiddleware(), s.handleUserFollowing)
 		api.GET("/site-settings", s.handleSiteSettingsGet)
 		api.PUT("/site-settings", s.AuthMiddleware(), s.AdminMiddleware(), s.handleSiteSettingsUpdate)
+		api.GET("/dashboard/layout", s.AuthMiddleware(), s.handleDashboardLayoutGet)
+		api.PUT("/dashboard/layout", s.AuthMiddleware(), s.handleDashboardLayoutUpdate)
 		api.GET("/prompts", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateList)
 		api.GET("/prompts/:slug", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateGet)
 		api.PUT("/prompts/:slug", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateUpdate)
