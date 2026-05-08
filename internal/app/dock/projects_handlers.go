@@ -490,20 +490,25 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 			Selected:    true, // default pre-checked; user un-checks unwanted ones
 		})
 	}
-	if err := s.replaceProjectFeatures(project.ID, features); err != nil {
+	// Sprint mode: append (don't replace) — old sprints stay
+	// visible. appendProjectFeatures atomically increments the
+	// project's current_sprint and tags the new features with it.
+	newSprint, err := s.appendProjectFeatures(project.ID, features)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	// Bump status to planning (unless we're already past it)
+	// Bump status to planning on the very first sprint.
 	if project.Status == ProjectStatusDraft {
 		st := ProjectStatusPlanning
 		_ = s.updateProjectMetadata(project.ID, workspaceID, ProjectMetaUpdate{Status: &st})
 	}
-	// Include the LLM that actually produced the result so the FE
-	// can display "拆解 by claude-3.5-sonnet · 12s" — handy when
-	// re-decomposing across providers for A/B comparison.
+	// Re-read the just-inserted features so SprintNumber is set
+	// on each (appendProjectFeatures mutates the slice but the
+	// initial loop only set Title/Description/Complexity/Selected).
 	resp := gin.H{
-		"features": features,
+		"features":   features,
+		"new_sprint": newSprint,
 		"llm_used": gin.H{
 			"id":    chosen.ID,
 			"name":  chosen.Name,

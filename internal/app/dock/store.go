@@ -1071,6 +1071,12 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS business_scenario TEXT NOT NULL DE
 -- ("kimi" / "claude" / "codex" / custom tool name; '' = no
 -- preference). Used at task pickup to highlight matching bots.
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS code_provider TEXT NOT NULL DEFAULT '';
+-- Sprint iteration support. Each AI 拆解 increments current_sprint
+-- and appends new features tagged with the new sprint_number,
+-- instead of replacing the existing list. tasks generated from
+-- those features inherit the same sprint_number. Old sprints
+-- stay visible in the UI grouped by sprint.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS current_sprint INT NOT NULL DEFAULT 0;
 
 -- attachments: workspace-scoped file uploads with content-addressed
 -- storage. Backs posts + chat_messages today via junction tables;
@@ -1811,9 +1817,12 @@ CREATE TABLE IF NOT EXISTS project_features (
 	description TEXT NOT NULL DEFAULT '',
 	complexity TEXT NOT NULL DEFAULT 'medium',
 	selected BOOLEAN NOT NULL DEFAULT TRUE,
+	sprint_number INT NOT NULL DEFAULT 1,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE project_features ADD COLUMN IF NOT EXISTS sprint_number INT NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS idx_project_features_project ON project_features(project_id, ord);
+CREATE INDEX IF NOT EXISTS idx_project_features_project_sprint ON project_features(project_id, sprint_number, ord);
 
 -- project_tasks: created from selected features when the user
 -- generates the plan. 1:1 to a chat_thread (chat_thread_id set
@@ -1831,6 +1840,7 @@ CREATE TABLE IF NOT EXISTS project_tasks (
 	bot_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
 	chat_thread_id BIGINT REFERENCES chat_threads(id) ON DELETE SET NULL,
 	llm_thread_id BIGINT REFERENCES llm_threads(id) ON DELETE SET NULL,
+	sprint_number INT NOT NULL DEFAULT 1,
 	ord INT NOT NULL DEFAULT 0,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 	updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1839,8 +1849,11 @@ CREATE TABLE IF NOT EXISTS project_tasks (
 );
 ALTER TABLE project_tasks
 	ADD COLUMN IF NOT EXISTS llm_thread_id BIGINT REFERENCES llm_threads(id) ON DELETE SET NULL;
+ALTER TABLE project_tasks
+	ADD COLUMN IF NOT EXISTS sprint_number INT NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS idx_project_tasks_project ON project_tasks(project_id, ord);
 CREATE INDEX IF NOT EXISTS idx_project_tasks_status ON project_tasks(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_project_tasks_project_sprint ON project_tasks(project_id, sprint_number, ord);
 
 -- logs_entries: append-only structured log table. Spans three
 -- scopes: site-wide (workspace_id NULL — admin-only readable),

@@ -21,6 +21,7 @@ export type Project = {
   runtime_env: string;
   business_scenario: string;
   code_provider: string;
+  current_sprint: number;
   created_at: string;
   updated_at: string;
 };
@@ -33,6 +34,7 @@ export type ProjectFeature = {
   description: string;
   complexity: FeatureComplexity;
   selected: boolean;
+  sprint_number: number;
   created_at: string;
 };
 
@@ -46,6 +48,7 @@ export type ProjectTask = {
   bot_user_id?: string;
   chat_thread_id?: number;
   llm_thread_id?: number;
+  sprint_number: number;
   ord: number;
   created_at: string;
   updated_at: string;
@@ -69,7 +72,9 @@ export type ProjectCreateResponse = {
 
 export type ProjectDecomposeResponse = {
   features: ProjectFeature[];
+  new_sprint?: number;
   llm_used?: { id: number; name: string; model: string };
+  bot_used?: { bot_user_id: string; persona_chars: number };
   error?: string;
   raw?: string;
   hint?: string;
