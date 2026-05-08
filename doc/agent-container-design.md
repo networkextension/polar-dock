@@ -162,9 +162,8 @@ different `POLAR_BOT_IDS`.
 1. **macOS / iOS native builds — not in Docker.** Xcode + the
    iOS Simulator only run on macOS hosts. For iOS coding tasks
    the container approach doesn't help; we still need polar-agent
-   running on a real Mac. A "macOS VM image" variant could exist
-   but Apple's licensing (only one VM per host, host must be a
-   Mac) makes this niche.
+   running on a real Mac. See "macOS runtime variants" below for
+   the Mac-specific story (VM and bare-metal options).
 2. **Browser OAuth flows in headless container.** First-time
    login for kimi / claude / codex needs a browser. In the
    container path, operator does login once on host, mounts auth
@@ -228,6 +227,118 @@ build runner:
 | Multi-bot entrypoint + auto-update + health check endpoint | **+1 wk** | extra polish for production-ish use |
 
 **Total realistic v1**: 1.5 - 2.5 weeks.
+
+## macOS runtime variants
+
+Linux containers cover ~90% of coding tasks (CLI, web, Python,
+Go, Rust, Node). For iOS / macOS native builds (SwiftUI / UIKit
+apps, Xcode projects), polar-agent has to run on a real macOS
+host. Apple Silicon (M-series) makes two paths workable:
+
+### Path 1: macOS VM on Apple Silicon host
+
+Apple's Virtualization.framework on M-series Macs natively runs
+macOS guests with near-bare-metal performance. Tools that wrap it:
+
+- **tart** ([cirruslabs/tart](https://github.com/cirruslabs/tart))
+  — single-binary CLI, designed for CI runners. Pull a pre-built
+  macOS image, run it, mount a host directory, ssh in.
+- **macOS Containers** (Tahoe and later) — Apple's own
+  container runtime for macOS guests. Newer; smaller ecosystem.
+- **VMware Fusion** / **Parallels** — heavier, GUI-oriented;
+  not the right fit for fleet operations.
+
+**Apple's licensing constraint**: macOS guests are allowed only
+on Apple hardware, and historically only **2 VMs per host**.
+Plenty for a 1-2 person team running their own farm; insufficient
+for a SaaS where 100 customers each want a Mac VM.
+
+**Image contents** (parallel to the Linux `standard` image):
+- macOS guest with Xcode + Command Line Tools + Homebrew
+- polar-agent (darwin/arm64 binary)
+- kimi-cli, claude, codex installed via brew + uv
+- git
+- A first-boot script that reads the same three env vars
+  (`POLAR_DOCK_URL`, `POLAR_AGENT_TOKEN`, `POLAR_BOT_IDS`)
+  injected via tart's metadata or a mounted plist
+
+```bash
+tart pull polar/agent-macos:standard
+tart set agent --memory 8192 --cpu 4 \
+  --metadata POLAR_DOCK_URL=wss://polar.example.com \
+  --metadata POLAR_AGENT_TOKEN=polar_agent_xxx \
+  --metadata POLAR_BOT_IDS=bot_swift,bot_macos_app
+tart run agent
+```
+
+Trade-offs:
+
+- ✅ Snapshots / rollback
+- ✅ Multiple concurrent VMs (up to Apple's per-host cap) for
+  parallel iOS builds
+- ✅ Same image can be cloned across host machines
+- ❌ ~30 GB per image (Xcode is huge)
+- ❌ Apple licensing puts a ceiling on fleet size
+- ❌ First-boot Xcode `xcrun --first-launch` provisioning takes
+  minutes; image must be pre-warmed
+
+### Path 2: Bare-metal Mac mini / Studio
+
+Single Mac runs polar-agent directly via `start_agents.sh`. No
+VM overhead. Best if you only have one workspace's worth of
+iOS work happening at a time and no isolation requirement.
+
+Use case: a Mac mini in a closet (or Mac Studio in a rack)
+dedicated to platform builds. Single user account, ssh-managed.
+Same install path as a developer laptop:
+
+```bash
+# on the Mac (one-time)
+brew install kimi-cli
+# claude / codex per their official install
+go build -o ~/.local/bin/polar-agent ./cmd/polar-agent
+~/.local/bin/polar-agent login --server=... --token=...
+launchctl load ~/Library/LaunchAgents/polar-agent.plist
+```
+
+A `LaunchAgents` plist makes polar-agent auto-start on login —
+the Mac becomes a passive worker. No Docker / no VM, just a Mac
+host. Cheap on resources but no isolation between bots; if one
+kimi run trashes the workdir it affects all bots on this host.
+
+Trade-offs:
+
+- ✅ Lowest-friction setup if you already own a Mac
+- ✅ Maximum performance — no virtualization overhead
+- ✅ Zero licensing concern (it IS the host)
+- ❌ Single failure domain — kimi crashes / fills disk → all
+  bots affected
+- ❌ Hard to script "fresh Mac" provisioning (App Store login,
+  Xcode install, etc.)
+- ❌ One workspace can read another's `/work` dir if they share
+  a Mac account
+
+### Recommendation
+
+For Polar's current scale (1-3 person team):
+
+| Stage | Recommended runtime |
+|---|---|
+| Now | bare-metal Mac (the developer's own machine), one polar-agent attach with `--workdir=$HOME/work_<tool>` |
+| Next | bare-metal Mac mini in a closet running launchd, dedicated to platform iOS builds |
+| Future scale | tart-based macOS VMs on a Mac Studio host, when parallel iOS builds become bottleneck |
+
+Linux Docker (`polar/agent:standard`) covers the Linux/web/CLI
+side at any stage.
+
+Sequence to ship:
+
+1. Linux container (already designed above) — 1.5-2.5 wk
+2. macOS bare-metal `LaunchAgents` plist + setup doc — 0.5 wk
+3. tart-based macOS VM image — 1.5-2 wk (only when needed)
+
+Mac VM is the most niche and most expensive (Xcode footprint,
+Apple licensing); ship last.
 
 ## Trigger condition
 
