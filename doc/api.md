@@ -3738,3 +3738,409 @@ Content-Disposition: attachment; filename="default-rules.conf"
   "bookmarked_by_me": false
 }
 ```
+
+---
+
+# 移动端集成新增接口
+
+> 以下章节是 v0.2.x 之后陆续新增的模块，iOS / Android 客户端集成时按需取用。
+>
+> **重要变化**：几乎所有业务接口（teams 例外）现在都是 **workspace-scoped**，请求时**必须**带 `X-Workspace-Id` 头，否则平台会落到调用者的「个人 workspace」（每个用户首次注册时自动创建一个）。多 workspace 用户切换时由客户端维护当前 workspace。
+
+## Workspace 上下文
+
+### 通用请求头：`X-Workspace-Id`
+
+所有 workspace-scoped 接口（posts / bots / llm-configs / chats / projects / iosdist / video-projects ...）从 v0.2.x 开始按 `X-Workspace-Id` 头解析当前工作区上下文。
+
+- 不传 → 后端用调用者 user_id 解析对应的「个人 workspace」（kind='personal' 的 team）
+- 传了一个不属于该用户的 workspace_id → 该接口返回 404 / 403
+- 传了 workspace_id 但调用者不是该 team 的成员 → 同上
+
+客户端建议：登录后 `GET /api/teams` 拉一次列表，本地缓存当前 workspace_id；用户切换时更新；所有后续业务请求都带这个头。
+
+## Teams（工作区） 与邀请
+
+team = workspace。每个用户至少有一个个人 team（owner_user_id = 自己，kind='personal'，不可删）。多人协作 team 通过邀请加入。
+
+### 列出我加入的工作区
+
+**GET** `/api/teams`
+
+成功响应：
+```json
+{
+  "teams": [
+    {
+      "id": "e557268ee85c5fdc75135728af60e4a6",
+      "owner_user_id": "vkMPd04LNmGful0D",
+      "name": "我的工作区",
+      "slug": "my-workspace",
+      "kind": "personal",
+      "role": "owner",
+      "member_count": 1,
+      "created_at": "2026-04-12T10:00:00Z"
+    }
+  ]
+}
+```
+
+### 创建团队
+
+**POST** `/api/teams`
+
+请求体：
+```json
+{
+  "name": "团队 A",
+  "slug": "team-a"
+}
+```
+
+`slug` 用于公开链接（邀请页面），需 workspace 内唯一。
+
+### 团队详情 / 成员
+
+**GET** `/api/teams/:id`
+
+成功响应包含 `members: []` 数组。
+
+### 我的待处理邀请
+
+**GET** `/api/users/me/invitations`
+
+成功响应：
+```json
+{
+  "invitations": [
+    {
+      "token": "inv_xxx",
+      "team_id": "...",
+      "team_name": "团队 A",
+      "inviter_username": "alice",
+      "expires_at": "2026-05-15T..."
+    }
+  ]
+}
+```
+
+`GET /api/users/me/invitations/count` 返回 `{count: int}`，移动端可周期 poll 显示徽章。
+
+### 接受 / 拒绝邀请
+
+**POST** `/api/invitations/:token/accept`
+**POST** `/api/invitations/:token/decline`
+
+接受成功后，调用者就是该团队的 member。
+
+## 邮箱验证
+
+平台支持基于 SMTP 的邮箱所有权验证。`PUBLIC_BASE_URL` + `SMTP_*` 环境变量在 server 端配置；客户端只调发送 + 验证两个端点。
+
+### 发送验证邮件
+
+**POST** `/api/email-verification/send`
+
+权限：已登录用户
+
+发送一封含验证链接的邮件到当前账号绑定的邮箱。链接形如：
+```
+{PUBLIC_BASE_URL}/api/email-verification/verify?token=xxx
+```
+
+成功响应：`{ "message": "验证邮件已发送" }`
+
+### 验证 Token
+
+**GET** `/api/email-verification/verify?token=xxx`
+
+通常由邮件链接直接打开。客户端如需自行处理细节请联系后端确认。
+
+## Attachments（工作区附件）
+
+v0.2.x 引入的统一附件表，支持 zip / pdf / doc / docx / ppt / pptx，**单文件 100 MiB 上限**。基于 sha256 内容寻址，同 workspace 同哈希自动复用。
+
+### 上传
+
+**POST** `/api/attachments`
+
+请求：multipart/form-data，字段 `file`。
+
+成功响应：
+```json
+{
+  "attachment": {
+    "id": "att_xxxxxxxxxxxxxxxx",
+    "workspace_id": "...",
+    "uploader_user_id": "...",
+    "filename": "spec.pdf",
+    "mime_type": "application/pdf",
+    "size_bytes": 524288,
+    "storage_kind": "local_fs",
+    "sha256": "a1b2c3...",
+    "download_url": "/api/attachments/att_xxx/download",
+    "created_at": "..."
+  },
+  "deduped": false
+}
+```
+
+`deduped: true` 表示同 workspace 同 sha256 已有同样的文件，复用既有 row。
+
+### 下载
+
+**GET** `/api/attachments/:id/download`
+
+权限：调用者必须在同一 workspace（跨 workspace 返回 404，不泄露存在性）。响应是二进制流 + `Content-Disposition: attachment; filename*=UTF-8''<orig>`。
+
+### 元数据查询
+
+**GET** `/api/attachments/:id` → 返回 `{attachment: {...}}`。
+
+### 软删除
+
+**DELETE** `/api/attachments/:id`
+
+权限：仅原上传者可删。设 deleted_at 时间戳，下载和列表都过滤掉，不真删文件。
+
+## Posts 附件支持
+
+v0.2.x 起 `POST /api/posts` 接受 `attachment_ids` 字段（multipart 表单中 repeat 或逗号分隔），关联已上传的 attachment 到这条 post。响应里 post 对象多 `attachments: [...]` 数组。
+
+### 创建 post（含附件）
+
+**POST** `/api/posts`
+
+multipart/form-data 字段：
+- `content`（必填）
+- `post_type`（standard / task）
+- `tag_id`（可选）
+- `images`（可重复，原有图片）
+- `videos`（可重复）
+- `attachment_ids`（可重复或逗号分隔字符串，新增的 zip/pdf/doc 附件 ID）
+
+### 读取 post
+
+`GET /api/posts/:id` 响应 post 对象多了 `attachments: [{id, filename, size_bytes, mime_type, download_url}]`。
+
+## Bots 模块更新
+
+`bot_users` 表新增两个字段：
+
+| 字段 | 含义 |
+|---|---|
+| `bot_kind` | `classic`（传统 LLM bot）/ `passthrough`（仅本地 polar-agent 接管时回复，`llm_config_id` 可空）|
+| `preferred_tool` | UI 标签字符串："kimi" / "claude" / "codex" / 空。实际工具仍由 polar-agent attach 时的 `--tool=` flag 决定 |
+
+### POST/PUT 请求体新字段
+
+```json
+{
+  "name": "AUTOCODE_KIMI",
+  "system_prompt": "...",
+  "llm_config_id": 0,
+  "bot_kind": "passthrough",
+  "preferred_tool": "kimi"
+}
+```
+
+`bot_kind` 默认 `classic`。`classic` 必须 `llm_config_id > 0`，`passthrough` 可以为 0 / null。
+
+### Bot agent 状态查询
+
+**GET** `/api/agent/bots/:bot_id/status`
+
+响应：
+```json
+{
+  "attached": true,
+  "workdir": "/Users/.../work_kimi",
+  "capabilities": ["tools", "passthrough", "kimi"],
+  "tool": "kimi"
+}
+```
+
+`attached: false` 时其余字段省略。客户端可据此显示「🤖 kimi 接管」徽章。
+
+## Chat 附件存储重构
+
+v0.2.x 之前 chat_messages 通过内联 JSON 列 `attachment` 存附件元数据。从 attachments-refactor 起迁移到 `attachments` + `chat_message_attachments` junction。
+
+**对客户端影响**：消息 JSON 的 `attachment` 字段（单对象，可空）形态保持不变 — 后端读时按需从 junction 拼装回这个老形态。**没有破坏性变更**。
+
+```json
+{
+  "id": 12345,
+  "thread_id": 1,
+  "sender_id": "...",
+  "message_type": "attachment",
+  "content": "📎 file.zip",
+  "attachment": {
+    "url": "/uploads/file.zip",
+    "file_name": "file.zip",
+    "size": 102400,
+    "mime_type": "application/zip"
+  }
+}
+```
+
+## Projects（AI 驱动的产品工作流）
+
+完整的 PRD → 功能拆解 → 任务计划 → bot 接管编码流水线。**核心给 PC 端用**，移动端可按需 read-only 展示项目状态 / 任务进度。
+
+### 列表
+
+**GET** `/api/projects` → `{ projects: [...] }`
+
+每条 project 包含：
+```json
+{
+  "id": "...",
+  "workspace_id": "...",
+  "creator_user_id": "...",
+  "name": "数胎记",
+  "description": "...",
+  "status": "draft|planning|building|beta|shipped|archived",
+  "template": "",
+  "runtime_env": "ios_swiftui|ios_uikit|web_static|cli_tool|...",
+  "business_scenario": "creative_game|content_app|...",
+  "code_provider": "kimi|claude|codex|",
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+
+### 详情
+
+**GET** `/api/projects/:id` → `{ project, features: [], tasks: [] }`
+
+### 创建
+
+**POST** `/api/projects`
+
+```json
+{
+  "name": "数胎记",
+  "description": "...",
+  "runtime_env": "ios_swiftui",
+  "business_scenario": "creative_game",
+  "code_provider": "kimi"
+}
+```
+
+### AI 拆解
+
+**POST** `/api/projects/:id/decompose`
+
+可选 body：
+```json
+{
+  "llm_config_id": 0,
+  "bot_user_id": ""
+}
+```
+
+- 都不传 → 自动选 workspace 内第一个有 API key 的 LLM
+- 给 `llm_config_id` → 用指定 LLM 拆
+- 给 `bot_user_id` → 用该 bot 的 `system_prompt` 作 persona 前缀 + 它绑定的 LLM
+
+成功响应：
+```json
+{
+  "features": [...],
+  "llm_used": { "id": 5, "name": "Kimi", "model": "kimi-k2-instruct" },
+  "bot_used": { "bot_user_id": "bot_xxx", "persona_chars": 256 }
+}
+```
+
+注意：当前拆解会**替换**项目已有 features（atomic delete-and-reinsert）。Sprint 迭代追加模式后续版本支持。
+
+### 切换 feature 选中
+
+**PUT** `/api/projects/:id/features/:feature_id`
+
+```json
+{
+  "title": "...",
+  "description": "...",
+  "complexity": "simple",
+  "selected": true
+}
+```
+
+### 生成开发计划（建任务）
+
+**POST** `/api/projects/:id/plan`
+
+把所有 selected=true 的 features 生成对应 tasks（status='todo'）。已有 task 的 feature 跳过。
+
+成功响应：
+```json
+{
+  "tasks": [...],
+  "created_count": 5
+}
+```
+
+### 派单 task → bot
+
+**POST** `/api/projects/:id/tasks/:task_id/pickup`
+
+```json
+{
+  "bot_user_id": "bot_xxxxxxxxxxxxxxxx"
+}
+```
+
+后端流程：建/复用 chat thread → 建新 llm_thread "[Task] <title>" → UPDATE task: bot_user_id, chat_thread_id, llm_thread_id, status='in_progress', started_at=now → 发送 task 描述作为用户消息 → 入队 ai_agent。
+
+如果 bot **没有 polar-agent attach**：返回 503 `{error, code: "agent_not_attached"}`。
+
+### Task 状态批量更新
+
+**POST** `/api/projects/:id/tasks/bulk-status`
+
+```json
+{
+  "status": "done",
+  "from_statuses": ["todo", "in_progress", "review", "blocked"]
+}
+```
+
+`from_statuses` 可选过滤；不传则全部更新。响应 `{ok: true, updated: int}`。
+
+### 单条 task 状态
+
+**PUT** `/api/projects/:id/tasks/:task_id`
+
+```json
+{
+  "title": "...",
+  "description": "...",
+  "status": "done"
+}
+```
+
+## Agent Tokens（CLI 凭证）
+
+仅 PC 端 polar-agent 用，移动端无需关心。简介列出供完整性参考：
+
+- `POST /api/agent/tokens` — 创建（raw 一次性返回）
+- `GET /api/agent/tokens` — 列出（不含 raw）
+- `DELETE /api/agent/tokens/:id` — 撤销
+- `GET /api/agent/whoami` — agent token bearer 验证（公开端点）
+
+---
+
+# 客户端集成 checklist
+
+iOS/Android 移动端建议按以下顺序集成：
+
+1. **登录 + token 刷新**（已有）。注册/登录请求带 `X-Device-Type: ios` 或 `android`。
+2. **`X-Workspace-Id` 头**：登录后调 `GET /api/teams` 取列表，缓存当前 workspace_id，所有业务请求都带。
+3. **Profile**（已有）。
+4. **私聊**（已有）。
+5. **Posts**（已有 + 新附件支持）。如需上传 zip/pdf 类附件，先 `POST /api/attachments` 拿 ID，再带到 `POST /api/posts` 的 `attachment_ids`。
+6. **邮箱验证**：账号设置页提供「发送验证邮件」按钮，对应 `POST /api/email-verification/send`。
+7. **Teams / 邀请**：工作区切换 + 接受邀请红点。
+8. **Projects（可选）**：read-only 展示项目状态 / 任务进度即可，写操作（拆解 / 派单）建议留给 PC。
