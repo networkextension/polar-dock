@@ -38,6 +38,12 @@ import { renderMarkdown } from "./lib/marked.js";
 import { base64URLToBuffer, credentialToJSON } from "./lib/passkey.js";
 import { LLM_PROVIDER_PRESETS, getPresetByID, matchPresetByBaseURL, matchPresetForConfig, resolvePresetEndpoint, resolvePresetExtras, resolvePresetProviderKind } from "./lib/llm_presets.js";
 import { hydrateSiteBrand, renderSiteBrand, renderSidebarFoot } from "./lib/site.js";
+import {
+  fetchDashboardLayout,
+  renderDashboardWidgets,
+  saveDashboardLayout,
+  type WidgetMeta,
+} from "./lib/dashboard-widgets.js";
 import { bindThemeSync, initStoredTheme, applyTheme, ThemeName } from "./lib/theme.js";
 import { t, getLang, setLang, applyI18n } from "./lib/i18n.js";
 import type {
@@ -1653,10 +1659,111 @@ switchSettingsSection(activeSettingsSection);
 populateLLMProviderPresets();
 applyLLMProviderPreset(LLM_PROVIDER_PRESETS[0].id, false);
 
+// Dashboard widgets — load layout + render in parallel with the
+// rest of the page bootstrap. Widget data fetches happen inside
+// renderDashboardWidgets so they don't block the markdown sidebar.
+const widgetsContainer = byId<HTMLElement>("dashboardWidgets");
+const customizeModal = byId<HTMLElement>("dashboardCustomizeModal");
+const customizeBtn = byId<HTMLButtonElement>("customizeDashboardBtn");
+const customizeCloseBtn = byId<HTMLButtonElement>("dashboardCustomizeCloseBtn");
+const customizeList = byId<HTMLElement>("dashboardCustomizeList");
+let widgetCatalog: WidgetMeta[] = [];
+let widgetLayout: string[] = [];
+
+async function loadAndRenderWidgets(): Promise<void> {
+  const { response, data } = await fetchDashboardLayout();
+  if (!response.ok) {
+    widgetsContainer.innerHTML = `<div style="color:var(--text-muted,#888); font-size:12px; padding:8px;">Dashboard widget 加载失败</div>`;
+    return;
+  }
+  widgetLayout = data.layout ?? [];
+  widgetCatalog = data.catalog ?? [];
+  await renderDashboardWidgets(widgetLayout, widgetsContainer);
+}
+
+function renderCustomizeList(): void {
+  // Show every catalog widget with a checkbox; ordering follows
+  // the user's layout (enabled first), then the rest disabled.
+  const enabled = widgetLayout.slice();
+  const disabledSet = new Set(widgetCatalog.map((w) => w.slug).filter((s) => !enabled.includes(s)));
+  const ordered = [...enabled, ...Array.from(disabledSet)];
+  customizeList.innerHTML = ordered
+    .map((slug, idx) => {
+      const meta = widgetCatalog.find((w) => w.slug === slug);
+      if (!meta) return "";
+      const isEnabled = enabled.includes(slug);
+      return `
+        <li style="display:flex; gap:8px; align-items:center; padding:8px; border:1px solid var(--border,#ececf0); border-radius:6px;">
+          <input type="checkbox" ${isEnabled ? "checked" : ""} data-toggle="${slug}" style="margin:0; padding:0; width:auto; flex-shrink:0;" />
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:600;">${meta.name}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888);">${meta.description}</div>
+          </div>
+          <div style="display:flex; gap:4px;">
+            <button class="btn-inline" type="button" data-up="${slug}" ${idx === 0 || !isEnabled ? "disabled" : ""} title="上移">↑</button>
+            <button class="btn-inline" type="button" data-down="${slug}" ${!isEnabled ? "disabled" : ""} title="下移">↓</button>
+          </div>
+        </li>
+      `;
+    })
+    .join("");
+}
+
+async function commitLayout(next: string[]): Promise<void> {
+  widgetLayout = next;
+  const { response, data } = await saveDashboardLayout(next);
+  if (response.ok && data.layout) {
+    widgetLayout = data.layout;
+  }
+  renderCustomizeList();
+  await renderDashboardWidgets(widgetLayout, widgetsContainer);
+}
+
+customizeList.addEventListener("click", (ev) => {
+  const t = ev.target as HTMLElement;
+  if (t.dataset.toggle) {
+    const slug = t.dataset.toggle;
+    const isChecked = (t as HTMLInputElement).checked;
+    const next = isChecked
+      ? [...widgetLayout, slug].filter((s, i, a) => a.indexOf(s) === i)
+      : widgetLayout.filter((s) => s !== slug);
+    void commitLayout(next);
+    return;
+  }
+  if (t.dataset.up) {
+    const slug = t.dataset.up;
+    const idx = widgetLayout.indexOf(slug);
+    if (idx <= 0) return;
+    const next = widgetLayout.slice();
+    [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+    void commitLayout(next);
+    return;
+  }
+  if (t.dataset.down) {
+    const slug = t.dataset.down;
+    const idx = widgetLayout.indexOf(slug);
+    if (idx < 0 || idx >= widgetLayout.length - 1) return;
+    const next = widgetLayout.slice();
+    [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+    void commitLayout(next);
+    return;
+  }
+});
+
+customizeBtn.addEventListener("click", () => {
+  renderCustomizeList();
+  customizeModal.classList.add("open");
+  customizeModal.setAttribute("aria-hidden", "false");
+});
+customizeCloseBtn.addEventListener("click", () => {
+  customizeModal.classList.remove("open");
+  customizeModal.setAttribute("aria-hidden", "true");
+});
+
 void (async () => {
   await hydrateSiteBrand();
   await loadProfile();
-  await Promise.all([loadEntries(true), loadLoginHistory(), loadPasskeys(), loadSiteAdminData()]);
+  await Promise.all([loadEntries(true), loadLoginHistory(), loadPasskeys(), loadSiteAdminData(), loadAndRenderWidgets()]);
 
   // Open settings modal if redirected from another page with ?settings=
   const settingsParam = new URLSearchParams(window.location.search).get("settings");

@@ -699,6 +699,12 @@ ALTER TABLE users
 	ADD COLUMN IF NOT EXISTS last_active_device_type TEXT NOT NULL DEFAULT 'browser';
 ALTER TABLE users
 	ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+-- dashboard_widgets: comma-separated slug list controlling which
+-- widgets render on the user's Dashboard, in order. Empty / NULL
+-- falls back to the platform default (set in dashboardDefaultLayout
+-- so we can change the default without a migration).
+ALTER TABLE users
+	ADD COLUMN IF NOT EXISTS dashboard_widgets TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS profile_recommendations (
 	id BIGSERIAL PRIMARY KEY,
