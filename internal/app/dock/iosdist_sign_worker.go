@@ -108,6 +108,8 @@ func (s *Server) processIOSSignTask(ctx context.Context, taskID int64) {
 	// success/failed depending on what the worker landed on. This
 	// wraps every early failure path (and the panic recovery) in
 	// a single audit entry without touching each markFailed site.
+	// Phase 3: also record the terminal outcome on the build counter
+	// so the operator dashboard can track success rate / failure mode.
 	defer func() {
 		final, ferr := s.getIOSSignTask(taskID)
 		if ferr != nil || final == nil {
@@ -118,6 +120,7 @@ func (s *Server) processIOSSignTask(ctx context.Context, taskID int64) {
 			s.logSignEvent(app.WorkspaceID, taskID, "completed", "签名成功", LogLevelInfo, map[string]any{
 				"output_version_id": final.OutputVersionID,
 			})
+			s.metricsRegistry.recordIOSDistBuild("zsign", "success")
 		case "failed":
 			msg := final.ErrorMessage
 			if msg == "" {
@@ -126,6 +129,7 @@ func (s *Server) processIOSSignTask(ctx context.Context, taskID int64) {
 			s.logSignEvent(app.WorkspaceID, taskID, "failed", msg, LogLevelError, map[string]any{
 				"log_text_preview": truncateForLog(final.LogText, 400),
 			})
+			s.metricsRegistry.recordIOSDistBuild("zsign", "failed")
 		}
 	}()
 

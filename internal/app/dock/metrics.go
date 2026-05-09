@@ -38,6 +38,15 @@ type metrics struct {
 	llmRequests *prometheus.CounterVec
 	llmLatency  *prometheus.HistogramVec
 	llmTokens   *prometheus.CounterVec
+
+	// Phase 3: agent fleet + business event counters.
+	// agentAttached is sampled (alongside the goroutine / DB pool gauges)
+	// from agentHub.snapshotByTool. Tool is the passthrough tool name
+	// declared by each polar-agent in its hello frame; empty becomes
+	// "tool_loop" so the operator can distinguish protocol modes.
+	agentAttached      *prometheus.GaugeVec
+	researchDispatches *prometheus.CounterVec
+	iosdistBuilds      *prometheus.CounterVec
 }
 
 // llmLatencyBuckets are tuned for chat-completion calls, which run from
@@ -103,11 +112,33 @@ func newMetrics() *metrics {
 			},
 			[]string{"provider", "model", "endpoint", "kind"},
 		),
+		agentAttached: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "polar_agent_attached",
+				Help: "Currently-attached polar-agent connections, labelled by tool flavor (kimi/claude/codex/custom or 'tool_loop' for tool-loop mode).",
+			},
+			[]string{"tool"},
+		),
+		researchDispatches: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_research_dispatch_total",
+				Help: "Research-run state transitions. status one of queued / running / succeeded / failed.",
+			},
+			[]string{"status"},
+		),
+		iosdistBuilds: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_iosdist_build_total",
+				Help: "iOS distribution sign-task terminal outcomes. sign_method=zsign for the in-process worker; status=success or failed.",
+			},
+			[]string{"sign_method", "status"},
+		),
 	}
 	reg.MustRegister(
 		m.httpRequests, m.httpLatency,
 		m.goroutines, m.dbPoolOpen, m.dbPoolUse, m.dbPoolIdle,
 		m.llmRequests, m.llmLatency, m.llmTokens,
+		m.agentAttached, m.researchDispatches, m.iosdistBuilds,
 	)
 	return m
 }
@@ -196,6 +227,35 @@ func (s *Server) sampleMetrics() {
 		s.metricsRegistry.dbPoolUse.Set(float64(st.InUse))
 		s.metricsRegistry.dbPoolIdle.Set(float64(st.Idle))
 	}
+	if s.agentHub != nil {
+		// Reset before re-populating so a tool flavor that has gone to
+		// zero connections doesn't keep a stale non-zero sample.
+		s.metricsRegistry.agentAttached.Reset()
+		for tool, count := range s.agentHub.snapshotByTool() {
+			s.metricsRegistry.agentAttached.WithLabelValues(tool).Set(float64(count))
+		}
+	}
+}
+
+// recordResearchDispatch bumps the research-dispatch state counter.
+// status: queued / running / succeeded / failed. Other strings are
+// passed through verbatim so a future state ("cancelled") can be
+// added without a registry change.
+func (m *metrics) recordResearchDispatch(status string) {
+	if m == nil {
+		return
+	}
+	m.researchDispatches.WithLabelValues(labelOr(status, "unknown")).Inc()
+}
+
+// recordIOSDistBuild bumps the iosdist sign-task terminal outcome.
+// signMethod: "zsign" today; reserve "codesign"/"asc" for the agent
+// build path that lands in a later cut. status: success or failed.
+func (m *metrics) recordIOSDistBuild(signMethod, status string) {
+	if m == nil {
+		return
+	}
+	m.iosdistBuilds.WithLabelValues(labelOr(signMethod, "unknown"), labelOr(status, "unknown")).Inc()
 }
 
 // handleMetrics serves the Prometheus exposition. Token gate is fail-closed:
