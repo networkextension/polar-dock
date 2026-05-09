@@ -1,27 +1,13 @@
-/* ── Prometheus dark (default) ─────────────────────────────────────── */
-:root {
-  --bg:             #191d21;
-  --card:           #212529;
-  --muted:          #a0a0a0;
-  --text:           #e6e6e6;
-  --text-muted:     #a0a0a0;
-  --accent:         #e6522c;
-  --accent-2:       #28a745;
-  --danger:         #dc3545;
-  --page-bg:        #191d21;
-  --surface:        #1e2227;
-  --surface-strong: #282d32;
-  --border:         #343a40;
-  --badge-bg:       rgba(230, 82, 44, 0.14);
-  --active-bg:      rgba(230, 82, 44, 0.18);
-  --active-border:  rgba(230, 82, 44, 0.45);
-  --active-shadow:  rgba(230, 82, 44, 0.14);
-  --secondary-bg:   rgba(108, 117, 125, 0.18);
-  --secondary-shadow: rgba(0, 0, 0, 0.25);
-  --overlay:        rgba(0, 0, 0, 0.65);
-}
-
-/* ── Mono / light ───────────────────────────────────────────────────── */
+/* Theme tokens.
+   :root carries the LIGHT (mono) palette so a fresh page paints
+   light immediately — no flash-of-wrong-theme before JS sets the
+   data-theme attribute. The dark palette overrides under
+   :root[data-theme="default"] (kept as the legacy name for stored
+   user preferences from before the flip).
+   :root[data-theme="mono"] is also defined explicitly as a no-op
+   override so re-applying it doesn't fall through to dark via some
+   weird specificity edge case. */
+:root,
 :root[data-theme="mono"] {
   --bg:             #f4f4f4;
   --card:           #ffffff;
@@ -42,6 +28,29 @@
   --secondary-bg:   rgba(17, 17, 17, 0.08);
   --secondary-shadow: rgba(17, 17, 17, 0.12);
   --overlay:        rgba(17, 17, 17, 0.18);
+}
+
+/* ── Prometheus dark (legacy "default" key) ──────────────────────── */
+:root[data-theme="default"] {
+  --bg:             #191d21;
+  --card:           #212529;
+  --muted:          #a0a0a0;
+  --text:           #e6e6e6;
+  --text-muted:     #a0a0a0;
+  --accent:         #e6522c;
+  --accent-2:       #28a745;
+  --danger:         #dc3545;
+  --page-bg:        #191d21;
+  --surface:        #1e2227;
+  --surface-strong: #282d32;
+  --border:         #343a40;
+  --badge-bg:       rgba(230, 82, 44, 0.14);
+  --active-bg:      rgba(230, 82, 44, 0.18);
+  --active-border:  rgba(230, 82, 44, 0.45);
+  --active-shadow:  rgba(230, 82, 44, 0.14);
+  --secondary-bg:   rgba(108, 117, 125, 0.18);
+  --secondary-shadow: rgba(0, 0, 0, 0.25);
+  --overlay:        rgba(0, 0, 0, 0.65);
 }
 
 * {

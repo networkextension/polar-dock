@@ -378,7 +378,7 @@ function renderLogs(entries: LogEntry[]): void {
       const categoryLabel = LOG_CATEGORY_LABEL[e.category] ?? e.category;
       const detailsBlob =
         e.details && Object.keys(e.details).length > 0
-          ? `<details style="margin-top:4px;"><summary style="font-size:11px; color:var(--text-muted,#888); cursor:pointer;">详情</summary><pre style="font-size:11px; background:#f7f7f9; padding:6px; margin:4px 0 0 0; border-radius:4px; overflow:auto; white-space:pre-wrap; word-break:break-all;">${escapeHTML(JSON.stringify(e.details, null, 2))}</pre></details>`
+          ? `<details style="margin-top:4px;"><summary style="font-size:11px; color:var(--text-muted,#888); cursor:pointer;">详情</summary><pre style="font-size:11px; background:var(--surface,#f7f7f9); padding:6px; margin:4px 0 0 0; border-radius:4px; overflow:auto; white-space:pre-wrap; word-break:break-all;">${escapeHTML(JSON.stringify(e.details, null, 2))}</pre></details>`
           : "";
       const subject = e.subject_kind
         ? ` <span style="font-family:monospace; font-size:11px; color:var(--text-muted,#888);">${escapeHTML(e.subject_kind)}/${escapeHTML(e.subject_id || "")}</span>`
@@ -388,7 +388,7 @@ function renderLogs(entries: LogEntry[]): void {
         ? `<span style="font-size:11px; color:var(--text-muted,#888);">actor: ${escapeHTML(e.actor_user_id)}</span>`
         : `<span style="font-size:11px; color:var(--text-muted,#888);">${escapeHTML(e.actor_kind)}</span>`;
       return `
-        <div style="padding:8px 10px; background:#fff; border:1px solid var(--border,#ececf0); border-radius:6px;">
+        <div style="padding:8px 10px; background:var(--card,#fff); border:1px solid var(--border,#ececf0); border-radius:6px;">
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px;">
             <span style="font-family:monospace; color:var(--text-muted,#888);">${escapeHTML(ts)}</span>
             <span style="padding:1px 6px; border-radius:3px; background:${levelColor}; color:#fff; font-size:10px; text-transform:uppercase;">${escapeHTML(e.level)}</span>
@@ -565,7 +565,7 @@ function renderInbox(invs: InboxInvitation[]): void {
     .map((inv) => {
       const expires = new Date(inv.expires_at).toLocaleString();
       return `
-        <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:#fff; border:1px solid #f0d597; border-radius:6px;">
+        <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--card,#fff); border:1px solid #f0d597; border-radius:6px;">
           <div style="flex:1; min-width:0;">
             <div style="font-weight:500; font-size:13px;">${escapeHTML(inv.team_name)} <span style="font-size:11px; color:var(--text-muted,#888);">· ${ROLE_LABEL[inv.role] ?? inv.role}</span></div>
             <div style="font-size:11px; color:var(--text-muted,#888);">${escapeHTML(inv.inviter_name)} 邀请你 · 到期 ${escapeHTML(expires)}</div>
