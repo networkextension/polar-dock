@@ -83,6 +83,13 @@ type aiRuntimeConfig struct {
 	// connectivity probes, passthrough bots).
 	LLMConfigID   int64
 	LLMConfigName string
+	// Endpoint is a caller-supplied tag describing the *feature* that
+	// initiated this LLM call — e.g. "thread_summary",
+	// "task_retrospect", "chat", "post_assist". It surfaces as a label
+	// on the polar_llm_* metrics so the operator can slice usage by
+	// feature. Empty = "unknown" in metrics. Free-form but should be a
+	// short, stable identifier; see metrics.go for cardinality notes.
+	Endpoint string
 }
 
 type aiChatCompletionRequest struct {
@@ -144,6 +151,18 @@ type aiChatCompletionChoice struct {
 type aiChatCompletionResponse struct {
 	Choices []aiChatCompletionChoice `json:"choices"`
 	Error   json.RawMessage          `json:"error,omitempty"`
+	Usage   *aiUsage                 `json:"usage,omitempty"`
+}
+
+// aiUsage mirrors the OpenAI-compatible `usage` block. Most upstream
+// providers (Kimi/Moonshot, Volces/ARK, DeepSeek, OpenAI itself) emit
+// it; non-OpenAI shapes (Anthropic Messages, Gemini, XAI Responses)
+// don't, so for those paths Usage stays nil — token counters skip the
+// sample rather than guessing.
+type aiUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 type aiProvider string
@@ -714,6 +733,7 @@ func (a *aiAgent) generateReply(task aiAgentTask, runtimeConfig aiRuntimeConfig)
 		log.Printf("build ai context failed: %v", err)
 	}
 
+	runtimeConfig.Endpoint = "chat"
 	payload := aiChatCompletionRequest{
 		Model: runtimeConfig.Model,
 		Messages: []aiChatCompletionMessage{
@@ -751,6 +771,7 @@ func (a *aiAgent) testRuntimeConfig(runtimeConfig aiRuntimeConfig) error {
 	if strings.TrimSpace(runtimeConfig.SystemPrompt) == "" {
 		runtimeConfig.SystemPrompt = a.server.renderPrompt(promptSlugAITestSystem, nil, "你是一个用于连通性验证的 AI 助手，请简短回复 ok。")
 	}
+	runtimeConfig.Endpoint = "test_connectivity"
 
 	payload := aiChatCompletionRequest{
 		Model: runtimeConfig.Model,
@@ -769,7 +790,26 @@ func (a *aiAgent) testRuntimeConfig(runtimeConfig aiRuntimeConfig) error {
 	return nil
 }
 
+// requestChatCompletion is the funnel for all non-streaming LLM calls.
+// Wraps requestChatCompletionInner with Phase 2 metrics: every dispatch
+// records timing + status + (when the upstream response carried a usage
+// block) prompt/completion token counts.
 func (a *aiAgent) requestChatCompletion(runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest) (*aiChatCompletionResponse, error) {
+	provider := detectAIProvider(runtimeConfig.BaseURL)
+	start := time.Now()
+	resp, err := a.requestChatCompletionInner(runtimeConfig, payload)
+	prompt, completion := 0, 0
+	if resp != nil && resp.Usage != nil {
+		prompt = resp.Usage.PromptTokens
+		completion = resp.Usage.CompletionTokens
+	}
+	if a.server != nil {
+		a.server.metricsRegistry.recordLLMCall(string(provider), runtimeConfig.Model, runtimeConfig.Endpoint, time.Since(start), err, prompt, completion)
+	}
+	return resp, err
+}
+
+func (a *aiAgent) requestChatCompletionInner(runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest) (*aiChatCompletionResponse, error) {
 	switch detectAIProvider(runtimeConfig.BaseURL) {
 	case aiProviderAnthropic:
 		return a.requestAnthropicMessages(runtimeConfig, payload)

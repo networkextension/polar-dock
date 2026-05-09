@@ -201,15 +201,23 @@ doc/grafana-integration.md     ← 本文件（Phase 1 落地时一起合）
 3. **Dashboard scope** — 按面分 4 个 dashboard：health / LLM / agents
    / business。每个能独立链接，操作员一次只盯一面。
 
+## Phase 2 已落地（2026-05-09）
+
+- **Histogram bucket** — 用 `[0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120]`
+  秒级 bucket，覆盖快回复到长生成。
+- **Token usage 解析** — OpenAI 兼容响应解 `usage.prompt_tokens` /
+  `completion_tokens`。Anthropic Messages / Gemini / XAI Responses / 流式
+  SSE 暂不计 token（panel 上为 0 是预期）。
+- **Endpoint 标签** — `aiRuntimeConfig.Endpoint` caller-supplied 字符串。
+  已覆盖：`thread_summary` / `bio_refine` / `task_sharpen` /
+  `task_retrospect` / `chat` / `chat_tool_loop` / `project_decompose` /
+  `markdown_assist` / `post_assist` / `reply_assist` / `test_connectivity`。
+  未设 = 落入 `endpoint="unknown"`。
+
 ## 仍开放（后续 phase 决）
 
-- **Histogram bucket 边界（LLM）** — 默认 Prometheus bucket 是毫秒级，
-  对 LLM 调用（200ms-30s）会大量落溢出桶。Phase 2 落地 LLM metric 时
-  定制 `[0.1, 0.5, 1, 2, 5, 10, 20, 30, 60]` 秒级 bucket。
-- **Token usage 来源** — OpenAI / Volces / Moonshot 在 chat-completion
-  响应里都有 `usage.prompt_tokens / completion_tokens` 字段，但
-  passthrough（kimi-cli / claude-cli）走本地 CLI 拿不到 —— 那条路不计
-  token，文档里说明。Phase 2 处理。
+- **流式 SSE token 计数** — OpenAI SSE 协议尾部有 `usage` frame，目前
+  没解。等真有人盯流式 token 用量再补，否则 panel 显示 0 也行。
 
 ## 验证（Phase 1 ship 时）
 
