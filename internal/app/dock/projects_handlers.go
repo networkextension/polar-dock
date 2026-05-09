@@ -307,8 +307,21 @@ func runtimeEnvLabel(code string) string {
 		return "命令行工具 (Python / Go / Bash 脚本) — 单文件可执行优先"
 	case "chrome_ext":
 		return "Chrome 扩展 (manifest v3) — 内容脚本 + 弹窗"
+	case "research":
+		return "研究 / 技术预研 — 不写代码，agent 用本地工具 (read_file / write_file / list_dir / run_cmd) + 平台 LLM 做调研、阅读、汇总，产出 markdown 报告"
 	}
 	return ""
+}
+
+// IsResearchProject returns true when the project's runtime_env
+// signals a research / non-code workflow. Pickup uses this to
+// pick the auto-registered research bot (classic + workspace LLM
+// + agent tools) over the coder bots.
+func IsResearchProject(p *Project) bool {
+	if p == nil {
+		return false
+	}
+	return strings.TrimSpace(p.RuntimeEnv) == "research"
 }
 
 // businessScenarioLabel maps the curated dropdown code to a
