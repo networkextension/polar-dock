@@ -159,9 +159,9 @@
                   <div style="display:flex; flex-direction:column; gap:8px; padding:12px; background:var(--surface-muted,#f7f7f9); border-radius:8px;">
                     <div style="font-weight:600; font-size:13px;">邀请新成员</div>
                     <form id="teamsInviteForm" style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
-                      <div style="flex:1; min-width:200px;">
-                        <label class="form-label">邮箱</label>
-                        <input id="teamsInviteEmail" class="input" type="email" required placeholder="someone@example.com" />
+                      <div style="flex:1; min-width:240px;">
+                        <label class="form-label">邮箱（支持多个：换行 / 逗号 / 分号 分隔）</label>
+                        <textarea id="teamsInviteEmail" class="input" rows="3" required placeholder="alice@example.com&#10;bob@example.com, carol@example.com"></textarea>
                       </div>
                       <div style="min-width:120px;">
                         <label class="form-label">角色</label>
@@ -173,6 +173,7 @@
                       </div>
                       <button id="teamsInviteSubmit" class="btn-inline btn-secondary" type="submit">发邀请</button>
                     </form>
+                    <div style="font-size:11px; color:var(--text-muted,#888);">单个 email 直接创建；≥2 个 email 会自动批量创建并下载 CSV（含每条 URL + 状态）</div>
                     <div id="teamsInviteStatus" class="status-text"></div>
                   </div>
 

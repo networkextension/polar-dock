@@ -65,7 +65,7 @@ const membersListEl = byId<HTMLElement>("teamsMembersList");
 
 const invitationsTabBtn = document.querySelector<HTMLButtonElement>('[data-teams-tab="invitations"]');
 const inviteForm = byId<HTMLFormElement>("teamsInviteForm");
-const inviteEmailEl = byId<HTMLInputElement>("teamsInviteEmail");
+const inviteEmailEl = byId<HTMLTextAreaElement>("teamsInviteEmail");
 const inviteRoleEl = byId<HTMLSelectElement>("teamsInviteRole");
 const inviteSubmitBtn = byId<HTMLButtonElement>("teamsInviteSubmit");
 const inviteStatusEl = byId<HTMLElement>("teamsInviteStatus");
@@ -474,6 +474,7 @@ function renderInvitations(invs: AdminInvitation[]): void {
               </div>
             </div>
             <button type="button" class="btn-inline btn-secondary" data-invite-copy="${escapeHTML(inv.invite_url)}">复制链接</button>
+            <button type="button" class="btn-inline btn-secondary" data-invite-download="${escapeHTML(inv.id)}">下载</button>
             <button type="button" class="btn-inline" data-invite-revoke="${escapeHTML(inv.id)}" style="color:#c33;">撤销</button>
           </div>
         </div>`;
@@ -494,12 +495,51 @@ function renderInvitations(invs: AdminInvitation[]): void {
       }
     });
   });
+  invitationsListEl.querySelectorAll<HTMLButtonElement>("[data-invite-download]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-invite-download");
+      const inv = invs.find((row) => row.id === id);
+      if (inv) downloadInvitation(inv);
+    });
+  });
   invitationsListEl.querySelectorAll<HTMLButtonElement>("[data-invite-revoke]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-invite-revoke");
       if (id) void doRevoke(id);
     });
   });
+}
+
+// downloadInvitation drops a small UTF-8 .txt with the invite URL +
+// metadata so the operator can hand the file off through any channel
+// (Slack/Lark/USB) without relying on email or clipboard. Filename
+// embeds email + first 6 of invite id for disambiguation.
+function downloadInvitation(inv: AdminInvitation): void {
+  const lines = [
+    `Polar 工作区邀请`,
+    ``,
+    `工作区: ${activeTeam?.name ?? inv.team_id}`,
+    `邀请邮箱: ${inv.email}`,
+    `角色: ${ROLE_LABEL[inv.role] ?? inv.role}`,
+    `邀请人: ${inv.inviter_name}`,
+    `到期时间: ${new Date(inv.expires_at).toLocaleString()}`,
+    ``,
+    `点击下面链接接受邀请（需先用 ${inv.email} 登录或注册）：`,
+    inv.invite_url,
+    ``,
+    `邀请 ID: ${inv.id}`,
+  ];
+  const blob = new Blob([lines.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
+  const safeEmail = inv.email.replace(/[^a-z0-9_.\-@]/gi, "_");
+  const fname = `polar-invite-${safeEmail}-${inv.id.slice(0, 6)}.txt`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function loadInvitations(teamID: string): Promise<void> {
@@ -512,31 +552,144 @@ async function loadInvitations(teamID: string): Promise<void> {
   renderInvitations(data.invitations);
 }
 
+// Email parser: split on newlines / commas / semicolons, trim, lowercase
+// for dedup, drop empty / clearly-invalid. Preserve original casing in the
+// kept entries (some mail systems are case-sensitive on local-part).
+function parseInviteEmails(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const piece of raw.split(/[\n,;]+/)) {
+    const t = piece.trim();
+    if (!t) continue;
+    if (!/^\S+@\S+\.\S+$/.test(t)) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
+// Single-shape result (rather than a discriminated union) — keeps TS
+// narrowing simple in the CSV builder where TS occasionally fails to
+// propagate `if (r.ok)` through arrow callbacks.
+type InviteResult = {
+  email: string;
+  ok: boolean;
+  invitation?: AdminInvitation;
+  email_sent?: boolean;
+  email_send_disabled?: boolean;
+  error?: string;
+};
+
+// Build a CSV the operator can hand to a script / spreadsheet. Rows include
+// failure reasons too so a partial batch is still actionable. Excel-friendly:
+// quote every cell, escape internal quotes, prepend BOM so 中文 doesn't mojibake.
+function downloadBatchInviteCSV(teamName: string, role: TeamRole, results: InviteResult[]): void {
+  const header = ["email", "role", "status", "invite_url", "expires_at", "email_sent", "error"];
+  const rows: string[][] = [];
+  for (const r of results) {
+    if (r.ok && r.invitation) {
+      rows.push([
+        r.email,
+        role,
+        "created",
+        r.invitation.invite_url,
+        r.invitation.expires_at,
+        r.email_sent ? "yes" : (r.email_send_disabled ? "disabled" : "no"),
+        "",
+      ]);
+    } else {
+      rows.push([r.email, role, "failed", "", "", "", r.error || ""]);
+    }
+  }
+  const csv = [header, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob(["﻿" + csv + "\n"], { type: "text/csv;charset=utf-8" });
+  const safeTeam = teamName.replace(/[^a-z0-9_.\-]/gi, "_") || "team";
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const fname = `polar-invites-${safeTeam}-${stamp}.csv`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function submitInvite(e: Event): Promise<void> {
   e.preventDefault();
   if (!activeTeam) return;
-  const email = inviteEmailEl.value.trim();
+  const emails = parseInviteEmails(inviteEmailEl.value);
   const role = inviteRoleEl.value as TeamRole;
-  if (!email) {
-    setStatus(inviteStatusEl, "请填写邮箱", true);
+  if (emails.length === 0) {
+    setStatus(inviteStatusEl, "请填写有效的邮箱（多个用换行 / 逗号分隔）", true);
     return;
   }
+
+  // Single-email path: keep the existing UX exactly (no CSV download,
+  // detailed status message about email send state).
+  if (emails.length === 1) {
+    const email = emails[0];
+    inviteSubmitBtn.disabled = true;
+    setStatus(inviteStatusEl, "发送中...", false);
+    const { response, data } = await createTeamInvitation(activeTeam.id, { email, role });
+    inviteSubmitBtn.disabled = false;
+    if (!response.ok) {
+      const err = (data as unknown as { error?: string })?.error || "发送失败";
+      setStatus(inviteStatusEl, err, true);
+      return;
+    }
+    inviteEmailEl.value = "";
+    if (data.email_send_disabled) {
+      setStatus(inviteStatusEl, "邀请已创建，但服务器未配置邮件通道。请手动复制链接发给对方。", false);
+    } else if (!data.email_sent) {
+      setStatus(inviteStatusEl, "邀请已创建，但邮件发送失败。请用「复制链接」手动转发。", true);
+    } else {
+      setStatus(inviteStatusEl, "邀请邮件已发送", false);
+    }
+    await loadInvitations(activeTeam.id);
+    return;
+  }
+
+  // Batch path: sequential POSTs (keeps server-side rate limits friendly,
+  // gives a deterministic progress counter, lets one failure not abort
+  // the rest). All results — successes and failures — go into the CSV
+  // so the operator can retry just the failed rows.
   inviteSubmitBtn.disabled = true;
-  setStatus(inviteStatusEl, "发送中...", false);
-  const { response, data } = await createTeamInvitation(activeTeam.id, { email, role });
-  inviteSubmitBtn.disabled = false;
-  if (!response.ok) {
-    const err = (data as unknown as { error?: string })?.error || "发送失败";
-    setStatus(inviteStatusEl, err, true);
-    return;
+  const results: InviteResult[] = [];
+  for (let i = 0; i < emails.length; i++) {
+    const email = emails[i];
+    setStatus(inviteStatusEl, `发送中 (${i + 1}/${emails.length}) ${email}...`, false);
+    const { response, data } = await createTeamInvitation(activeTeam.id, { email, role });
+    if (response.ok) {
+      results.push({
+        email,
+        ok: true,
+        invitation: data.invitation,
+        email_sent: data.email_sent,
+        email_send_disabled: data.email_send_disabled,
+      });
+    } else {
+      const err = (data as unknown as { error?: string })?.error || "失败";
+      results.push({ email, ok: false, error: err });
+    }
   }
-  inviteEmailEl.value = "";
-  if (data.email_send_disabled) {
-    setStatus(inviteStatusEl, "邀请已创建，但服务器未配置邮件通道。请手动复制链接发给对方。", false);
-  } else if (!data.email_sent) {
-    setStatus(inviteStatusEl, "邀请已创建，但邮件发送失败。请用「复制链接」手动转发。", true);
+  inviteSubmitBtn.disabled = false;
+
+  downloadBatchInviteCSV(activeTeam.name || activeTeam.id, role, results);
+
+  const ok = results.filter((r) => r.ok).length;
+  const fail = emails.length - ok;
+  if (fail === 0) {
+    inviteEmailEl.value = "";
+    setStatus(inviteStatusEl, `成功创建 ${ok} 条邀请，CSV 已下载`, false);
   } else {
-    setStatus(inviteStatusEl, "邀请邮件已发送", false);
+    // Keep the textarea content so the operator can see what failed.
+    setStatus(inviteStatusEl, `${ok} 条成功 · ${fail} 条失败 — 详见下载的 CSV`, true);
   }
   await loadInvitations(activeTeam.id);
 }
