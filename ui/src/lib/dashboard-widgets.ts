@@ -31,21 +31,49 @@ function escapeHTML(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+// formatTime is the dashboard's defensive Date renderer. Backend
+// timestamps occasionally come back as "" / null / a malformed
+// ISO string (e.g. when an aggregate query couldn't resolve a row);
+// `new Date("").toLocaleString()` produces "Invalid Date" which
+// leaks straight into the UI. We substitute "—" instead.
+function formatTime(s: string | null | undefined, kind: "date" | "datetime" = "datetime"): string {
+  if (!s) return "—";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "—";
+  return kind === "date" ? d.toLocaleDateString() : d.toLocaleString();
+}
+
 function widgetCard(title: string, body: string, opts: { headerExtra?: string } = {}): string {
+  // Title row: title + spacer + headerExtra. Class hooks let CSS
+  // apply the unified card-header style (font/weight/color set in
+  // styles.css's .dashboard-widget rules so we don't repeat inline).
   return `
-    <div class="dashboard-widget" style="background:#fff; border:1px solid var(--border,#ececf0); border-radius:8px; padding:12px;">
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <strong style="font-size:13px;">${escapeHTML(title)}</strong>
+    <div class="dashboard-widget">
+      <div class="dashboard-widget-header">
+        <strong>${escapeHTML(title)}</strong>
         <span style="flex:1;"></span>
         ${opts.headerExtra ?? ""}
       </div>
-      <div>${body}</div>
+      <div class="dashboard-widget-body">${body}</div>
     </div>
   `;
 }
 
-function emptyState(msg: string): string {
-  return `<div style="color:var(--text-muted,#888); font-size:12px; padding:8px 0;">${escapeHTML(msg)}</div>`;
+// emptyState: icon + line + optional CTA link. The icon argument is
+// already a plain string char — we don't sanitize it because callers
+// are trusted (this file only). Used by every list-style widget.
+function emptyState(msg: string, opts: { icon?: string; ctaText?: string; ctaHref?: string } = {}): string {
+  const icon = opts.icon ?? "·";
+  const cta = opts.ctaHref && opts.ctaText
+    ? `<a class="dashboard-widget-empty-cta" href="${escapeHTML(opts.ctaHref)}">${escapeHTML(opts.ctaText)} →</a>`
+    : "";
+  return `
+    <div class="dashboard-widget-empty">
+      <div class="dashboard-widget-empty-icon">${icon}</div>
+      <div class="dashboard-widget-empty-msg">${escapeHTML(msg)}</div>
+      ${cta}
+    </div>
+  `;
 }
 
 // ---- individual widget renderers ----
@@ -64,15 +92,15 @@ export function renderQuickStart(): string {
     ["✎", "Editor", "/editor.html", "代码编辑器"],
   ];
   const body = `
-    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:8px;">
+    <div class="dashboard-quickstart-grid">
       ${tiles
         .map(
           ([icon, label, href, desc]) => `
-            <a href="${escapeHTML(href)}" style="display:flex; gap:10px; align-items:center; padding:10px; border:1px solid var(--border,#ececf0); border-radius:6px; text-decoration:none; color:inherit; background:#fafafb;">
-              <span style="font-size:18px; line-height:1; opacity:0.75;">${icon}</span>
-              <div style="display:flex; flex-direction:column; gap:2px; min-width:0;">
-                <span style="font-weight:600; font-size:13px;">${escapeHTML(label)}</span>
-                <span style="font-size:11px; color:var(--text-muted,#888);">${escapeHTML(desc)}</span>
+            <a class="dashboard-quickstart-tile" href="${escapeHTML(href)}">
+              <span class="dashboard-quickstart-icon" aria-hidden="true">${icon}</span>
+              <div class="dashboard-quickstart-text">
+                <span class="dashboard-quickstart-label">${escapeHTML(label)}</span>
+                <span class="dashboard-quickstart-desc">${escapeHTML(desc)}</span>
               </div>
             </a>
           `,
@@ -102,20 +130,20 @@ export async function renderRecentProjects(): Promise<string> {
   if (items.length === 0) {
     return widgetCard(
       "最近项目",
-      emptyState("还没有项目。") +
-        `<a href="/projects.html" style="font-size:12px;">去创建第一个 →</a>`,
+      emptyState("还没有项目", { icon: "✦", ctaText: "去创建第一个", ctaHref: "/projects.html" }),
     );
   }
   const body = `
-    <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px;">
+    <ul class="dashboard-widget-list">
       ${items
         .map(
           (p) => `
             <li>
-              <a href="/projects.html?project=${encodeURIComponent(p.id)}" style="display:flex; gap:8px; align-items:center; padding:6px 8px; border-radius:4px; text-decoration:none; color:inherit; background:#fafafb;">
-                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px;">${escapeHTML(p.name)}</span>
-                <span style="font-size:11px; color:var(--text-muted,#888);">Sprint ${p.current_sprint || 0}</span>
+              <a class="dashboard-widget-row" href="/projects.html?project=${encodeURIComponent(p.id)}">
+                <span class="dashboard-widget-row-title">${escapeHTML(p.name)}</span>
+                <span class="dashboard-widget-row-meta">Sprint ${p.current_sprint || 0}</span>
                 <span class="tag-chip" style="font-size:11px;">${escapeHTML(p.status)}</span>
+                <span class="dashboard-widget-row-arrow" aria-hidden="true">›</span>
               </a>
             </li>`,
         )
@@ -140,19 +168,19 @@ export async function renderRecentMarkdowns(): Promise<string> {
   if (items.length === 0) {
     return widgetCard(
       "最近 Markdown",
-      emptyState("还没有 markdown entry。") +
-        `<a href="/markdowns.html" style="font-size:12px;">去创建第一个 →</a>`,
+      emptyState("还没有 markdown entry", { icon: "◈", ctaText: "去创建第一个", ctaHref: "/markdowns.html" }),
     );
   }
   const body = `
-    <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:4px;">
+    <ul class="dashboard-widget-list">
       ${items
         .map(
           (e) => `
             <li>
-              <a href="/markdowns.html#entry-${encodeURIComponent(String(e.id))}" style="display:flex; gap:8px; align-items:center; padding:5px 8px; border-radius:4px; text-decoration:none; color:inherit; background:#fafafb;">
-                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px;">${escapeHTML(e.title || "(无标题)")}</span>
-                <span style="font-size:11px; color:var(--text-muted,#888);">${new Date(e.updated_at).toLocaleDateString()}</span>
+              <a class="dashboard-widget-row" href="/markdowns.html#entry-${encodeURIComponent(String(e.id))}">
+                <span class="dashboard-widget-row-title">${escapeHTML(e.title || "(无标题)")}</span>
+                <span class="dashboard-widget-row-meta dashboard-widget-row-meta-mono">${formatTime(e.updated_at, "date")}</span>
+                <span class="dashboard-widget-row-arrow" aria-hidden="true">›</span>
               </a>
             </li>`,
         )
@@ -173,17 +201,17 @@ export async function renderRecentPosts(): Promise<string> {
   }
   const items = (data.posts ?? []).slice(0, 5);
   if (items.length === 0) {
-    return widgetCard("最近 Post", emptyState("还没有 post。"));
+    return widgetCard("最近 Post", emptyState("还没有 post", { icon: "◎", ctaText: "去看看", ctaHref: "/posts.html" }));
   }
   const body = `
-    <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:4px;">
+    <ul class="dashboard-widget-list">
       ${items
         .map(
           (p) => `
             <li>
-              <a href="/post.html?id=${encodeURIComponent(String(p.id))}" style="display:block; padding:5px 8px; border-radius:4px; text-decoration:none; color:inherit; background:#fafafb;">
-                <span style="font-size:12px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${escapeHTML((p.content || "").slice(0, 200))}</span>
-                <span style="font-size:11px; color:var(--text-muted,#888);">${new Date(p.created_at).toLocaleString()}</span>
+              <a class="dashboard-widget-row dashboard-widget-row-multiline" href="/post.html?id=${encodeURIComponent(String(p.id))}">
+                <span class="dashboard-widget-row-snippet">${escapeHTML((p.content || "").slice(0, 200))}</span>
+                <span class="dashboard-widget-row-meta dashboard-widget-row-meta-mono">${formatTime(p.created_at, "datetime")}</span>
               </a>
             </li>`,
         )
@@ -210,19 +238,22 @@ export async function renderRecentChat(): Promise<string> {
   }
   const items = (data.threads ?? []).slice(0, 5);
   if (items.length === 0) {
-    return widgetCard("最近 Chat", emptyState("还没有对话。"));
+    return widgetCard("最近 Chat", emptyState("还没有对话", { icon: "◉", ctaText: "和 Bot 聊聊", ctaHref: "/chat.html" }));
   }
   const body = `
-    <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:4px;">
+    <ul class="dashboard-widget-list">
       ${items
         .map((t) => {
           const name = t.participant_name || t.participant_username || `Thread ${t.id}`;
-          const unread = (t.unread ?? 0) > 0 ? `<span style="background:#c33; color:#fff; border-radius:10px; padding:1px 6px; font-size:10px;">${t.unread}</span>` : "";
+          const unread = (t.unread ?? 0) > 0
+            ? `<span class="dashboard-widget-badge-unread">${t.unread}</span>`
+            : "";
           return `
             <li>
-              <a href="/chat.html?thread=${encodeURIComponent(String(t.id))}" style="display:flex; gap:8px; align-items:center; padding:5px 8px; border-radius:4px; text-decoration:none; color:inherit; background:#fafafb;">
-                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px;">${escapeHTML(name)}</span>
+              <a class="dashboard-widget-row" href="/chat.html?thread=${encodeURIComponent(String(t.id))}">
+                <span class="dashboard-widget-row-title">${escapeHTML(name)}</span>
                 ${unread}
+                <span class="dashboard-widget-row-arrow" aria-hidden="true">›</span>
               </a>
             </li>`;
         })
@@ -249,17 +280,18 @@ export async function renderIOSDistBuilds(): Promise<string> {
   }
   const items = (data.apps ?? []).slice(0, 5);
   if (items.length === 0) {
-    return widgetCard("iOS 分发构建", emptyState("没有 iosdist app。"));
+    return widgetCard("iOS 分发构建", emptyState("没有 iosdist app", { icon: "⬇", ctaText: "去管理", ctaHref: "/iosdist.html" }));
   }
   const body = `
-    <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:4px;">
+    <ul class="dashboard-widget-list">
       ${items
         .map(
           (a) => `
             <li>
-              <a href="/iosdist.html#app-${encodeURIComponent(String(a.id))}" style="display:flex; gap:8px; align-items:center; padding:5px 8px; border-radius:4px; text-decoration:none; color:inherit; background:#fafafb;">
-                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px;">${escapeHTML(a.name)}</span>
-                <span style="font-size:11px; color:var(--text-muted,#888);">${escapeHTML(a.bundle_id)}</span>
+              <a class="dashboard-widget-row" href="/iosdist.html#app-${encodeURIComponent(String(a.id))}">
+                <span class="dashboard-widget-row-title">${escapeHTML(a.name)}</span>
+                <span class="dashboard-widget-row-meta dashboard-widget-row-meta-mono">${escapeHTML(a.bundle_id)}</span>
+                <span class="dashboard-widget-row-arrow" aria-hidden="true">›</span>
               </a>
             </li>`,
         )
