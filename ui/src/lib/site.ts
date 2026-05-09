@@ -91,11 +91,65 @@ export function initSidebarToggle(): void {
   btn.title = "Toggle sidebar";
   btn.setAttribute("aria-label", "Toggle sidebar");
   btn.textContent = "☰";
+
+  // Mobile drawer needs a click-target outside the drawer to close it.
+  // Inject one inside .lp-app so the existing fixed-positioned drawer
+  // CSS finds it as a sibling. Idempotent — pages that re-init don't
+  // accumulate backdrops.
+  let backdrop = app.querySelector<HTMLElement>(".lp-mobile-backdrop");
+  if (!backdrop) {
+    backdrop = document.createElement("div");
+    backdrop.className = "lp-mobile-backdrop";
+    backdrop.setAttribute("aria-hidden", "true");
+    app.appendChild(backdrop);
+  }
+  backdrop.addEventListener("click", () => {
+    app.classList.remove("mobile-nav-open");
+  });
+
+  // Single media query for mobile-vs-desktop dispatch. Listen for size
+  // changes so resizing across the breakpoint cleans up any stale state
+  // (e.g. drawer was open on mobile, user rotates wider — drop the class
+  // so the desktop sidebar isn't stuck in mobile drawer styles).
+  const mq = window.matchMedia("(max-width: 860px)");
+  const onBreakpoint = () => {
+    if (mq.matches) {
+      app.classList.remove("sidebar-collapsed");
+    } else {
+      app.classList.remove("mobile-nav-open");
+    }
+  };
+  mq.addEventListener?.("change", onBreakpoint);
+  onBreakpoint();
+
   btn.addEventListener("click", () => {
+    if (mq.matches) {
+      // Mobile: toggle drawer; don't persist (user expects fresh-page
+      // load to start with drawer closed, like a typical mobile site).
+      app.classList.toggle("mobile-nav-open");
+      return;
+    }
+    // Desktop: toggle the collapse class as before, persist to LS so
+    // the choice survives reloads.
     const collapsed = app.classList.toggle("sidebar-collapsed");
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
   });
   topbar.insertBefore(btn, topbar.firstChild);
+
+  // Tapping a nav link inside the drawer should close the drawer
+  // immediately — otherwise the new page loads with the drawer still
+  // showing on top of the content for a beat. Foot icon buttons
+  // (settings / logout) get the same treatment so the drawer doesn't
+  // linger when the settings center modal opens behind it.
+  app.querySelectorAll<HTMLElement>(
+    ".lp-sidebar .lp-nav-item, .lp-sidebar .lp-foot-icon-btn",
+  ).forEach((el) => {
+    el.addEventListener("click", () => {
+      if (mq.matches) {
+        app.classList.remove("mobile-nav-open");
+      }
+    });
+  });
 }
 
 export async function hydrateSiteBrand(): Promise<void> {
