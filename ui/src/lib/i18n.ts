@@ -662,6 +662,12 @@ const en: Record<string, string> = {
   "nav.creation": "Creation",
   "nav.videoStudio": "Video Studio",
   "nav.iosDist": "iOS Distribution",
+
+  // Topbar / page titles
+  "projects.title": "Projects",
+  "iosdist.title": "iOS Distribution",
+  "teams.title": "Workspaces",
+  "teams.workspaces": "Workspaces",
   "video.title": "Video Studio",
   "video.projects": "Projects",
   "video.newProject": "New project",
@@ -1441,6 +1447,12 @@ const zhCN: Record<string, string> = {
   "nav.creation": "创作",
   "nav.videoStudio": "视频工作室",
   "nav.iosDist": "iOS 分发",
+
+  // Topbar / page titles
+  "projects.title": "项目",
+  "iosdist.title": "iOS 分发",
+  "teams.title": "工作区",
+  "teams.workspaces": "工作区",
   "video.title": "视频工作室",
   "video.projects": "项目",
   "video.newProject": "新建项目",
@@ -1591,10 +1603,18 @@ export function setLang(lang: Lang): void {
   }
 }
 
-export function t(key: string, params?: Record<string, string>): string {
+// hasI18nKey is the underlying lookup. Returns the localized string,
+// or undefined when neither the active locale nor the en fallback
+// has the key. Centralized so applyI18n can decide to keep the
+// HTML's existing text instead of blanking it with the raw key.
+function hasI18nKey(key: string): string | undefined {
   const lang = getLang();
   const locale = locales[lang] ?? en;
-  let str = locale[key] ?? en[key] ?? key;
+  return locale[key] ?? en[key];
+}
+
+export function t(key: string, params?: Record<string, string>): string {
+  let str = hasI18nKey(key) ?? key;
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       str = str.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), v);
@@ -1604,18 +1624,39 @@ export function t(key: string, params?: Record<string, string>): string {
 }
 
 export function applyI18n(): void {
+  // When a key isn't defined in either locale, keep whatever the HTML
+  // had as fallback (the static placeholder text inside the
+  // [data-i18n] element). Previous behavior wrote the raw key
+  // ("projects.title") into the DOM, which leaked the i18n key to
+  // users any time we forgot to add the translation. Worse than no
+  // i18n at all.
   document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((el) => {
     const key = el.getAttribute("data-i18n")!;
-    el.textContent = t(key);
+    const value = hasI18nKey(key);
+    if (value !== undefined) {
+      el.textContent = value;
+    }
   });
   document.querySelectorAll<HTMLElement>("[data-i18n-placeholder]").forEach((el) => {
-    (el as HTMLInputElement).placeholder = t(el.getAttribute("data-i18n-placeholder")!);
+    const key = el.getAttribute("data-i18n-placeholder")!;
+    const value = hasI18nKey(key);
+    if (value !== undefined) {
+      (el as HTMLInputElement).placeholder = value;
+    }
   });
   document.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((el) => {
-    document.title = t(el.getAttribute("data-i18n-title")!);
+    const key = el.getAttribute("data-i18n-title")!;
+    const value = hasI18nKey(key);
+    if (value !== undefined) {
+      document.title = value;
+    }
   });
   document.querySelectorAll<HTMLElement>("[data-i18n-tooltip]").forEach((el) => {
-    el.title = t(el.getAttribute("data-i18n-tooltip")!);
+    const key = el.getAttribute("data-i18n-tooltip")!;
+    const value = hasI18nKey(key);
+    if (value !== undefined) {
+      el.title = value;
+    }
   });
   document.documentElement.lang = getLang();
 }
