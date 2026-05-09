@@ -131,6 +131,11 @@ func main() {
 		os.Exit(runAutoRegister(args))
 	case "submit-build":
 		os.Exit(runSubmitBuild(args))
+	case "research":
+		if err := runResearchREPL(args); err != nil {
+			fmt.Fprintf(os.Stderr, "research: %v\n", err)
+			os.Exit(exitToolFailed)
+		}
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -153,6 +158,10 @@ Usage:
   polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=codex
   polar-agent submit-build <ipa> [--project=<id>] [--sign-method=auto|zsign|codesign]
                                                   # iOS: sign + upload IPA to TestFlight
+  polar-agent research --workdir=<path> --llm-base-url=<url> --llm-api-key=<key> --llm-model=<id>
+                       [--llm-name=<name>] [--git-remote=<url>] [--prompt=<text>] [--verbose]
+                                                  # local stdin REPL: run the same Aider-style
+                                                  # tool-loop without dock involvement
 
 Tool whitelist (executed in workdir, default tool-call mode):
   read_file   — args: { path }
