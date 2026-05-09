@@ -2140,6 +2140,129 @@ textarea {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  position: relative; /* anchor for absolutely-positioned popovers */
+}
+
+.chat-thread-title-block {
+  min-width: 0;
+}
+
+/* Claude-style chip rail: lives in the top-right of the thread header.
+   Each chip is button-sized (~28-32px tall) with rounded ends; the
+   overflow ⋯ button is the same height and square-ish. Popovers attach
+   visually under the chip rail (absolutely positioned within the
+   header so they don't push content down). */
+.chat-thread-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 65%;
+}
+
+.chat-chip,
+.chat-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 220px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.chat-chip:hover,
+.chat-chip-icon:hover {
+  background: color-mix(in srgb, var(--surface, #fff) 90%, var(--text) 5%);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--text) 20%);
+}
+
+.chat-chip[aria-expanded="true"],
+.chat-chip-icon[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.chat-chip-icon {
+  width: 28px;
+  padding: 0;
+  font-size: 16px;
+}
+
+.chat-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-chip-caret {
+  font-size: 9px;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+/* Popover panel — anchored to the right of the thread header, absolutely
+   positioned so opening one doesn't reflow message content. The chip rail
+   stays the visual reference; the panel is slightly indented from the
+   right so it never collides with the scrollbar gutter. */
+.chat-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  min-width: 240px;
+  max-width: 90%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  z-index: 30;
+}
+
+/* Overflow menu lays out items as a vertical list of inline buttons. */
+.chat-popover-menu {
+  padding: 6px;
+  min-width: 160px;
+  gap: 0;
+}
+
+.chat-popover-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.chat-popover-item:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.chat-popover-item:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  background: transparent;
 }
 
 .chat-topic-bar {
@@ -2250,8 +2373,21 @@ textarea {
 }
 
 .message-meta {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
+}
+
+/* Bot reply meta footer: sits flush UNDER the bubble, lighter than
+   bubble text so it reads as a caption rather than competing with
+   content. Slight top margin separates it from the bubble; left
+   margin keeps it visually attached to the bubble (not the avatar
+   gutter). */
+.message-meta-foot {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.85;
+  line-height: 1.4;
 }
 
 .message-head {

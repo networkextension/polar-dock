@@ -28,6 +28,19 @@ const chatModelBar = byId<HTMLElement>("chatModelBar");
 const chatModelCurrent = byId<HTMLElement>("chatModelCurrent");
 const chatModelSelect = byId<HTMLSelectElement>("chatModelSelect");
 const chatSwitchModelBtn = byId<HTMLButtonElement>("chatSwitchModelBtn");
+// Claude-style chip + popover header (replaces the in-line topic/model bars).
+// The legacy `chatThreadBar` / `chatModelBar` elements still exist as hidden
+// no-ops so renderLLMThreadBar's existing visibility toggles don't 404 on a
+// missing element. Renamed any logic that *displays* topic/model state to
+// write to chip labels + popover internals.
+const chatTopicChip = byId<HTMLButtonElement>("chatTopicChip");
+const chatTopicChipLabel = byId<HTMLElement>("chatTopicChipLabel");
+const chatModelChip = byId<HTMLButtonElement>("chatModelChip");
+const chatModelChipLabel = byId<HTMLElement>("chatModelChipLabel");
+const chatTopicPopover = byId<HTMLElement>("chatTopicPopover");
+const chatModelPopover = byId<HTMLElement>("chatModelPopover");
+const chatOverflowBtn = byId<HTMLButtonElement>("chatOverflowBtn");
+const chatOverflowMenu = byId<HTMLElement>("chatOverflowMenu");
 const attachmentBtn = byId<HTMLLabelElement>("attachmentBtn");
 const attachmentInput = byId<HTMLInputElement>("attachmentInput");
 
@@ -377,18 +390,20 @@ function isBotChat(chat?: ChatSummary | null): boolean {
 }
 
 function renderLLMThreadBar(): void {
-  chatThreadBar.hidden = !activeIsAIChat;
   chatNewTopicBtn.hidden = !activeIsAIChat;
   chatRenameTopicBtn.hidden = !activeIsAIChat;
+  chatTopicChip.hidden = !activeIsAIChat;
   if (!activeIsAIChat) {
     chatThreadSelect.innerHTML = "";
-    chatModelBar.hidden = true;
+    closeAllChatPopovers();
+    renderLLMThreadModelBar();
     return;
   }
   if (!activeLLMThreads.length) {
     chatThreadSelect.innerHTML = `<option value="">${t("chat.defaultTopic")}</option>`;
     chatThreadSelect.disabled = true;
     chatRenameTopicBtn.disabled = true;
+    chatTopicChipLabel.textContent = t("chat.newTopic");
     renderLLMThreadModelBar();
     return;
   }
@@ -400,13 +415,16 @@ function renderLLMThreadBar(): void {
   if (activeLLMThreadId) {
     chatThreadSelect.value = String(activeLLMThreadId);
   }
+  const activeThread = activeLLMThreads.find((thread) => thread.id === activeLLMThreadId) || null;
+  chatTopicChipLabel.textContent = activeThread?.title?.trim() || t("chat.newTopic");
   renderLLMThreadModelBar();
 }
 
 function renderLLMThreadModelBar(): void {
-  chatModelBar.hidden = !activeIsBotChat;
+  chatModelChip.hidden = !activeIsBotChat;
   if (!activeIsBotChat) {
     chatModelCurrent.textContent = t("chat.systemAssistant");
+    chatModelChipLabel.textContent = t("chat.systemAssistant");
     chatModelSelect.innerHTML = "";
     chatSwitchModelBtn.disabled = true;
     return;
@@ -414,13 +432,19 @@ function renderLLMThreadModelBar(): void {
   const activeThread = activeLLMThreads.find((thread) => thread.id === activeLLMThreadId) || null;
   if (!activeThread) {
     chatModelCurrent.textContent = t("chat.noTopicSelected");
+    chatModelChipLabel.textContent = t("chat.noTopicSelected");
     chatModelSelect.innerHTML = `<option value="">${t("chat.selectTopicFirst")}</option>`;
     chatSwitchModelBtn.disabled = true;
     return;
   }
-  chatModelCurrent.textContent = activeThread.config_name
+  const modelLabel = activeThread.config_name
     ? `${activeThread.config_name}${activeThread.config_model ? ` · ${activeThread.config_model}` : ""}`
     : t("chat.followBotDefault");
+  chatModelCurrent.textContent = modelLabel;
+  // Chip stays terse — show only the model id when we have one, falling back
+  // to the config name. The full label remains in the popover detail.
+  chatModelChipLabel.textContent =
+    activeThread.config_model || activeThread.config_name || t("chat.followBotDefault");
   if (!currentLLMConfigs.length) {
     chatModelSelect.innerHTML = `<option value="">${t("chat.noConfigs")}</option>`;
     chatSwitchModelBtn.disabled = true;
@@ -870,23 +894,32 @@ function renderMessages(messages: ChatMessage[], scrollToBottom = false): void {
       const botModelMeta = isBotReply
         ? (messageModel || messageConfig || fallbackModel)
         : "";
-      // Hide latency until the stream completes; show "streaming…" instead.
-      const latencyMeta = isBotReply && !isStreamingBot && typeof msg.latency_ms === "number" && msg.latency_ms > 0
-        ? ` · ${formatLatency(msg.latency_ms)}`
+      // Per-message metadata moves to the FOOT of the bubble (was above —
+      // pushed real content below the fold). Bot replies show the full
+      // string `username · model · time · latency` after the content; user
+      // messages get nothing (alignment + avatar already identify them).
+      const latencyText = isBotReply && !isStreamingBot && typeof msg.latency_ms === "number" && msg.latency_ms > 0
+        ? formatLatency(msg.latency_ms)
         : "";
       const streamingMeta = isStreamingBot
-        ? ` · <span class="message-meta-streaming">${t("chat.streaming") || "streaming"}<span class="message-streaming-dots"></span></span>`
+        ? `<span class="message-meta-streaming">${t("chat.streaming") || "streaming"}<span class="message-streaming-dots"></span></span>`
         : "";
-      const messageMeta = isBotReply
-        ? `${msg.sender_username} · ${botModelMeta} · ${formatTime(msg.created_at)}${latencyMeta}${streamingMeta}${isFailedBotReply ? ` · ${t("chat.failed")}` : ""}`
-        : `${msg.sender_username} · ${formatTime(msg.created_at)}`;
+      const botFootParts = isBotReply
+        ? [
+            escapeHtml(msg.sender_username),
+            escapeHtml(botModelMeta),
+            escapeHtml(formatTime(msg.created_at)),
+            latencyText ? escapeHtml(latencyText) : "",
+            streamingMeta,
+            isFailedBotReply ? escapeHtml(t("chat.failed")) : "",
+          ].filter(Boolean)
+        : [];
+      const botMetaFooter = botFootParts.length
+        ? `<div class="message-meta message-meta-foot">${botFootParts.join(" · ")}</div>`
+        : "";
       if (isMine) {
         return `
           <div class="message-item mine">
-            <div class="message-head">
-              <img class="avatar-xs" src="${avatar}" alt="${msg.sender_username}" />
-              <div class="message-meta">${messageMeta}</div>
-            </div>
             <div class="message-row">
               <div class="${bubbleClass}"><div class="${contentClass}">${content}</div>${failureBadge}</div>
               ${revokeButton}
@@ -898,11 +931,11 @@ function renderMessages(messages: ChatMessage[], scrollToBottom = false): void {
         <div class="message-item other">
           <img class="avatar-xs message-avatar" src="${avatar}" alt="${msg.sender_username}" />
           <div class="message-body">
-            <div class="message-meta">${messageMeta}</div>
             <div class="message-row">
               <div class="${bubbleClass}"><div class="${contentClass}">${content}</div>${failureBadge}</div>
               ${revokeButton}
             </div>
+            ${botMetaFooter}
             ${botActionBar}
           </div>
         </div>
@@ -1638,6 +1671,76 @@ chatSwitchModelBtn.addEventListener("click", async () => {
   renderLLMThreadBar();
   chatSubtitle.textContent = result.data.message || t("chat.switchModelSuccess");
 });
+
+// --- Chip + popover wiring -------------------------------------------------
+// Chips toggle their popovers; clicking outside any popover closes them.
+// We use a single document-level listener to avoid attaching/detaching as
+// popovers open/close.
+
+type ChatPopover = "topic" | "model" | "overflow";
+const chatPopoverElements: Record<ChatPopover, { chip: HTMLElement | null; popover: HTMLElement }> = {
+  topic: { chip: chatTopicChip, popover: chatTopicPopover },
+  model: { chip: chatModelChip, popover: chatModelPopover },
+  overflow: { chip: chatOverflowBtn, popover: chatOverflowMenu },
+};
+
+function setChatPopoverOpen(target: ChatPopover | null): void {
+  for (const key of Object.keys(chatPopoverElements) as ChatPopover[]) {
+    const { chip, popover } = chatPopoverElements[key];
+    const open = key === target;
+    popover.hidden = !open;
+    if (chip) {
+      chip.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+  }
+}
+
+function closeAllChatPopovers(): void {
+  setChatPopoverOpen(null);
+}
+
+function toggleChatPopover(target: ChatPopover): void {
+  const { popover } = chatPopoverElements[target];
+  setChatPopoverOpen(popover.hidden ? target : null);
+}
+
+chatTopicChip.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleChatPopover("topic");
+});
+chatModelChip.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleChatPopover("model");
+});
+chatOverflowBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleChatPopover("overflow");
+});
+
+// Click anywhere outside the chips/popovers → close. Popover internals use
+// stopPropagation in their own handlers (selects, buttons) so they don't
+// accidentally close while the user is interacting.
+document.addEventListener("click", (event) => {
+  const target = event.target as Node;
+  for (const key of Object.keys(chatPopoverElements) as ChatPopover[]) {
+    const { chip, popover } = chatPopoverElements[key];
+    if (popover.contains(target) || (chip && chip.contains(target))) {
+      return;
+    }
+  }
+  closeAllChatPopovers();
+});
+
+// Overflow menu items: close menu after click so the user sees the action
+// landed (the underlying button handler still fires via event bubbling
+// before we close — listeners are attached to the same elements).
+[chatNewTopicBtn, chatRenameTopicBtn, chatRefreshBtn].forEach((btn) => {
+  btn.addEventListener("click", () => closeAllChatPopovers());
+});
+// Topic switch closes its own popover after the change handler runs.
+chatThreadSelect.addEventListener("change", () => closeAllChatPopovers());
+// Switch-model button closes the model popover when clicked.
+chatSwitchModelBtn.addEventListener("click", () => closeAllChatPopovers());
 
 async function init(): Promise<void> {
   await hydrateSiteBrand();
