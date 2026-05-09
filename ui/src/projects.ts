@@ -1244,8 +1244,10 @@ function readCoderSelections(): {
 async function doCreateAgentToken(): Promise<void> {
   const name = agentTokenNameInput.value.trim() || "polar-agent";
   const { coders, apiKeys } = readCoderSelections();
+  const osRadio = document.querySelector<HTMLInputElement>('input[name="agentTargetOS"]:checked');
+  const targetOS = (osRadio?.value === "linux" ? "linux" : "darwin") as "linux" | "darwin";
   agentTokenCreateBtn.disabled = true;
-  const { response, data } = await createAgentToken({ name, coders, api_keys: apiKeys });
+  const { response, data } = await createAgentToken({ name, coders, api_keys: apiKeys, target_os: targetOS });
   agentTokenCreateBtn.disabled = false;
   if (!response.ok) {
     window.alert("创建失败");
