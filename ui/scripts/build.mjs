@@ -44,9 +44,8 @@ async function collectEntryPoints() {
     .map((name) => path.join(srcDir, name));
 }
 
-async function runEsbuild() {
-  const entries = await collectEntryPoints();
-  await esbuild.build({
+function esbuildOptions(entries) {
+  return {
     entryPoints: entries,
     bundle: true,
     format: "esm",
@@ -60,7 +59,12 @@ async function runEsbuild() {
     minify: true,
     legalComments: "none",
     tsconfig: tsconfigPath,
-  });
+  };
+}
+
+async function runEsbuild() {
+  const entries = await collectEntryPoints();
+  await esbuild.build(esbuildOptions(entries));
 }
 
 async function clean() {
@@ -105,8 +109,54 @@ async function build() {
   console.log(`Built UI into ui/dist (hash: ${buildHash})`);
 }
 
+async function watch() {
+  // Watch mode: skip the heavy tsc --noEmit check on every keystroke
+  // (esbuild does its own TS handling) and stage everything into dist
+  // up front so nginx (or whichever server is pointing at dist) picks
+  // up changes the moment esbuild rebuilds.
+  await rm(publicScriptsDir, { recursive: true, force: true });
+  await rm(distDir, { recursive: true, force: true });
+  await mkdir(distDir, { recursive: true });
+  await cp(publicDir, distDir, { recursive: true });
+
+  const entries = await collectEntryPoints();
+  const ctx = await esbuild.context({
+    ...esbuildOptions(entries),
+    plugins: [
+      {
+        name: "polar-watch-syncer",
+        setup(build) {
+          build.onEnd(async (result) => {
+            const errs = result?.errors?.length ?? 0;
+            if (errs > 0) {
+              console.log(`✗ rebuild failed (${errs} error${errs > 1 ? "s" : ""})`);
+              return;
+            }
+            // Republish dist so a server that's serving dist directly
+            // (nginx pointing at ui/dist) sees fresh JS + HTML even if
+            // a non-ts file under public/ changed too.
+            try {
+              await cp(publicDir, distDir, { recursive: true });
+              const stamp = new Date().toLocaleTimeString();
+              console.log(`✓ rebuilt + dist synced (${stamp})`);
+            } catch (err) {
+              console.log(`✗ dist sync failed: ${err.message}`);
+            }
+          });
+        },
+      },
+    ],
+  });
+  await ctx.watch();
+  console.log("👀 watching ui/src + ui/public — Ctrl-C to stop");
+  // Keep the process alive — esbuild's watch doesn't block on its own.
+  await new Promise(() => {});
+}
+
 if (process.argv.includes("--clean")) {
   await clean();
+} else if (process.argv.includes("--watch")) {
+  await watch();
 } else {
   await build();
 }
