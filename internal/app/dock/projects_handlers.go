@@ -710,6 +710,28 @@ func (s *Server) handleProjectFeatureUpdate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+func (s *Server) handleProjectFeatureDelete(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	projectID := strings.TrimSpace(c.Param("id"))
+	if _, err := s.getProject(projectID, workspaceID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	featureID := strings.TrimSpace(c.Param("feature_id"))
+	if err := s.deleteProjectFeature(projectID, featureID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "功能不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // ---- plan generation -----------------------------------------------
 
 func (s *Server) handleProjectGeneratePlan(c *gin.Context) {

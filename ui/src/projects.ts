@@ -14,6 +14,7 @@ import {
   decomposeProject,
   deleteProject,
   fetchAgentBotStatus,
+  deleteProjectFeature,
   fetchAgentTokens,
   fetchProject,
   fetchProjects,
@@ -371,16 +372,19 @@ function renderFeatures(): void {
           const c = COMPLEXITY_COLOR[f.complexity];
           const cl = COMPLEXITY_LABEL[f.complexity];
           return `
-            <label style="display:flex; gap:10px; align-items:flex-start; padding:10px; background:${f.selected ? "#fff" : "#f7f7f9"}; border:1px solid var(--border,#ececf0); border-radius:6px; cursor:pointer;">
-              <input type="checkbox" ${f.selected ? "checked" : ""} data-feature-toggle="${escapeHTML(f.id)}" style="margin:3px 0 0 0; padding:0; width:auto; flex-shrink:0;" />
-              <div style="flex:1; min-width:0;">
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                  <div style="font-weight:500; font-size:14px;">${escapeHTML(f.title)}</div>
-                  <span style="padding:1px 6px; border-radius:3px; background:${c}; color:#fff; font-size:10px;">${escapeHTML(cl)}</span>
+            <div style="display:flex; gap:10px; align-items:flex-start; padding:10px; background:${f.selected ? "#fff" : "#f7f7f9"}; border:1px solid var(--border,#ececf0); border-radius:6px;">
+              <label style="display:flex; gap:10px; align-items:flex-start; flex:1; min-width:0; cursor:pointer; margin:0;">
+                <input type="checkbox" ${f.selected ? "checked" : ""} data-feature-toggle="${escapeHTML(f.id)}" style="margin:3px 0 0 0; padding:0; width:auto; flex-shrink:0;" />
+                <div style="flex:1; min-width:0;">
+                  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <div style="font-weight:500; font-size:14px;">${escapeHTML(f.title)}</div>
+                    <span style="padding:1px 6px; border-radius:3px; background:${c}; color:#fff; font-size:10px;">${escapeHTML(cl)}</span>
+                  </div>
+                  <div style="font-size:12px; color:var(--text-muted,#888); margin-top:3px;">${escapeHTML(f.description)}</div>
                 </div>
-                <div style="font-size:12px; color:var(--text-muted,#888); margin-top:3px;">${escapeHTML(f.description)}</div>
-              </div>
-            </label>`;
+              </label>
+              <button type="button" class="btn-inline btn-secondary" data-feature-delete="${escapeHTML(f.id)}" title="删除该功能（已生成的任务保留）" style="font-size:11px; padding:3px 8px; flex-shrink:0;">删除</button>
+            </div>`;
         })
         .join("");
       return sprintHeader + rows;
@@ -391,6 +395,12 @@ function renderFeatures(): void {
     cb.addEventListener("change", () => {
       const id = cb.getAttribute("data-feature-toggle");
       if (id) void toggleFeature(id, cb.checked);
+    });
+  });
+  featuresListEl.querySelectorAll<HTMLButtonElement>("[data-feature-delete]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-feature-delete");
+      if (id) void doDeleteFeature(id);
     });
   });
 }
@@ -768,6 +778,32 @@ async function toggleFeature(featureID: string, selected: boolean): Promise<void
     complexity: f.complexity,
     selected,
   });
+}
+
+async function doDeleteFeature(featureID: string): Promise<void> {
+  if (!activeProject) return;
+  const f = activeFeatures.find((x) => x.id === featureID);
+  if (!f) return;
+  // Tasks already generated from this feature survive — feature_id
+  // gets nulled (ON DELETE SET NULL on project_tasks.feature_id).
+  // The confirm copy reflects this so users don't second-guess
+  // hitting delete on a feature they've already started executing.
+  if (!window.confirm(`删除功能「${f.title}」？\n（已生成的任务会保留，仅切断功能引用。）`)) return;
+  const { response, data } = await deleteProjectFeature(activeProject.id, featureID);
+  if (!response.ok) {
+    window.alert(("error" in data && (data as { error?: string }).error) || "删除失败");
+    return;
+  }
+  activeFeatures = activeFeatures.filter((x) => x.id !== featureID);
+  // Tasks may still reference this feature in memory — refresh them
+  // from the server so feature_id pointers settle to null and any
+  // future re-decompose works against the current state.
+  const proj = await fetchProject(activeProject.id);
+  if (proj.response.ok) {
+    activeTasks = proj.data.tasks;
+  }
+  renderFeatures();
+  renderTasks();
 }
 
 async function generatePlan(): Promise<void> {
