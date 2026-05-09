@@ -16,6 +16,7 @@ const chatList = byId<HTMLElement>("chatList");
 const chatTitle = byId<HTMLElement>("chatTitle");
 const chatSubtitle = byId<HTMLElement>("chatSubtitle");
 const messageList = byId<HTMLElement>("messageList");
+const chatThreadSummaryEl = byId<HTMLElement>("chatThreadSummary");
 const messageForm = byId<HTMLFormElement>("messageForm");
 const messageInput = byId<HTMLTextAreaElement>("messageInput");
 const chatRefreshBtn = byId<HTMLButtonElement>("chatRefreshBtn");
@@ -1113,6 +1114,11 @@ function renderMessages(messages: ChatMessage[], scrollToBottom = false): void {
 }
 
 async function loadMessages(threadId: string): Promise<void> {
+  // Kick off the system-agent thread summary in parallel with the
+  // messages fetch — it's a separate endpoint, no need to block.
+  // Errors are swallowed so a summary failure doesn't break chat.
+  void loadThreadSummary(threadId);
+
   const cacheKey = getCacheKey();
   const cached = messageCacheMap.get(cacheKey);
   if (cached?.length) {
@@ -1145,6 +1151,59 @@ async function loadMessages(threadId: string): Promise<void> {
   }
   renderMessages(data.messages || [], true);
   reconcileStaleStreamingMessages(threadId, data.messages || []);
+}
+
+// loadThreadSummary fetches the cached system-agent summary for the
+// thread (1–2 sentence "上次停在哪") and renders the top banner.
+// Stale results still render — the server kicks off an async refresh
+// in the background, the user gets it next time. Failures are silent
+// (chat works without the banner; this is decoration, not core).
+async function loadThreadSummary(threadId: string): Promise<void> {
+  // Hide while we fetch so re-opening another thread doesn't briefly
+  // show the previous thread's summary.
+  chatThreadSummaryEl.hidden = true;
+  try {
+    const res = await fetch(`/api/chats/${encodeURIComponent(threadId)}/summary`, {
+      credentials: "include",
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    renderThreadSummary(data.summary, Boolean(data.stale));
+  } catch {
+    // ignore
+  }
+}
+
+type ThreadSummaryShape = {
+  summary?: string;
+  llm_name?: string;
+  llm_model?: string;
+  generated_at?: string;
+} | null;
+
+function renderThreadSummary(summary: ThreadSummaryShape, stale: boolean): void {
+  if (!summary || !summary.summary) {
+    chatThreadSummaryEl.hidden = true;
+    chatThreadSummaryEl.innerHTML = "";
+    return;
+  }
+  chatThreadSummaryEl.hidden = false;
+  const llmTag = summary.llm_name
+    ? `<span class="chat-thread-summary-llm">由 ${escapeHtml(summary.llm_name)}${summary.llm_model ? ` · ${escapeHtml(summary.llm_model)}` : ""} 生成</span>`
+    : "";
+  const staleTag = stale
+    ? `<span class="chat-thread-summary-stale">（已过期，正在刷新）</span>`
+    : "";
+  chatThreadSummaryEl.innerHTML = `
+    <span class="chat-thread-summary-icon" aria-hidden="true">🔖</span>
+    <span class="chat-thread-summary-text">${escapeHtml(summary.summary)}</span>
+    ${llmTag}${staleTag}
+    <button type="button" class="chat-thread-summary-dismiss" aria-label="收起">×</button>
+  `;
+  const dismiss = chatThreadSummaryEl.querySelector<HTMLButtonElement>(".chat-thread-summary-dismiss");
+  dismiss?.addEventListener("click", () => {
+    chatThreadSummaryEl.hidden = true;
+  });
 }
 
 // Reload-recovery: a streaming row whose updated_at is older than 5s likely

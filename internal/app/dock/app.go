@@ -714,6 +714,8 @@ func (s *Server) registerRoutes() {
 		api.DELETE("/chats/:id/llm-threads/:threadId", s.AuthMiddleware(), s.handleChatLLMThreadDelete)
 		api.PUT("/chats/:id/llm-threads/:threadId/config", s.AuthMiddleware(), s.handleChatLLMThreadConfigUpdate)
 		api.GET("/chats/:id/messages", s.AuthMiddleware(), s.handleChatMessages)
+		api.GET("/chats/:id/summary", s.AuthMiddleware(), s.handleChatThreadSummary)
+		api.POST("/chats/:id/summary/refresh", s.AuthMiddleware(), s.handleChatThreadSummaryRefresh)
 		api.POST("/chats/:id/messages", s.AuthMiddleware(), s.handleChatSend)
 		api.POST("/chats/:id/messages/attachment", s.AuthMiddleware(), s.handleChatSendAttachment)
 		api.GET("/chats/:id/messages/:messageId", s.AuthMiddleware(), s.handleChatMessageDetail)
