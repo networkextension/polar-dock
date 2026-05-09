@@ -146,6 +146,7 @@ func (a *aiAgent) generateReplyWithTools(
 		log.Printf("build ai context failed: %v", err)
 	}
 	systemPrompt := strings.TrimSpace(runtimeConfig.SystemPrompt) + a.server.agentToolSystemAddendum(workdir)
+	runtimeConfig.Endpoint = "chat_tool_loop"
 	messages := []aiChatCompletionMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "system", Content: contextText},

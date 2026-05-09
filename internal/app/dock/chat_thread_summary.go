@@ -257,6 +257,7 @@ func (s *Server) generateThreadSummary(threadID int64) (*ChatThreadSummary, erro
 		BaseURL:      baseURL,
 		Model:        model,
 		SystemPrompt: systemPrompt,
+		Endpoint:     "thread_summary",
 	}
 	payload := aiChatCompletionRequest{
 		Model: model,

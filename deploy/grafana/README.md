@@ -48,6 +48,22 @@ datasource → Import。
 - Goroutines
 - DB pool 三件套（open / in_use / idle）
 
+### 4b. 导入 LLM dashboard（Phase 2）
+
+同样路径再 import `dashboards/polar-llm.json`。6 个 panel：
+
+- 调用 rate（按 endpoint：thread_summary / task_retrospect / chat / 等）
+- 错误率（按 provider / model）
+- 延迟 p50 / p95 / p99（用秒级 histogram bucket，覆盖 100ms - 2min）
+- p95 by endpoint
+- token rate（prompt / completion）
+- 24h token 累计
+
+**说明**：token 统计依赖上游响应里的 `usage` 块。OpenAI 兼容路径
+（Kimi / DeepSeek / OpenAI / Volces 非 Responses）会有；Anthropic
+Messages / Gemini / XAI Responses / 流式 SSE 暂不解析 —— 那些 endpoint 的
+token panel 显示为 0 是预期。
+
 ## 验证
 
 dock 启动后跑：

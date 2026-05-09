@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -104,3 +105,64 @@ func truncForLog(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
+
+// Phase 2 — exercise the LLM call recorder directly. We can't bring up a
+// real upstream provider in unit tests, so we go through the registry's
+// helper and assert the exposition output shows what we expect.
+func TestRecordLLMCallSuccessWithUsage(t *testing.T) {
+	m := newMetrics()
+	m.recordLLMCall("openai_compatible", "kimi-k2", "thread_summary",
+		1500*time.Millisecond, nil, 320, 80)
+
+	body := scrapeRegistry(t, m)
+	for _, want := range []string{
+		`polar_llm_request_total{endpoint="thread_summary",model="kimi-k2",provider="openai_compatible",status="ok"} 1`,
+		`polar_llm_tokens_total{endpoint="thread_summary",kind="prompt",model="kimi-k2",provider="openai_compatible"} 320`,
+		`polar_llm_tokens_total{endpoint="thread_summary",kind="completion",model="kimi-k2",provider="openai_compatible"} 80`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q", want)
+		}
+	}
+}
+
+func TestRecordLLMCallErrorNoTokens(t *testing.T) {
+	m := newMetrics()
+	m.recordLLMCall("anthropic_messages", "claude-sonnet-4", "task_retrospect",
+		3*time.Second, errBoom{}, 0, 0)
+
+	body := scrapeRegistry(t, m)
+	if !strings.Contains(body, `polar_llm_request_total{endpoint="task_retrospect",model="claude-sonnet-4",provider="anthropic_messages",status="error"} 1`) {
+		t.Errorf("expected error counter to record sample")
+	}
+	if strings.Contains(body, `polar_llm_tokens_total{endpoint="task_retrospect"`) {
+		t.Errorf("token counter should stay flat when no usage was reported")
+	}
+}
+
+func TestRecordLLMCallEmptyLabelsBucketed(t *testing.T) {
+	m := newMetrics()
+	// Caller forgot to set Endpoint — should land in "unknown", not "".
+	m.recordLLMCall("", "", "", 100*time.Millisecond, nil, 0, 0)
+	body := scrapeRegistry(t, m)
+	if !strings.Contains(body, `provider="unknown"`) || !strings.Contains(body, `endpoint="unknown"`) {
+		t.Errorf("empty labels should fall back to 'unknown'")
+	}
+}
+
+func scrapeRegistry(t *testing.T, m *metrics) string {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	s := &Server{metricsRegistry: m, metricsToken: "x"}
+	r := gin.New()
+	r.GET("/metrics", s.handleMetrics)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer x")
+	r.ServeHTTP(w, req)
+	return w.Body.String()
+}
+
+type errBoom struct{}
+
+func (errBoom) Error() string { return "boom" }

@@ -11,8 +11,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Phase 1 metric set: HTTP shape + Go runtime + DB pool. LLM / agent /
-// business counters land in later phases (see doc/grafana-integration.md).
+// Phase 1 metric set: HTTP shape + Go runtime + DB pool.
+// Phase 2 added: LLM call counter / latency / token consumption.
+// Phase 3+ will add agent fleet + business counters
+// (see doc/grafana-integration.md).
 //
 // All metrics live on a private registry so the /metrics endpoint can be
 // gated independently of any other Prometheus surface a future reverse
@@ -27,7 +29,22 @@ type metrics struct {
 	dbPoolOpen  prometheus.Gauge
 	dbPoolUse   prometheus.Gauge
 	dbPoolIdle  prometheus.Gauge
+
+	// LLM call instrumentation. status is a small fixed vocabulary
+	// ("ok" / "error") to keep cardinality bounded; endpoint is a
+	// caller-supplied tag (e.g. "thread_summary", "task_retrospect")
+	// so we can slice by feature without leaking arbitrary strings.
+	// kind on the token counter is "prompt" or "completion".
+	llmRequests *prometheus.CounterVec
+	llmLatency  *prometheus.HistogramVec
+	llmTokens   *prometheus.CounterVec
 }
+
+// llmLatencyBuckets are tuned for chat-completion calls, which run from
+// ~200ms (small prompt, fast model) to 30s+ (long generation). Default
+// Prometheus buckets top out at 10s and would dump everything past that
+// into the +Inf overflow.
+var llmLatencyBuckets = []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120}
 
 func newMetrics() *metrics {
 	reg := prometheus.NewRegistry()
@@ -64,9 +81,70 @@ func newMetrics() *metrics {
 			Name: "polar_db_pool_idle",
 			Help: "Idle Postgres connections held in the pool.",
 		}),
+		llmRequests: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_llm_request_total",
+				Help: "Count of LLM provider chat-completion calls, labelled by provider, model, caller endpoint, and outcome.",
+			},
+			[]string{"provider", "model", "endpoint", "status"},
+		),
+		llmLatency: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "polar_llm_request_duration_seconds",
+				Help:    "LLM chat-completion latency in seconds.",
+				Buckets: llmLatencyBuckets,
+			},
+			[]string{"provider", "model", "endpoint"},
+		),
+		llmTokens: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_llm_tokens_total",
+				Help: "Tokens billed by upstream provider (kind=prompt or completion). Only set on responses that include a usage block — passthrough/CLI bots stay at zero.",
+			},
+			[]string{"provider", "model", "endpoint", "kind"},
+		),
 	}
-	reg.MustRegister(m.httpRequests, m.httpLatency, m.goroutines, m.dbPoolOpen, m.dbPoolUse, m.dbPoolIdle)
+	reg.MustRegister(
+		m.httpRequests, m.httpLatency,
+		m.goroutines, m.dbPoolOpen, m.dbPoolUse, m.dbPoolIdle,
+		m.llmRequests, m.llmLatency, m.llmTokens,
+	)
 	return m
+}
+
+// recordLLMCall records one LLM chat-completion attempt. err non-nil ⇒
+// status="error". promptTokens/completionTokens may be 0 if the upstream
+// response didn't include a usage block; in that case the token counters
+// stay flat for that sample (we don't extrapolate).
+//
+// Safe to call from any goroutine. No-op when the registry is nil so unit
+// tests that don't construct metrics don't panic.
+func (m *metrics) recordLLMCall(provider, model, endpoint string, dur time.Duration, err error, promptTokens, completionTokens int) {
+	if m == nil {
+		return
+	}
+	provider = labelOr(provider, "unknown")
+	model = labelOr(model, "unknown")
+	endpoint = labelOr(endpoint, "unknown")
+	status := "ok"
+	if err != nil {
+		status = "error"
+	}
+	m.llmRequests.WithLabelValues(provider, model, endpoint, status).Inc()
+	m.llmLatency.WithLabelValues(provider, model, endpoint).Observe(dur.Seconds())
+	if promptTokens > 0 {
+		m.llmTokens.WithLabelValues(provider, model, endpoint, "prompt").Add(float64(promptTokens))
+	}
+	if completionTokens > 0 {
+		m.llmTokens.WithLabelValues(provider, model, endpoint, "completion").Add(float64(completionTokens))
+	}
+}
+
+func labelOr(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
 }
 
 // httpMiddleware records request count + latency. Uses gin's matched route
