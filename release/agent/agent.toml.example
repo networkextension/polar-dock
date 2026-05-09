@@ -1,0 +1,17 @@
+# polar-agent config
+#
+# Normally written by `polar-agent login --server=<URL> --token=<raw>`,
+# which puts it at ~/.polar/agent.toml. Use this template if you prefer
+# to drop the config in place manually (e.g. on a headless box where
+# typing into stdin is awkward).
+#
+# Required keys:
+#   server  the dock host the agent connects to (HTTPS in prod)
+#   token   the raw bearer token issued by /api/agent/tokens
+#
+# Optional: set $HOME to point ~/.polar at a different path before
+# running the agent, useful for service accounts that don't have a
+# real $HOME.
+
+server = "https://your-dock.example.com"
+token  = "paste-raw-token-from-/api/agent/tokens-here"

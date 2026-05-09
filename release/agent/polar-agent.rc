@@ -1,0 +1,85 @@
+#!/bin/sh
+#
+# FreeBSD rc.d service script for polar-agent.
+#
+# Install:
+#   sudo cp agents/polar-agent_freebsd_amd64 /usr/local/bin/polar-agent
+#   sudo chmod +x /usr/local/bin/polar-agent
+#   sudo cp release/agent/polar-agent.rc /usr/local/etc/rc.d/polar_agent
+#   sudo chmod +x /usr/local/etc/rc.d/polar_agent
+#
+# Configure (in /etc/rc.conf or /etc/rc.conf.local):
+#   polar_agent_enable="YES"
+#   polar_agent_user="polar"                # optional, runs as this user
+#   polar_agent_bot="bot_xxx"               # required
+#   polar_agent_workdir="/var/lib/polar-agent/work"
+#   polar_agent_tool="kimi"                 # kimi/claude/codex, or empty
+#
+# Run:
+#   sudo service polar_agent start
+#   sudo service polar_agent status
+#   sudo service polar_agent stop
+#
+# Notes:
+# - Uses /usr/sbin/daemon as the supervisor (FreeBSD base), which
+#   handles pidfile + log redirection + automatic restart-on-exit
+#   when -r is passed. This stacks with the agent's own attach
+#   reconnect loop: agent reconnects on transient WS drops, daemon
+#   respawns on crash.
+# - polar-agent expects ~/.polar/agent.toml — set it up under the
+#   $polar_agent_user's home, OR run `polar-agent login` once as that
+#   user before enabling this service.
+
+# PROVIDE: polar_agent
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="polar_agent"
+rcvar="polar_agent_enable"
+desc="Polar AI agent (attach to dock)"
+
+load_rc_config $name
+
+: ${polar_agent_enable:="NO"}
+: ${polar_agent_user:="root"}
+: ${polar_agent_bin:="/usr/local/bin/polar-agent"}
+: ${polar_agent_bot:=""}
+: ${polar_agent_workdir:="/var/lib/polar-agent/work"}
+: ${polar_agent_tool:="kimi"}
+: ${polar_agent_log:="/var/log/polar-agent.log"}
+
+pidfile="/var/run/polar_agent.pid"
+command="/usr/sbin/daemon"
+
+# Build the tool flag only when set, so empty TOOL→tool-loop mode.
+_tool_arg=""
+if [ -n "${polar_agent_tool}" ]; then
+  _tool_arg="--tool=${polar_agent_tool}"
+fi
+
+# -P pidfile, -r restart-on-exit, -f detach + redirect stderr,
+# -o append stdout/stderr to logfile, -u run as user.
+command_args="-P ${pidfile} -r -f -o ${polar_agent_log} -u ${polar_agent_user} \
+    ${polar_agent_bin} attach \
+    --bot=${polar_agent_bot} \
+    --workdir=${polar_agent_workdir} \
+    ${_tool_arg}"
+
+start_precmd="polar_agent_precheck"
+polar_agent_precheck()
+{
+  if [ -z "${polar_agent_bot}" ]; then
+    err 1 "polar_agent_bot is empty — set it in /etc/rc.conf"
+  fi
+  if [ ! -x "${polar_agent_bin}" ]; then
+    err 1 "polar-agent binary not executable at ${polar_agent_bin}"
+  fi
+  if [ ! -d "${polar_agent_workdir}" ]; then
+    install -d -o "${polar_agent_user}" -g wheel "${polar_agent_workdir}" || \
+      err 1 "could not create workdir ${polar_agent_workdir}"
+  fi
+}
+
+run_rc_command "$1"

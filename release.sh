@@ -49,6 +49,7 @@ DEFAULT_AGENT_TARGETS=(
   "darwin/amd64"
   "linux/amd64"
   "linux/arm64"
+  "freebsd/amd64"
   "windows/amd64"
 )
 if [ -n "${AGENT_TARGETS_OVERRIDE:-}" ]; then
@@ -135,6 +136,21 @@ if [ -f "${REPO_ROOT}/cmd/polar-agent/tools.example.json" ]; then
   cp "${REPO_ROOT}/cmd/polar-agent/tools.example.json" "${PKG_DIR}/agents/tools.example.json"
 fi
 
+# Service unit templates, start/stop wrappers, install guide,
+# config example. Live in agents/dist/ so the picker README at
+# agents/README.md stays the first thing operators read; service
+# install instructions live one level deeper.
+if [ -d "${REPO_ROOT}/release/agent" ]; then
+  mkdir -p "${PKG_DIR}/agents/dist"
+  cp "${REPO_ROOT}/release/agent/agent.toml.example"      "${PKG_DIR}/agents/dist/agent.toml.example"
+  cp "${REPO_ROOT}/release/agent/start.sh"                "${PKG_DIR}/agents/dist/start.sh"
+  cp "${REPO_ROOT}/release/agent/stop.sh"                 "${PKG_DIR}/agents/dist/stop.sh"
+  cp "${REPO_ROOT}/release/agent/polar-agent.macos.plist" "${PKG_DIR}/agents/dist/polar-agent.macos.plist"
+  cp "${REPO_ROOT}/release/agent/polar-agent.rc"          "${PKG_DIR}/agents/dist/polar-agent.rc"
+  cp "${REPO_ROOT}/release/agent/INSTALL.md"              "${PKG_DIR}/agents/dist/INSTALL.md"
+  chmod +x "${PKG_DIR}/agents/dist/start.sh" "${PKG_DIR}/agents/dist/stop.sh" "${PKG_DIR}/agents/dist/polar-agent.rc"
+fi
+
 # Drop a tiny picker guide in agents/ so the operator knows which
 # binary their machine wants — saves a "what's the difference"
 # email from every recipient.
@@ -150,6 +166,7 @@ Pick the binary matching your machine, copy it somewhere on PATH
 | `polar-agent_darwin_amd64`        | macOS Intel              |
 | `polar-agent_linux_amd64`         | Linux x86_64             |
 | `polar-agent_linux_arm64`         | Linux ARM (Raspberry Pi 4+, AWS Graviton, Azure Ampere) |
+| `polar-agent_freebsd_amd64`       | FreeBSD x86_64           |
 | `polar-agent_windows_amd64.exe`   | Windows x86_64           |
 
 Quick install (Unix):
@@ -169,6 +186,19 @@ Then `polar-agent login --server=<dock URL> --token=<token from
 --workdir=<path> --tool=<kimi|claude|codex>` to start a passthrough
 session. See `tools.example.json` for adding custom tools or
 per-tool env (proxy, API keys, etc.).
+
+## Running as a service
+
+The interactive `attach` form is fine for testing, but for daily use
+you'll want it auto-started. See `dist/INSTALL.md` for OS-specific
+recipes:
+
+- **macOS** — `dist/polar-agent.macos.plist` (launchd LaunchAgent)
+- **FreeBSD** — `dist/polar-agent.rc` (rc.d service)
+- **Generic / Linux / Windows** — `dist/start.sh` + `dist/stop.sh`
+  helpers (nohup-style background runner with pidfile)
+
+Plus `dist/agent.toml.example` for headless config drop-in.
 AGENTS_README
 
 # ---- top-level docs / license -----------------------------------
