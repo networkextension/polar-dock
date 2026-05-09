@@ -19,11 +19,14 @@ type PublicMarkdownEntry = {
   uploaded_at: string;
 };
 
-type Scope = "public" | "workspace";
+type Scope = "own" | "workspace" | "public";
 
 let nextOffset = 0;
 let hasMore = true;
-let scope: Scope = "public";
+// Default tab is "我的" — when a user lands on /markdowns.html they
+// almost always want to see their own drafts first; "公开" / "工作区"
+// are discovery surfaces, "我的" is the work surface.
+let scope: Scope = "own";
 
 initStoredTheme();
 bindThemeSync();
@@ -80,14 +83,21 @@ async function loadMarkdowns(reset = false): Promise<void> {
     return;
   }
 
-  // Scope decides which list endpoint we hit. Workspace tier needs
-  // auth + the X-Workspace-Id header that http.ts auto-injects when
-  // the user is logged in with an active workspace; public tier is
-  // open to anonymous browsers.
-  const url =
-    scope === "workspace"
-      ? `/api/markdown/workspace?limit=10&offset=${nextOffset}`
-      : `/api/public/markdowns?limit=10&offset=${nextOffset}`;
+  // Scope picks the listing endpoint:
+  //   own       → GET /api/markdown        (auth, owner-scoped)
+  //   workspace → GET /api/markdown/workspace (auth, X-Workspace-Id)
+  //   public    → GET /api/public/markdowns  (no auth required)
+  const url = (() => {
+    const qs = `limit=10&offset=${nextOffset}`;
+    switch (scope) {
+      case "own":
+        return `/api/markdown?${qs}`;
+      case "workspace":
+        return `/api/markdown/workspace?${qs}`;
+      default:
+        return `/api/public/markdowns?${qs}`;
+    }
+  })();
   const response = await fetch(url, { credentials: "include" });
   const data = await response.json();
   if (!response.ok) {
@@ -97,7 +107,15 @@ async function loadMarkdowns(reset = false): Promise<void> {
 
   const entries: PublicMarkdownEntry[] = data.entries || [];
   if (reset && entries.length === 0) {
-    markdownList.innerHTML = `<div class='post-empty'>${t("markdowns.noPosts")}</div>`;
+    // Scope-aware empty state — "暂无公开 Markdown" was misleading
+    // when the user is on the 我的 / 工作区 tab.
+    const emptyMsg =
+      scope === "own"
+        ? "你还没有 Markdown，去 Editor 写第一篇吧"
+        : scope === "workspace"
+        ? "工作区里还没有共享的 Markdown"
+        : t("markdowns.noPosts");
+    markdownList.innerHTML = `<div class='post-empty'>${emptyMsg}</div>`;
     hasMore = false;
     markdownLoadMoreBtn.style.display = "none";
     return;
