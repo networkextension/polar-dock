@@ -880,7 +880,11 @@ func (s *Server) sendChatMessage(threadID int64, llmThreadID *int64, senderID, s
 }
 
 func (s *Server) sendFailedBotMessage(threadID int64, llmThreadID *int64, senderID, senderName, content string, latencyMs *int64, now time.Time) (int64, error) {
-	msgID, err := s.createChatMessageWithOptions(threadID, llmThreadID, senderID, "text", true, content, nil, "", latencyMs, false, now)
+	return s.sendFailedBotMessageWithLLM(threadID, llmThreadID, senderID, senderName, content, latencyMs, nil, now)
+}
+
+func (s *Server) sendFailedBotMessageWithLLM(threadID int64, llmThreadID *int64, senderID, senderName, content string, latencyMs *int64, llmSnap *chatLLMSnapshot, now time.Time) (int64, error) {
+	msgID, err := s.createChatMessageWithOptionsAndLLM(threadID, llmThreadID, senderID, "text", true, content, nil, "", latencyMs, false, llmSnap, now)
 	if err != nil {
 		return 0, err
 	}
@@ -888,7 +892,11 @@ func (s *Server) sendFailedBotMessage(threadID int64, llmThreadID *int64, sender
 }
 
 func (s *Server) sendBotChatMessage(threadID int64, llmThreadID *int64, senderID, senderName, content string, latencyMs *int64, now time.Time) (int64, error) {
-	msgID, err := s.createChatMessageWithOptions(threadID, llmThreadID, senderID, "text", false, content, nil, "", latencyMs, false, now)
+	return s.sendBotChatMessageWithLLM(threadID, llmThreadID, senderID, senderName, content, latencyMs, nil, now)
+}
+
+func (s *Server) sendBotChatMessageWithLLM(threadID int64, llmThreadID *int64, senderID, senderName, content string, latencyMs *int64, llmSnap *chatLLMSnapshot, now time.Time) (int64, error) {
+	msgID, err := s.createChatMessageWithOptionsAndLLM(threadID, llmThreadID, senderID, "text", false, content, nil, "", latencyMs, false, llmSnap, now)
 	if err != nil {
 		return 0, err
 	}
@@ -918,7 +926,11 @@ func (s *Server) sendStreamingPlaceholder(threadID int64, llmThreadID *int64, se
 }
 
 func (s *Server) sendSharedMarkdownMessage(threadID int64, llmThreadID *int64, senderID, senderName string, markdownEntryID int64, markdownTitle, preview string, latencyMs *int64, now time.Time) (int64, error) {
-	msgID, err := s.createChatMessageWithMetadata(threadID, llmThreadID, senderID, "shared_markdown", preview, &markdownEntryID, markdownTitle, latencyMs, now)
+	return s.sendSharedMarkdownMessageWithLLM(threadID, llmThreadID, senderID, senderName, markdownEntryID, markdownTitle, preview, latencyMs, nil, now)
+}
+
+func (s *Server) sendSharedMarkdownMessageWithLLM(threadID int64, llmThreadID *int64, senderID, senderName string, markdownEntryID int64, markdownTitle, preview string, latencyMs *int64, llmSnap *chatLLMSnapshot, now time.Time) (int64, error) {
+	msgID, err := s.createChatMessageWithOptionsAndLLM(threadID, llmThreadID, senderID, "shared_markdown", false, preview, &markdownEntryID, markdownTitle, latencyMs, false, llmSnap, now)
 	if err != nil {
 		return 0, err
 	}

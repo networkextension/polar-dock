@@ -76,6 +76,13 @@ type aiRuntimeConfig struct {
 	// (which respects HTTP_PROXY / HTTPS_PROXY env). Plumbed in
 	// from llm_configs.proxy_url.
 	ProxyURL string
+	// Snapshot of the source llm_configs row — written onto the
+	// chat_messages we generate so history survives a later
+	// re-binding of the bot to a different LLM config. 0 / empty
+	// for paths that don't go through an llm_configs row (test
+	// connectivity probes, passthrough bots).
+	LLMConfigID   int64
+	LLMConfigName string
 }
 
 type aiChatCompletionRequest struct {
@@ -380,7 +387,7 @@ func (a *aiAgent) handleAgentTask(task aiAgentTask, cfg aiRuntimeConfig) {
 	if err != nil {
 		log.Printf("ai agent reply failed after %dms: %v", latencyMs, err)
 		body := "我暂时无法完成这次处理，请稍后再试。"
-		if finalErr := a.server.finalizeChatMessage(placeholderID, body, nil, "", latencyPtr, true); finalErr != nil {
+		if finalErr := a.server.finalizeChatMessageWithLLM(placeholderID, body, nil, "", latencyPtr, true, chatLLMSnapshotFromCfg(cfg)); finalErr != nil {
 			log.Printf("finalize agent placeholder (failed) error: %v", finalErr)
 		}
 		return
@@ -398,13 +405,13 @@ func (a *aiAgent) handleAgentTask(task aiAgentTask, cfg aiRuntimeConfig) {
 	entry, _, mdErr := a.server.saveMarkdownDocument(task.ResponderUserID, title, reply, "markdown", false, time.Now())
 	if mdErr != nil {
 		log.Printf("save agent markdown failed: %v (finalizing as plain text)", mdErr)
-		if finalErr := a.server.finalizeChatMessage(placeholderID, reply, nil, "", latencyPtr, false); finalErr != nil {
+		if finalErr := a.server.finalizeChatMessageWithLLM(placeholderID, reply, nil, "", latencyPtr, false, chatLLMSnapshotFromCfg(cfg)); finalErr != nil {
 			log.Printf("finalize agent placeholder (no markdown) error: %v", finalErr)
 		}
 		return
 	}
 	preview := buildMarkdownPreview(reply, 120)
-	if err := a.server.finalizeChatMessage(placeholderID, preview, &entry.ID, entry.Title, latencyPtr, false); err != nil {
+	if err := a.server.finalizeChatMessageWithLLM(placeholderID, preview, &entry.ID, entry.Title, latencyPtr, false, chatLLMSnapshotFromCfg(cfg)); err != nil {
 		log.Printf("finalize agent placeholder error: %v", err)
 	}
 }
@@ -417,10 +424,11 @@ func (a *aiAgent) handleSyncTask(task aiAgentTask, cfg aiRuntimeConfig) {
 	reply, err := a.generateReply(task, cfg)
 	latencyMs := time.Since(start).Milliseconds()
 	latencyPtr := &latencyMs
+	snap := chatLLMSnapshotFromCfg(cfg)
 	if err != nil {
 		log.Printf("ai agent reply failed after %dms: %v", latencyMs, err)
 		reply = "我暂时无法完成这次处理，请稍后再试。"
-		if _, sendErr := a.server.sendFailedBotMessage(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, reply, latencyPtr, time.Now()); sendErr != nil {
+		if _, sendErr := a.server.sendFailedBotMessageWithLLM(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, reply, latencyPtr, snap, time.Now()); sendErr != nil {
 			log.Printf("send failed ai agent chat message failed: %v", sendErr)
 		}
 		return
@@ -435,12 +443,12 @@ func (a *aiAgent) handleSyncTask(task aiAgentTask, cfg aiRuntimeConfig) {
 	entry, _, err := a.server.saveMarkdownDocument(task.ResponderUserID, title, reply, "markdown", false, now)
 	if err != nil {
 		log.Printf("save ai markdown failed: %v", err)
-		if _, sendErr := a.server.sendBotChatMessage(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, reply, latencyPtr, now); sendErr != nil {
+		if _, sendErr := a.server.sendBotChatMessageWithLLM(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, reply, latencyPtr, snap, now); sendErr != nil {
 			log.Printf("send fallback ai agent chat message failed: %v", sendErr)
 		}
 		return
 	}
-	if _, err := a.server.sendSharedMarkdownMessage(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, entry.ID, entry.Title, buildMarkdownPreview(reply, 120), latencyPtr, now); err != nil {
+	if _, err := a.server.sendSharedMarkdownMessageWithLLM(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, entry.ID, entry.Title, buildMarkdownPreview(reply, 120), latencyPtr, snap, now); err != nil {
 		log.Printf("send ai shared markdown message failed: %v", err)
 	}
 }
@@ -544,7 +552,7 @@ func (a *aiAgent) handleStreamingTask(task aiAgentTask, cfg aiRuntimeConfig) {
 			partial += "\n\n（生成被中断：" + streamErr.Error() + "）"
 		}
 		log.Printf("ai agent stream failed after %dms (thread=%d): %v", totalLatency, task.ThreadID, streamErr)
-		if err := a.server.finalizeChatMessage(placeholderID, partial, nil, "", totalLatencyPtr, true); err != nil {
+		if err := a.server.finalizeChatMessageWithLLM(placeholderID, partial, nil, "", totalLatencyPtr, true, chatLLMSnapshotFromCfg(cfg)); err != nil {
 			log.Printf("finalize streaming failed: %v", err)
 		}
 		a.republishMessageCreated(task.ThreadID, placeholderID, task.ResponderUserID)
@@ -567,7 +575,7 @@ func (a *aiAgent) handleStreamingTask(task aiAgentTask, cfg aiRuntimeConfig) {
 		log.Printf("save ai markdown failed: %v", err)
 		// Finalize without a markdown link; the streaming bubble keeps the
 		// final text and just loses the "expand" button.
-		if finalErr := a.server.finalizeChatMessage(placeholderID, finalText, nil, "", totalLatencyPtr, false); finalErr != nil {
+		if finalErr := a.server.finalizeChatMessageWithLLM(placeholderID, finalText, nil, "", totalLatencyPtr, false, chatLLMSnapshotFromCfg(cfg)); finalErr != nil {
 			log.Printf("finalize streaming (no markdown) failed: %v", finalErr)
 		}
 		a.republishMessageCreated(task.ThreadID, placeholderID, task.ResponderUserID)
@@ -575,7 +583,7 @@ func (a *aiAgent) handleStreamingTask(task aiAgentTask, cfg aiRuntimeConfig) {
 	}
 
 	preview := buildMarkdownPreview(finalText, 120)
-	if err := a.server.finalizeChatMessage(placeholderID, preview, &entry.ID, entry.Title, totalLatencyPtr, false); err != nil {
+	if err := a.server.finalizeChatMessageWithLLM(placeholderID, preview, &entry.ID, entry.Title, totalLatencyPtr, false, chatLLMSnapshotFromCfg(cfg)); err != nil {
 		log.Printf("finalize streaming success failed: %v", err)
 	}
 	a.republishMessageCreated(task.ThreadID, placeholderID, task.ResponderUserID)
@@ -1144,12 +1152,14 @@ func (a *aiAgent) runtimeConfig(threadID int64, llmThreadID *int64, responderUse
 		systemPrompt = a.server.renderPrompt(promptSlugAIDefaultSystem, nil, "你是站内的 AI 助手，请基于上下文和当前问题，用清晰、可靠、结构化的中文回复。")
 	}
 	return aiRuntimeConfig{
-		APIKey:       strings.TrimSpace(apiKey),
-		BaseURL:      strings.TrimSpace(item.BaseURL),
-		Model:        strings.TrimSpace(item.Model),
-		SystemPrompt: systemPrompt,
-		ProxyURL:     strings.TrimSpace(item.ProxyURL),
-		Streaming:    item.Streaming,
+		APIKey:        strings.TrimSpace(apiKey),
+		BaseURL:       strings.TrimSpace(item.BaseURL),
+		Model:         strings.TrimSpace(item.Model),
+		SystemPrompt:  systemPrompt,
+		ProxyURL:      strings.TrimSpace(item.ProxyURL),
+		Streaming:     item.Streaming,
+		LLMConfigID:   item.ID,
+		LLMConfigName: strings.TrimSpace(item.Name),
 	}, nil
 }
 

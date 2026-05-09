@@ -552,10 +552,43 @@ type ChatMessage struct {
 	Seq             int64                  `json:"seq,omitempty"`
 	UpdatedAt       *time.Time             `json:"updated_at,omitempty"`
 	Attachment      *ChatMessageAttachment `json:"attachment,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
-	DeletedAt       *time.Time             `json:"deleted_at,omitempty"`
-	DeletedBy       string                 `json:"deleted_by,omitempty"`
-	Deleted         bool                   `json:"deleted"`
+	// LLM* fields snapshot which config produced this reply at the
+	// moment it was generated. nil/empty for user-sent messages and
+	// for passthrough-bot replies (no LLM config used). Survive even
+	// after the source llm_configs row is deleted (FK SET NULL +
+	// snapshot columns).
+	LLMConfigID    *int64    `json:"llm_config_id,omitempty"`
+	LLMConfigName  string    `json:"llm_config_name,omitempty"`
+	LLMModel       string    `json:"llm_model,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
+	DeletedBy      string    `json:"deleted_by,omitempty"`
+	Deleted        bool      `json:"deleted"`
+}
+
+// chatLLMSnapshot is the per-message LLM info captured at write
+// time. Pass through the chat persist API so swapping the bot's
+// LLM later doesn't retroactively change history.
+type chatLLMSnapshot struct {
+	ConfigID   *int64
+	ConfigName string
+	Model      string
+}
+
+func chatLLMSnapshotFromCfg(cfg aiRuntimeConfig) *chatLLMSnapshot {
+	if cfg.LLMConfigID == 0 && cfg.LLMConfigName == "" && cfg.Model == "" {
+		return nil
+	}
+	var idPtr *int64
+	if cfg.LLMConfigID > 0 {
+		v := cfg.LLMConfigID
+		idPtr = &v
+	}
+	return &chatLLMSnapshot{
+		ConfigID:   idPtr,
+		ConfigName: cfg.LLMConfigName,
+		Model:      cfg.Model,
+	}
 }
 
 type LLMThread struct {
@@ -1359,6 +1392,20 @@ ALTER TABLE chat_messages
 
 ALTER TABLE chat_messages
 	ADD COLUMN IF NOT EXISTS llm_thread_id BIGINT REFERENCES llm_threads(id) ON DELETE SET NULL;
+
+-- Per-message LLM config snapshot. Captures which LLM produced
+-- this reply at the moment it was generated, so swapping the
+-- bot's LLM config later doesn't retroactively re-label history.
+-- llm_config_id: FK with ON DELETE SET NULL — config deletion
+-- doesn't lose the message but the link goes away. The two snapshot
+-- columns survive even after the config row is gone, so the UI
+-- can still render "via OpenAI Production · gpt-4o-mini".
+ALTER TABLE chat_messages
+	ADD COLUMN IF NOT EXISTS llm_config_id BIGINT REFERENCES llm_configs(id) ON DELETE SET NULL;
+ALTER TABLE chat_messages
+	ADD COLUMN IF NOT EXISTS llm_config_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE chat_messages
+	ADD COLUMN IF NOT EXISTS llm_model TEXT NOT NULL DEFAULT '';
 
 -- chat_messages.attachment (JSONB inline column) was migrated to
 -- attachments + chat_message_attachments junction in the
@@ -6787,6 +6834,10 @@ func (s *Server) personalWorkspaceForUser(userID string) (string, error) {
 }
 
 func (s *Server) createChatMessageWithOptions(threadID int64, llmThreadID *int64, senderID, messageType string, failed bool, content string, markdownEntryID *int64, markdownTitle string, latencyMs *int64, streaming bool, createdAt time.Time) (int64, error) {
+	return s.createChatMessageWithOptionsAndLLM(threadID, llmThreadID, senderID, messageType, failed, content, markdownEntryID, markdownTitle, latencyMs, streaming, nil, createdAt)
+}
+
+func (s *Server) createChatMessageWithOptionsAndLLM(threadID int64, llmThreadID *int64, senderID, messageType string, failed bool, content string, markdownEntryID *int64, markdownTitle string, latencyMs *int64, streaming bool, llmSnap *chatLLMSnapshot, createdAt time.Time) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -6797,10 +6848,19 @@ func (s *Server) createChatMessageWithOptions(threadID int64, llmThreadID *int64
 		}
 	}()
 
+	var llmConfigID *int64
+	llmConfigName := ""
+	llmModel := ""
+	if llmSnap != nil {
+		llmConfigID = llmSnap.ConfigID
+		llmConfigName = strings.TrimSpace(llmSnap.ConfigName)
+		llmModel = strings.TrimSpace(llmSnap.Model)
+	}
+
 	var id int64
 	err = tx.QueryRow(
-		`INSERT INTO chat_messages (thread_id, llm_thread_id, sender_id, message_type, failed, content, markdown_entry_id, markdown_title, latency_ms, streaming, seq, updated_at, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $11)
+		`INSERT INTO chat_messages (thread_id, llm_thread_id, sender_id, message_type, failed, content, markdown_entry_id, markdown_title, latency_ms, streaming, seq, llm_config_id, llm_config_name, llm_model, updated_at, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $12, $13, $14, $14)
 		 RETURNING id`,
 		threadID,
 		llmThreadID,
@@ -6812,6 +6872,9 @@ func (s *Server) createChatMessageWithOptions(threadID int64, llmThreadID *int64
 		markdownTitle,
 		latencyMs,
 		streaming,
+		llmConfigID,
+		llmConfigName,
+		llmModel,
 		createdAt,
 	).Scan(&id)
 	if err != nil {
@@ -6892,6 +6955,18 @@ func (s *Server) updateChatMessageContent(messageID int64, content string) (bool
 // finalizeChatMessage flips streaming=false on a placeholder row and
 // commits the final content + optional markdown link + latency. Idempotent.
 func (s *Server) finalizeChatMessage(messageID int64, content string, markdownEntryID *int64, markdownTitle string, latencyMs *int64, failed bool) error {
+	return s.finalizeChatMessageWithLLM(messageID, content, markdownEntryID, markdownTitle, latencyMs, failed, nil)
+}
+
+func (s *Server) finalizeChatMessageWithLLM(messageID int64, content string, markdownEntryID *int64, markdownTitle string, latencyMs *int64, failed bool, llmSnap *chatLLMSnapshot) error {
+	var llmConfigID *int64
+	llmConfigName := ""
+	llmModel := ""
+	if llmSnap != nil {
+		llmConfigID = llmSnap.ConfigID
+		llmConfigName = strings.TrimSpace(llmSnap.ConfigName)
+		llmModel = strings.TrimSpace(llmSnap.Model)
+	}
 	_, err := s.db.Exec(
 		`UPDATE chat_messages
 		    SET content = $1,
@@ -6901,6 +6976,9 @@ func (s *Server) finalizeChatMessage(messageID int64, content string, markdownEn
 		        failed = $5,
 		        streaming = FALSE,
 		        seq = seq + 1,
+		        llm_config_id = COALESCE($7, llm_config_id),
+		        llm_config_name = CASE WHEN $8 = '' THEN llm_config_name ELSE $8 END,
+		        llm_model = CASE WHEN $9 = '' THEN llm_model ELSE $9 END,
 		        updated_at = NOW()
 		  WHERE id = $6 AND deleted_at IS NULL`,
 		content,
@@ -6909,6 +6987,9 @@ func (s *Server) finalizeChatMessage(messageID int64, content string, markdownEn
 		latencyMs,
 		failed,
 		messageID,
+		llmConfigID,
+		llmConfigName,
+		llmModel,
 	)
 	return err
 }
@@ -6921,8 +7002,9 @@ func (s *Server) getChatMessageByID(messageID int64) (*ChatMessage, error) {
 	var updatedAt sql.NullTime
 	var deletedAt sql.NullTime
 	var deletedBy sql.NullString
+	var llmConfigID sql.NullInt64
 	err := s.db.QueryRow(
-		`SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.created_at, m.deleted_at, m.deleted_by
+		`SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.created_at, m.deleted_at, m.deleted_by, m.llm_config_id, COALESCE(m.llm_config_name, ''), COALESCE(m.llm_model, '')
 		   FROM chat_messages m
 		   JOIN users u ON u.id = m.sender_id
 		  WHERE m.id = $1`,
@@ -6946,6 +7028,9 @@ func (s *Server) getChatMessageByID(messageID int64) (*ChatMessage, error) {
 		&msg.CreatedAt,
 		&deletedAt,
 		&deletedBy,
+		&llmConfigID,
+		&msg.LLMConfigName,
+		&msg.LLMModel,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -6973,6 +7058,10 @@ func (s *Server) getChatMessageByID(messageID int64) (*ChatMessage, error) {
 	if deletedBy.Valid {
 		msg.DeletedBy = deletedBy.String
 	}
+	if llmConfigID.Valid {
+		v := llmConfigID.Int64
+		msg.LLMConfigID = &v
+	}
 	one := []ChatMessage{msg}
 	if err := s.attachChatMessageAttachments(one); err != nil {
 		return nil, err
@@ -6984,7 +7073,7 @@ func (s *Server) listRecentChatMessages(threadID int64, llmThreadID *int64, limi
 	if limit <= 0 {
 		limit = 10
 	}
-	query := `SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.created_at, m.deleted_at, m.deleted_by
+	query := `SELECT m.id, m.thread_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url, m.message_type, m.failed, m.content, m.markdown_entry_id, m.markdown_title, m.latency_ms, m.streaming, m.seq, m.updated_at, m.created_at, m.deleted_at, m.deleted_by, m.llm_config_id, COALESCE(m.llm_config_name, ''), COALESCE(m.llm_model, '')
 		   FROM chat_messages m
 		   JOIN users u ON u.id = m.sender_id
 		  WHERE m.thread_id = $1`
@@ -7011,6 +7100,7 @@ func (s *Server) listRecentChatMessages(threadID int64, llmThreadID *int64, limi
 		var updatedAt sql.NullTime
 		var deletedAt sql.NullTime
 		var deletedBy sql.NullString
+		var llmConfigID sql.NullInt64
 		if err := rows.Scan(
 			&msg.ID,
 			&msg.ThreadID,
@@ -7030,6 +7120,9 @@ func (s *Server) listRecentChatMessages(threadID int64, llmThreadID *int64, limi
 			&msg.CreatedAt,
 			&deletedAt,
 			&deletedBy,
+			&llmConfigID,
+			&msg.LLMConfigName,
+			&msg.LLMModel,
 		); err != nil {
 			return nil, err
 		}
@@ -7039,6 +7132,10 @@ func (s *Server) listRecentChatMessages(threadID int64, llmThreadID *int64, limi
 		}
 		if llmThreadIDValue.Valid {
 			msg.LLMThreadID = &llmThreadIDValue.Int64
+		}
+		if llmConfigID.Valid {
+			v := llmConfigID.Int64
+			msg.LLMConfigID = &v
 		}
 		if markdownEntryID.Valid {
 			msg.MarkdownEntryID = &markdownEntryID.Int64
