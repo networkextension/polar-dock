@@ -50,6 +50,7 @@ DEFAULT_AGENT_TARGETS=(
   "linux/amd64"
   "linux/arm64"
   "freebsd/amd64"
+  "freebsd/arm64"
   "windows/amd64"
 )
 if [ -n "${AGENT_TARGETS_OVERRIDE:-}" ]; then
