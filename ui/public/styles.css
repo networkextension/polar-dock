@@ -3494,7 +3494,43 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 
 /* Responsive */
 @media (max-width: 860px) {
-  .lp-sidebar { display: none; }
+  /* Mobile sidebar = drawer. Default position is off-screen left;
+     the lp-sidebar-toggle (☰ in the topbar) flips
+     `.mobile-nav-open` on `.lp-app` to slide it in. The user / settings /
+     logout buttons live in the foot of this drawer, so without it those
+     controls are completely unreachable on mobile (issue #149). */
+  .lp-sidebar {
+    display: flex; /* keep flex; movement is via transform */
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 88vw;
+    z-index: 60;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.15);
+    transform: translateX(-105%);
+    transition: transform 0.18s ease-out;
+    overflow-y: auto;
+  }
+  .lp-app.mobile-nav-open .lp-sidebar {
+    transform: translateX(0);
+  }
+  /* Backdrop element is created by initSidebarToggle and inserted as a
+     sibling. .lp-mobile-backdrop sits over the page (under the drawer)
+     when the drawer opens; clicking it closes the drawer. */
+  .lp-mobile-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 55;
+  }
+  .lp-app.mobile-nav-open .lp-mobile-backdrop {
+    display: block;
+  }
   .lp-adv-grid { grid-template-columns: 1fr; }
   .lp-panel { width: 100%; right: -100%; }
   .lp-panel.open { right: 0; }
