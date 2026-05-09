@@ -490,7 +490,18 @@ function renderTaskBotSlot(t: ProjectTask, pickerOpen: boolean): string {
   if (!pickerOpen) {
     return `<button type="button" class="btn-inline btn-secondary" data-task-pickup="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">🤖 派给 Bot</button>`;
   }
-  if (availableBots.length === 0) {
+  // Filter bots by project type:
+  //   research project → only show research bots (classic kind,
+  //                      auto-registered, no preferred_tool — backed
+  //                      by workspace LLM + agent tools)
+  //   code project    → only show coder bots (passthrough kind)
+  // If the filtered list is empty (operator hasn't started the
+  // right kind of agent yet), fall back to showing everything so
+  // they aren't trapped — better to allow a manual pick than block.
+  const isResearch = activeProject?.runtime_env === "research";
+  const filtered = filterBotsForProject(availableBots, isResearch);
+  const usableBots = filtered.length > 0 ? filtered : availableBots;
+  if (usableBots.length === 0) {
     return `<span style="color:var(--text-muted,#888);">没有 bot 可用，请先在 Bots 页面创建一个</span>
             <button type="button" class="btn-inline btn-secondary" data-task-pickup="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">取消</button>`;
   }
@@ -499,7 +510,7 @@ function renderTaskBotSlot(t: ProjectTask, pickerOpen: boolean): string {
   // ("kimi"/"claude"/"codex"/""). Matching = bot's tool ===
   // project.code_provider.
   const preferred = activeProject?.code_provider || "";
-  const sorted = [...availableBots].sort((a, b) => {
+  const sorted = [...usableBots].sort((a, b) => {
     const at = botToolMap[a.bot_user_id] || "";
     const bt = botToolMap[b.bot_user_id] || "";
     const aMatch = preferred && at === preferred ? 1 : 0;
@@ -522,11 +533,32 @@ function renderTaskBotSlot(t: ProjectTask, pickerOpen: boolean): string {
       return `<button type="button" class="${cls}" data-pickup-bot="${escapeHTML(b.bot_user_id)}" data-task-id="${escapeHTML(t.id)}" style="${style}">${escapeHTML(b.name)}${tag}</button>`;
     })
     .join("");
-  const hint = preferred
-    ? `<span style="color:var(--text-muted,#888);">选一个 bot（首选 <strong>${escapeHTML(preferred)}</strong>）：</span>`
-    : `<span style="color:var(--text-muted,#888);">选一个 bot：</span>`;
-  return `${hint}${choices}
+  const hint = isResearch
+    ? `<span style="color:var(--text-muted,#888);">研究项目 — 选一个 research bot：</span>`
+    : preferred
+      ? `<span style="color:var(--text-muted,#888);">选一个 bot（首选 <strong>${escapeHTML(preferred)}</strong>）：</span>`
+      : `<span style="color:var(--text-muted,#888);">选一个 bot：</span>`;
+  const fallbackNote = filtered.length === 0
+    ? `<span style="font-size:11px; color:#c80;">⚠️ 没找到匹配 ${isResearch ? "研究" : "代码"} 项目的 bot，下面列出全部</span><br/>`
+    : "";
+  return `${fallbackNote}${hint}${choices}
           <button type="button" class="btn-inline btn-secondary" data-task-pickup="${escapeHTML(t.id)}" style="font-size:11px; padding:3px 8px;">取消</button>`;
+}
+
+// filterBotsForProject splits availableBots by project type.
+// Research bot signature: bot_kind === "classic" AND
+//   (is_auto_registered OR preferred_tool === ""). This catches
+//   the agent auto-registered "research" bot AND any legacy
+//   classic bots an operator might still have around.
+// Coder bot signature: bot_kind === "passthrough" (preferred_tool
+//   set to kimi/claude/codex/...).
+function filterBotsForProject(bots: BotUser[], isResearch: boolean): BotUser[] {
+  return bots.filter((b) => {
+    if (isResearch) {
+      return b.bot_kind === "classic";
+    }
+    return b.bot_kind === "passthrough";
+  });
 }
 
 // ---- data ops -----------------------------------------------------
@@ -736,9 +768,21 @@ async function changeTaskStatus(taskID: string, status: TaskStatus): Promise<voi
 // the pickup handler's agent precheck, which is not the failure
 // mode the user can act on through this UI.
 function syncDispatchAllBotOptions(): void {
-  const attached = availableBots.filter((b) => (botToolMap[b.bot_user_id] || "") !== "");
+  const isResearch = activeProject?.runtime_env === "research";
+  // Research project: classic bots are usable even without an
+  // attached agent (dock makes the LLM call; agent only needed
+  // when the LLM tool_calls). Coder project: must be attached
+  // (passthrough mode requires the local CLI to take over).
+  const filteredByKind = filterBotsForProject(availableBots, isResearch);
+  const usable = filteredByKind.length > 0 ? filteredByKind : availableBots;
+  const attached = isResearch
+    ? usable
+    : usable.filter((b) => (botToolMap[b.bot_user_id] || "") !== "");
   if (attached.length === 0) {
-    dispatchAllBotSelect.innerHTML = `<option value="">没有 attached bot（请先 polar-agent attach）</option>`;
+    const msg = isResearch
+      ? `没有 research bot（先在 docker 启动 polar-agent --research）`
+      : `没有 attached bot（请先 polar-agent attach）`;
+    dispatchAllBotSelect.innerHTML = `<option value="">${msg}</option>`;
     return;
   }
   const preferred = activeProject?.code_provider || "";
