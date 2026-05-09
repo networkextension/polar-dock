@@ -242,7 +242,7 @@ if ! command -v npm >/dev/null 2>&1; then
   fi
 fi
 if command -v npm >/dev/null 2>&1; then
-  if npm install -g @openai/codex-cli; then
+  if npm install -g @openai/codex; then
     record_ok "codex installed"
 {{if eq .Coders.Codex.AuthMode "api_key"}}
     record_ok "codex auth = api_key — OPENAI_API_KEY written to ~/.polar/tools.json"
@@ -250,10 +250,10 @@ if command -v npm >/dev/null 2>&1; then
     record_ok "codex auth = login — run 'codex login' once before attaching"
 {{end}}
   else
-    record_err "codex install failed (npm install -g @openai/codex-cli) — check npm/network"
+    record_err "codex install failed (npm install -g @openai/codex) — check npm/network"
   fi
 else
-  record_err "codex skipped: Node.js bootstrap failed. Manual: install Node 22+ then 'npm install -g @openai/codex-cli'"
+  record_err "codex skipped: Node.js bootstrap failed. Manual: install Node 22+ then 'npm install -g @openai/codex'"
 fi
 {{end}}
 

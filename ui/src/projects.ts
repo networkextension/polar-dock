@@ -1158,7 +1158,7 @@ type CoderUIRow = { name: CoderName; label: string; install: string };
 const CODER_ROWS: CoderUIRow[] = [
   { name: "kimi", label: "kimi-cli", install: "uv tool install kimi-cli" },
   { name: "claude", label: "claude-code", install: "npm i -g @anthropic-ai/claude-code" },
-  { name: "codex", label: "codex", install: "npm i -g @openai/codex-cli" },
+  { name: "codex", label: "codex", install: "npm i -g @openai/codex" },
 ];
 
 // API key env var names per coder — what the install script will

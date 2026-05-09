@@ -78,7 +78,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # Install at image-build time so the operator's first attach
 # doesn't have to wait for npm/uv downloads. Failures abort the
 # image build (better than letting a broken image into the registry).
-RUN npm install -g @anthropic-ai/claude-code @openai/codex-cli \
+RUN npm install -g @anthropic-ai/claude-code @openai/codex \
  && uv tool install kimi-cli
 
 # Make sure uv-installed tools are on PATH (uv tool install writes
