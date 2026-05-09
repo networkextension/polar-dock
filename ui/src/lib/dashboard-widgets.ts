@@ -8,6 +8,7 @@
 // list data shape demands it.
 
 import { requestJson } from "../api/http.js";
+import { iconHTML } from "./icons.js";
 
 export type WidgetMeta = {
   slug: string;
@@ -80,24 +81,27 @@ function emptyState(msg: string, opts: { icon?: string; ctaText?: string; ctaHre
 
 export function renderQuickStart(): string {
   // 9 tiles linking to main modules. Static — doesn't need data fetch.
+  // Icon names map 1:1 to lib/icons.ts ICON_PATHS keys; mismatched
+  // names render an empty SVG (graceful degradation, but flag in
+  // dev tools because the visual will be conspicuously blank).
   const tiles: Array<[string, string, string, string]> = [
-    ["✦", "项目", "/projects.html", "AI 拆解 + 派单"],
-    ["◎", "Posts", "/posts.html", "动态 / 讨论"],
-    ["◈", "Markdowns", "/markdowns.html", "长文 / 笔记"],
-    ["◉", "Chat", "/chat.html", "Bot 对话"],
-    ["✍", "Creation", "/creation.html", "图文创作"],
-    ["▶", "Video Studio", "/video-studio.html", "视频生成"],
-    ["⬇", "iOS 分发", "/iosdist.html", "TF / OTA"],
-    ["⌂", "工作区", "/teams.html", "团队 / 邀请"],
-    ["✎", "Editor", "/editor.html", "代码编辑器"],
+    ["folder-kanban",   "项目",          "/projects.html",     "AI 拆解 + 派单"],
+    ["message-square",  "Posts",         "/posts.html",        "动态 / 讨论"],
+    ["file-text",       "Markdowns",     "/markdowns.html",    "长文 / 笔记"],
+    ["message-circle",  "Chat",          "/chat.html",         "Bot 对话"],
+    ["pen-line",        "Creation",      "/creation.html",     "图文创作"],
+    ["video",           "Video Studio",  "/video-studio.html", "视频生成"],
+    ["smartphone",      "iOS 分发",       "/iosdist.html",      "TF / OTA"],
+    ["users-round",     "工作区",         "/teams.html",        "团队 / 邀请"],
+    ["code",            "Editor",        "/editor.html",       "代码编辑器"],
   ];
   const body = `
     <div class="dashboard-quickstart-grid">
       ${tiles
         .map(
-          ([icon, label, href, desc]) => `
+          ([iconName, label, href, desc]) => `
             <a class="dashboard-quickstart-tile" href="${escapeHTML(href)}">
-              <span class="dashboard-quickstart-icon" aria-hidden="true">${icon}</span>
+              <span class="dashboard-quickstart-icon" aria-hidden="true">${iconHTML(iconName, 22)}</span>
               <div class="dashboard-quickstart-text">
                 <span class="dashboard-quickstart-label">${escapeHTML(label)}</span>
                 <span class="dashboard-quickstart-desc">${escapeHTML(desc)}</span>
