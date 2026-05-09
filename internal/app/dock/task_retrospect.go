@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 )
@@ -256,11 +257,31 @@ func parseTaskRetrospectOutput(raw string) (*rawTaskRetrospect, error) {
 	return &parsed, nil
 }
 
+// autoRetrospectEnabled returns whether the on-status→done auto
+// trigger should fire. Default OFF — design doc said "ship manual
+// first, observe, then auto". Operators opt in via env var
+// POLAR_AUTO_RETROSPECT=1 (any truthy: 1, true, yes, on).
+//
+// Workspace-scoped opt-in is the next refinement; for now this is
+// a global toggle so the field stays small and migration-free.
+func autoRetrospectEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("POLAR_AUTO_RETROSPECT")))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // fireRetrospectAsync kicks off a retrospect generation in the
 // background; used by the auto-trigger path (status→done). Errors
 // are logged, not returned. Bounded by retrospectAutoTimeout so a
-// stuck LLM doesn't park a goroutine forever.
+// stuck LLM doesn't park a goroutine forever. No-op when the
+// auto-trigger env var isn't set (default behavior).
 func (s *Server) fireRetrospectAsync(projectID, taskID, workspaceID, triggeringUserID string) {
+	if !autoRetrospectEnabled() {
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), retrospectAutoTimeout)
 		defer cancel()

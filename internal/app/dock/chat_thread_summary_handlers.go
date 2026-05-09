@@ -64,12 +64,26 @@ func (s *Server) handleChatThreadSummary(c *gin.Context) {
 	// will pick up the new one on next page open. This is the
 	// "good enough" behavior; clients that need fresh-now use the
 	// /refresh POST.
+	//
+	// The async path re-validates participant membership before
+	// writing — if the user got kicked from the thread between the
+	// initial GET and the goroutine's run, we should NOT generate
+	// a new summary they can't read.
 	if stale {
-		go func(tid int64) {
+		go func(tid int64, viewerID string) {
+			ok, err := s.isChatParticipant(tid, viewerID)
+			if err != nil {
+				log.Printf("thread summary refresh re-check: thread=%d err=%v", tid, err)
+				return
+			}
+			if !ok {
+				// User no longer a participant — silently skip.
+				return
+			}
 			if _, err := s.generateThreadSummary(tid); err != nil {
 				log.Printf("thread summary refresh background: thread=%d err=%v", tid, err)
 			}
-		}(threadID)
+		}(threadID, userIDStr)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

@@ -611,26 +611,157 @@ func (s *Server) updateProjectTask(projectID, taskID string, u ProjectTaskUpdate
 	return nil
 }
 
+// taskRevisionAudit is the snapshot data fed into a revision row.
+// Bundled so callers can pass it through update paths without a
+// growing positional argument list.
+type taskRevisionAudit struct {
+	Title       string
+	Description string
+	Source      string
+	LLMName     string
+	LLMModel    string
+	CreatedBy   string
+}
+
 // createProjectTaskRevision appends an audit row recording the
-// pre-update task state. Caller passes title + description from the
-// task BEFORE the update; that's what's snapshotted. source labels
-// the origin (e.g. "system_agent_sharpen"), llmName/llmModel record
-// which LLM produced the rewrite for the 4-touchpoint transparency
-// rule. createdBy is the user who triggered it (nullable for
-// system-driven flows).
-func (s *Server) createProjectTaskRevision(taskID, title, description, source, llmName, llmModel, createdBy string) error {
+// pre-update task state. Verifies (taskID, projectID) actually pair
+// up before inserting — defense against a caller that has the task
+// id but never re-validated it belongs to the workspace's project.
+// Returns sql.ErrNoRows if the pair doesn't exist.
+//
+// The transactional sibling updateProjectTaskWithAudit below is the
+// preferred entrypoint when the audit row should land atomically
+// with the corresponding update; this standalone version is here
+// for completeness + tests.
+func (s *Server) createProjectTaskRevision(projectID, taskID string, audit taskRevisionAudit) error {
+	// Validate the task is actually in the claimed project. Without
+	// this check, a caller with a stray taskID could write audit
+	// rows pointing at unrelated tasks.
+	var actualProjectID string
+	err := s.db.QueryRow(
+		`SELECT project_id FROM project_tasks WHERE id = $1`,
+		taskID,
+	).Scan(&actualProjectID)
+	if err != nil {
+		return err
+	}
+	if actualProjectID != projectID {
+		return sql.ErrNoRows
+	}
 	var createdByArg any
-	if strings.TrimSpace(createdBy) != "" {
-		createdByArg = createdBy
+	if strings.TrimSpace(audit.CreatedBy) != "" {
+		createdByArg = audit.CreatedBy
 	} else {
 		createdByArg = nil
 	}
-	_, err := s.db.Exec(
+	_, err = s.db.Exec(
 		`INSERT INTO project_task_revisions (task_id, title, description, source, llm_name, llm_model, created_by, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-		taskID, title, description, source, llmName, llmModel, createdByArg,
+		taskID, audit.Title, audit.Description, audit.Source, audit.LLMName, audit.LLMModel, createdByArg,
 	)
 	return err
+}
+
+// updateProjectTaskWithAudit is the transactional sibling of
+// updateProjectTask. When audit is non-nil, snapshots the pre-update
+// task into project_task_revisions in the SAME transaction as the
+// UPDATE. This closes the audit-loss race where a crash between
+// audit-write and task-update would leave an orphan revision row,
+// AND the inverse where a failed update would leave a duplicate
+// revision after a frontend retry.
+//
+// Pass audit=nil when no audit is desired; behavior matches plain
+// updateProjectTask.
+func (s *Server) updateProjectTaskWithAudit(projectID, taskID string, u ProjectTaskUpdate, audit *taskRevisionAudit) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Audit step: snapshot the existing task. Pulled inside the tx
+	// so the title/description we capture are exactly the values
+	// that the UPDATE replaces. SELECT FOR UPDATE locks the row
+	// against concurrent edits.
+	if audit != nil {
+		var prevTitle, prevDescription, actualProjectID string
+		err = tx.QueryRow(
+			`SELECT project_id, title, description FROM project_tasks WHERE id = $1 FOR UPDATE`,
+			taskID,
+		).Scan(&actualProjectID, &prevTitle, &prevDescription)
+		if err != nil {
+			return err
+		}
+		if actualProjectID != projectID {
+			err = sql.ErrNoRows
+			return err
+		}
+		var createdByArg any
+		if strings.TrimSpace(audit.CreatedBy) != "" {
+			createdByArg = audit.CreatedBy
+		} else {
+			createdByArg = nil
+		}
+		_, err = tx.Exec(
+			`INSERT INTO project_task_revisions (task_id, title, description, source, llm_name, llm_model, created_by, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+			taskID, prevTitle, prevDescription, audit.Source, audit.LLMName, audit.LLMModel, createdByArg,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	// UPDATE step: same SQL build as updateProjectTask but inside
+	// the tx. Kept inline here rather than calling the public
+	// helper because that uses s.db.Exec (different connection,
+	// outside the tx).
+	sets := []string{"updated_at = NOW()"}
+	args := []any{}
+	if u.Title != nil {
+		args = append(args, *u.Title)
+		sets = append(sets, "title = $"+itoa(len(args)))
+	}
+	if u.Description != nil {
+		args = append(args, *u.Description)
+		sets = append(sets, "description = $"+itoa(len(args)))
+	}
+	if u.Status != nil {
+		args = append(args, *u.Status)
+		sets = append(sets, "status = $"+itoa(len(args)))
+		switch *u.Status {
+		case ProjectTaskStatusInProgress:
+			sets = append(sets, "started_at = COALESCE(started_at, NOW())")
+		case ProjectTaskStatusDone:
+			sets = append(sets, "completed_at = NOW()")
+		}
+	}
+	args = append(args, taskID, projectID)
+	q := `UPDATE project_tasks SET ` + strings.Join(sets, ", ") +
+		` WHERE id = $` + itoa(len(args)-1) + ` AND project_id = $` + itoa(len(args))
+	res, execErr := tx.Exec(q, args...)
+	if execErr != nil {
+		err = execErr
+		return err
+	}
+	rows, raErr := res.RowsAffected()
+	if raErr != nil {
+		err = raErr
+		return err
+	}
+	if rows == 0 {
+		err = sql.ErrNoRows
+		return err
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = commitErr
+		return err
+	}
+	return nil
 }
 
 // bulkUpdateProjectTaskStatus updates every task in the project

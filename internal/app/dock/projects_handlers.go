@@ -987,21 +987,21 @@ func (s *Server) handleProjectTaskUpdate(c *gin.Context) {
 		}
 	}
 
-	// Audit hook: snapshot the pre-update task before applying the
-	// change so the user can see "what was the description before AI
-	// rewrote it". Only fires when AuditSource is set; failure to
-	// write the audit row is logged but does NOT block the update —
-	// losing audit visibility is less bad than losing the user's
-	// edit.
+	// Audit hook: snapshot the pre-update task into
+	// project_task_revisions in the SAME transaction as the UPDATE.
+	// Goes through updateProjectTaskWithAudit so a crash mid-flight
+	// can't leave an orphan revision row (the audit-loss race fixed
+	// in the system-agent hardening pass).
+	var auditPtr *taskRevisionAudit
 	if strings.TrimSpace(req.AuditSource) != "" {
-		if prev, err := s.loadProjectTask(projectID, taskID); err == nil && prev != nil {
-			if aerr := s.createProjectTaskRevision(prev.ID, prev.Title, prev.Description, req.AuditSource, req.AuditLLMName, req.AuditLLMModel, userIDStr); aerr != nil {
-				log.Printf("project_task_revisions audit insert failed: task=%s err=%v", taskID, aerr)
-			}
+		auditPtr = &taskRevisionAudit{
+			Source:    req.AuditSource,
+			LLMName:   req.AuditLLMName,
+			LLMModel:  req.AuditLLMModel,
+			CreatedBy: userIDStr,
 		}
 	}
-
-	if err := s.updateProjectTask(projectID, taskID, u); err != nil {
+	if err := s.updateProjectTaskWithAudit(projectID, taskID, u, auditPtr); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
