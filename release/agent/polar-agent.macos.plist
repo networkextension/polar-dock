@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd LaunchAgent template for polar-agent (macOS).
+
+  How to install:
+
+    1. Copy the binary onto PATH (matching your CPU — arm64 / amd64):
+         cp agents/polar-agent_darwin_arm64 /usr/local/bin/polar-agent
+         chmod +x /usr/local/bin/polar-agent
+
+    2. Run `polar-agent login --server=<URL> --token=<raw>` once so
+       ~/.polar/agent.toml exists.
+
+    3. Replace the four placeholders below:
+         BOT_ID_PLACEHOLDER       e.g. bot_QhchbmMPYkOvBmdQ
+         WORKDIR_PLACEHOLDER      absolute path, e.g. /Users/me/polar-work
+         HOME_PLACEHOLDER         absolute path, e.g. /Users/me
+         (TOOL on the kimi line — change to claude/codex if needed)
+
+    4. Drop into ~/Library/LaunchAgents/ and load:
+         cp polar-agent.macos.plist ~/Library/LaunchAgents/com.polar.agent.plist
+         launchctl load ~/Library/LaunchAgents/com.polar.agent.plist
+
+       To stop / unload:
+         launchctl unload ~/Library/LaunchAgents/com.polar.agent.plist
+
+       To watch the log:
+         tail -f /tmp/polar-agent.log
+
+  KeepAlive=true means launchd respawns the agent if it exits — same
+  behavior as the agent's own attach reconnect loop, just one layer
+  out so a crash that breaks the reconnect loop still recovers.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.polar.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/polar-agent</string>
+        <string>attach</string>
+        <string>--bot=BOT_ID_PLACEHOLDER</string>
+        <string>--workdir=WORKDIR_PLACEHOLDER</string>
+        <string>--tool=kimi</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/polar-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/polar-agent.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>WORKDIR_PLACEHOLDER</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>HOME_PLACEHOLDER</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Throttle restarts: don't loop respawn if the process keeps
+         dying within 30s of start. Helps when the dock is unreachable
+         for an extended stretch. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>
