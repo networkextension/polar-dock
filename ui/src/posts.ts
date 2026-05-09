@@ -529,7 +529,9 @@ function createPostCard(post: Post): HTMLElement {
     const renderDeleteActions = (): void => {
       if (pendingDelete) {
         deleteBtn.textContent = t("common.confirmDelete");
-        deleteBtn.classList.add("btn-danger");
+        // is-confirm flips .btn-danger's default (ghost) into the
+        // filled-red look used for confirm steps. uifix v2 spec.
+        deleteBtn.classList.add("btn-danger", "is-confirm");
         if (!actionsDiv.querySelector(".cancel-delete-btn")) {
           const cancelBtn = document.createElement("button");
           cancelBtn.className = "btn-inline btn-secondary cancel-delete-btn";
@@ -539,7 +541,7 @@ function createPostCard(post: Post): HTMLElement {
             pendingDelete = false;
             cancelBtn.remove();
             deleteBtn.textContent = t("posts.deletePost");
-            deleteBtn.classList.remove("btn-danger");
+            deleteBtn.classList.remove("btn-danger", "is-confirm");
           });
           actionsDiv.appendChild(cancelBtn);
         }

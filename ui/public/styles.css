@@ -41,6 +41,9 @@
   --diff-removed-fg:     #9f1239;
   --diff-added-bg:       #f0fdf4;
   --diff-added-fg:       #166534;
+  --danger-bg:           rgba(220, 53, 69, 0.12);
+  --warning:             #d97706;
+  --warning-bg:          rgba(217, 119, 6, 0.12);
 }
 
 /* ── Prometheus dark (legacy "default" key) ──────────────────────── */
@@ -73,6 +76,9 @@
   --diff-removed-fg:     #fca5a5;
   --diff-added-bg:       rgba(40, 167, 69, 0.18);
   --diff-added-fg:       #86efac;
+  --danger-bg:           rgba(220, 53, 69, 0.18);
+  --warning:             #f59e0b;
+  --warning-bg:          rgba(245, 158, 11, 0.18);
 }
 
 * {
@@ -252,13 +258,30 @@ button:hover {
   box-shadow: 0 10px 20px var(--secondary-shadow);
 }
 
+/* .btn-danger default = ghost text-button (uifix v2 §I.2/§II.2).
+   The orange-filled variant from before was visually equivalent to
+   the primary CTA, which is the bug — destructive actions should
+   be subtle by default and only become prominent in a confirm
+   state. Keep the filled style under `.is-confirm` so the existing
+   posts.ts confirm-then-delete pattern still gets the loud red. */
 .btn-danger {
-  background: #e6522c;
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid transparent;
+}
+.btn-danger:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+  box-shadow: none;
+  transform: none;
+}
+.btn-danger.is-confirm {
+  background: var(--danger);
   color: #fff;
 }
-
-.btn-danger:hover {
-  box-shadow: 0 10px 20px rgba(230, 82, 44, 0.35);
+.btn-danger.is-confirm:hover {
+  background: color-mix(in srgb, var(--danger) 85%, #000);
+  color: #fff;
 }
 
 /* Slim ghost-style chip used in chat headers and quick-action toolbars.
@@ -4543,3 +4566,84 @@ textarea:focus-visible,
   background: var(--diff-added-bg);
   color: var(--diff-added-fg);
 }
+
+/* ── Button design system (uifix v2 §II.2) ──────────────────────────
+   Replaces the historical button mess (.btn-inline + .btn-secondary
+   + .btn-danger + base button{} cascade) for new code. Existing
+   markup keeps working — these are additive class names; the legacy
+   classes still render their existing styles.
+
+   Spec: 4 variants × 3 sizes. Use as `.btn .btn-{variant} .btn-{size}`.
+     variants: primary | secondary | ghost | danger (ghost danger,
+                                                    add .is-confirm
+                                                    for filled red)
+     sizes:    sm (26px) | md (32px) | lg (40px)
+
+   Migration plan: each high-visibility offender (Posts tabs, Bot
+   管理 删除, Prompt 模板 重置, Editor 保存) ports to .btn in its
+   own follow-up PR; this PR just makes the system available + fixes
+   the .btn-danger ghost regression alongside posts.ts. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-family: inherit;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  text-decoration: none;
+  background: transparent;
+  color: var(--text);
+  padding: 0 14px;
+  height: 32px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  /* Reset the global `button {}` chunky defaults that cascade into
+     anything <button>. */
+  box-shadow: none;
+  transform: none;
+}
+.btn:hover { transform: none; box-shadow: none; }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--card), 0 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent); }
+.btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* sizes */
+.btn-sm { height: 26px; padding: 0 10px; font-size: 12px; }
+.btn-md { height: 32px; padding: 0 14px; font-size: 13px; }
+.btn-lg { height: 40px; padding: 0 18px; font-size: 14px; font-weight: 600; }
+
+/* variants — namespaced under .btn so they only apply to the new
+   markup (won't collide with the legacy `class="btn-inline btn-X"`
+   patterns that don't carry .btn). */
+.btn.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.btn.btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+
+.btn.btn-secondary {
+  background: var(--secondary-bg);
+  color: var(--text);
+  border-color: var(--border);
+  box-shadow: none;
+}
+.btn.btn-secondary:hover { background: var(--surface-strong); border-color: color-mix(in srgb, var(--text) 18%, var(--border)); box-shadow: none; }
+
+.btn.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+  border-color: transparent;
+}
+.btn.btn-ghost:hover { background: var(--surface-strong); color: var(--text); }
+
+/* .btn.btn-danger reuses the ghost-style .btn-danger redefined
+   above; .btn-danger.is-confirm flip is also already defined and
+   composes cleanly when .btn is present. */
+
