@@ -175,6 +175,16 @@ type threadSummaryPromptData struct {
 // Returns the saved row (or nil if the LLM configuration is missing
 // — the design says fall back gracefully rather than 500'ing the
 // caller's chat).
+//
+// LLM resolution: intentional — uses ONLY the platform-level
+// AI_AGENT_* env config, NOT the workspace default LLM fallback that
+// capabilities A/B/C use via resolveSystemAgentLLM. Reason: chat
+// threads (chat_threads.user_low/user_high) are not workspace-scoped
+// — they're 1:1 between two users — so deriving a "workspace default"
+// is ambiguous (which participant's workspace?). Platform-only is
+// the well-defined choice. Don't "fix" this by adding workspace
+// fallback unless you also resolve the user-vs-thread workspace
+// mapping question.
 func (s *Server) generateThreadSummary(threadID int64) (*ChatThreadSummary, error) {
 	if s.aiAgent == nil {
 		return nil, errors.New("ai agent not initialized")
