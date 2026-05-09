@@ -716,6 +716,7 @@ func (s *Server) registerRoutes() {
 		api.GET("/chats/:id/messages", s.AuthMiddleware(), s.handleChatMessages)
 		api.GET("/chats/:id/summary", s.AuthMiddleware(), s.handleChatThreadSummary)
 		api.POST("/chats/:id/summary/refresh", s.AuthMiddleware(), s.handleChatThreadSummaryRefresh)
+		api.POST("/system-agent/bio/refine", s.AuthMiddleware(), s.handleBioRefine)
 		api.POST("/chats/:id/messages", s.AuthMiddleware(), s.handleChatSend)
 		api.POST("/chats/:id/messages/attachment", s.AuthMiddleware(), s.handleChatSendAttachment)
 		api.GET("/chats/:id/messages/:messageId", s.AuthMiddleware(), s.handleChatMessageDetail)

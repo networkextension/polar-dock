@@ -43,6 +43,12 @@ const (
 	// fed to the LLM that produces the 1–2 sentence "上次停在哪"
 	// banner shown at the top of /chat.html.
 	promptSlugThreadSummary = "system_agent.thread_summary"
+
+	// Bio refinement (system_agent capability A) — feeds users.bio
+	// improvement modal in /profile.html. Output: 2-3 candidate
+	// rewrites, no DB write (user adopts via existing
+	// PUT /users/me/profile).
+	promptSlugBioRefine = "system_agent.bio_refine"
 )
 
 // promptTemplateDefaults is the canonical registry. Each entry is
@@ -539,6 +545,34 @@ to inspect and modify the codebase. Important rules:
 - 如果消息少（< 3 条），可以说"这是新话题，刚起头讲到 X"
 
 只输出总结本身，不要任何前后缀（不要"以下是总结："这种）。`,
+		},
+
+		// ── Bio refinement (system_agent 能力 A) ────────────────
+		// 严格 JSON 输出 — 前端按 schema 解析 candidates 数组。
+		// 不直接写库；用户在 modal 里挑一个再走 PUT /users/me/profile。
+		{
+			Slug:        promptSlugBioRefine,
+			Name:        "自我介绍 AI 改写",
+			Description: "Profile 页「AI 改写自我介绍」modal 的 system prompt。变量：{{.PlatformName}}。输入：用户当前 bio + 期望方向 hints[] + 自由文本 extra。输出严格 JSON {drafts: [{label, text, rationale}], notes: string}。",
+			Content: `你是 {{.PlatformName}} 的个人简介助手。基于用户当前自我介绍 + 期望方向，生成 2-3 个候选改写版本。
+
+严格规则：
+- **不要凭空加事实** — 用户没说自己的行业 / 职位 / 项目，绝不替他指定。如果当前简介太空泛、缺关键信息，候选可以**保留空泛风格**或在 notes 里建议"补充 X 后再用"
+- 每个候选 ≤ 120 字
+- 每个候选要明确标 label（"更专业" / "更结构化" / "更简短" 等），并在 rationale 里写"我做了什么调整"
+- 必须返回严格 JSON，**不要 markdown 代码块、不要解释**
+
+输出 schema：
+
+{
+  "drafts": [
+    { "label": "更专业", "text": "...", "rationale": "去掉口语化词汇，强调专业身份" },
+    { "label": "更简短", "text": "...", "rationale": "压缩到 50 字内，保留核心" }
+  ],
+  "notes": "可选：对用户的额外提示（比如「建议补充行业 / 项目关键词」）"
+}
+
+候选数量：默认 2-3 个，不要超过 3。如果用户当前 bio 是空的或只有几个字，drafts 可以只给 1 个 + 在 notes 里说明"建议先写个初稿再让我改"。`,
 		},
 	}
 }
