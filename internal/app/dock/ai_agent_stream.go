@@ -47,8 +47,22 @@ type streamChunkCallback func(delta string)
 // requestStreamingChatCompletion dispatches a streaming chat completion to
 // the right provider based on the BaseURL and returns the assembled string
 // (also delivered piecewise via onDelta). Honors ctx cancellation.
+//
+// Records the same call+latency metrics as the non-streaming path. Tokens
+// stay at zero for streaming: the OpenAI SSE protocol *can* deliver a final
+// usage frame but we don't currently parse it; treating that as Phase 2.5.
 func (a *aiAgent) requestStreamingChatCompletion(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
 	payload.Stream = true
+	provider := detectAIProvider(runtimeConfig.BaseURL)
+	start := time.Now()
+	out, err := a.requestStreamingChatCompletionInner(ctx, runtimeConfig, payload, onDelta)
+	if a.server != nil {
+		a.server.metricsRegistry.recordLLMCall(string(provider), runtimeConfig.Model, runtimeConfig.Endpoint, time.Since(start), err, 0, 0)
+	}
+	return out, err
+}
+
+func (a *aiAgent) requestStreamingChatCompletionInner(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
 	switch detectAIProvider(runtimeConfig.BaseURL) {
 	case aiProviderAnthropic:
 		return a.streamAnthropic(ctx, runtimeConfig, payload, onDelta)

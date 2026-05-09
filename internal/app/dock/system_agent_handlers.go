@@ -76,6 +76,7 @@ func (s *Server) handleBioRefine(c *gin.Context) {
 	}
 	systemPrompt := s.renderPrompt(promptSlugBioRefine, bioRefinePromptData{PlatformName: siteName}, "")
 	runtimeConfig.SystemPrompt = systemPrompt
+	runtimeConfig.Endpoint = "bio_refine"
 
 	userPrompt := buildBioRefineUserPrompt(req)
 	payload := aiChatCompletionRequest{
@@ -252,6 +253,7 @@ func (s *Server) handleProjectTaskSharpen(c *gin.Context) {
 		Scenario:     scenario,
 	}, "")
 	runtimeConfig.SystemPrompt = systemPrompt
+	runtimeConfig.Endpoint = "task_sharpen"
 
 	userPrompt := buildTaskSharpenUserPrompt(task.Title, task.Description, req.Instruction)
 	payload := aiChatCompletionRequest{

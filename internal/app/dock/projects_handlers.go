@@ -559,6 +559,7 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 		Model:        cfg.Model,
 		SystemPrompt: s.buildDecomposePromptWithPersona(project, botPersona),
 		ProxyURL:     cfg.ProxyURL,
+		Endpoint:     "project_decompose",
 	}
 	payload := aiChatCompletionRequest{
 		Model: runtimeConfig.Model,

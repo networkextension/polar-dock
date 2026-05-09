@@ -162,6 +162,7 @@ func (s *Server) generateTaskRetrospect(ctx context.Context, projectID, taskID, 
 		Scenario:     scenario,
 	}, "")
 	runtimeConfig.SystemPrompt = systemPrompt
+	runtimeConfig.Endpoint = "task_retrospect"
 
 	userPrompt := buildTaskRetrospectUserPrompt(task.Title, task.Description, messages)
 	payload := aiChatCompletionRequest{

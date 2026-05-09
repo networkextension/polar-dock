@@ -93,6 +93,7 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 		botPersona = bot.SystemPrompt
 	}
 	runtimeConfig.SystemPrompt = s.buildMarkdownAssistSystemPrompt(botPersona, req.Instruction)
+	runtimeConfig.Endpoint = "markdown_assist"
 
 	userPrompt := strings.TrimSpace(strings.Join([]string{
 		"请润色以下正文，保持核心内容不变：",

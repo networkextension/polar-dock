@@ -100,6 +100,7 @@ func (s *Server) handlePostAssistWithBot(c *gin.Context) {
 		botPersona = bot.SystemPrompt
 	}
 	runtimeConfig.SystemPrompt = s.buildPostAssistSystemPrompt(botPersona, req.Instruction)
+	runtimeConfig.Endpoint = "post_assist"
 
 	promptLines := []string{"请基于以下信息写一条帖子正文："}
 	if topic != "" {
@@ -198,6 +199,7 @@ func (s *Server) handleReplyAssistWithBot(c *gin.Context) {
 		botPersona = bot.SystemPrompt
 	}
 	runtimeConfig.SystemPrompt = s.buildReplyAssistSystemPrompt(botPersona, req.Instruction)
+	runtimeConfig.Endpoint = "reply_assist"
 
 	userPrompt := strings.Join([]string{
 		"原帖作者：@" + post.Username,
