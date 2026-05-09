@@ -1005,6 +1005,14 @@ func (s *Server) handleProjectTaskUpdate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+
+	// Auto-trigger task retrospect when status flips to done.
+	// Fire-and-forget — losing the auto retrospect is fine (user
+	// can hit 📋 to regenerate). Doesn't block the response.
+	if u.Status != nil && *u.Status == ProjectTaskStatusDone {
+		s.fireRetrospectAsync(projectID, taskID, workspaceID, userIDStr)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 

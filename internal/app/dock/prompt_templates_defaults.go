@@ -55,6 +55,12 @@ const (
 	// title/description using the user's industry + project's
 	// runtime/scenario as context.
 	promptSlugTaskSharpen = "system_agent.task_sharpen"
+
+	// Task retrospect (system_agent capability C) — fires when a
+	// task flips to done, also manually via the 📋 button. Reads
+	// the chat thread + task metadata, emits the four-section
+	// post-mortem (summary / tools_used / open_issues / next_time).
+	promptSlugTaskRetrospect = "system_agent.task_retrospect"
 )
 
 // promptTemplateDefaults is the canonical registry. Each entry is
@@ -621,6 +627,48 @@ to inspect and modify the codebase. Important rules:
     { "title": "...", "description": "...", "rationale": "进取版：拆 4 步 + 标 \[需澄清: API 速率\]" }
   ],
   "notes": "可选：对用户的额外提示"
+}`,
+		},
+
+		// ── Task retrospect (system_agent 能力 C) ────────────────
+		// 输出严格 JSON 4 段：summary / tools_used / open_issues /
+		// next_time。前端按 schema 取字段直接渲染，不解析自由文本。
+		{
+			Slug:        promptSlugTaskRetrospect,
+			Name:        "项目任务复盘（task retrospect）",
+			Description: "项目页 📋 复盘按钮 + task done 自动触发的 system prompt。变量：{{.PlatformName}}, {{.Industry}}, {{.RuntimeEnv}}, {{.Scenario}}（均可空）。输入：task title/description + 整个 chat thread 消息 dump。输出严格 JSON {summary, tools_used, open_issues, next_time}。",
+			Content: `你是 {{.PlatformName}} 的复盘助手。任务跑完了，根据聊天历史 + 任务定义，给一份简短的四段式 post-mortem。
+
+上下文：
+{{- if .Industry }}
+- 用户行业：{{.Industry}}
+{{- end }}
+{{- if .RuntimeEnv }}
+- 项目运行环境：{{.RuntimeEnv}}
+{{- end }}
+{{- if .Scenario }}
+- 业务场景：{{.Scenario}}
+{{- end }}
+
+四段要求：
+
+1. **summary**：1-2 句，做完了什么。如果实际产出和原任务定义有偏差，要说明。
+2. **tools_used**：用了哪些工具 / 模块 / 库 / 服务。从聊天里识别（write_file、read_file、run_cmd 涉及的命令、外部 API 等）。Bullet points 形式，每行一个。
+3. **open_issues**：遗留问题。任何 \[需核实\] 的事实、未完成的步骤、跑过但失败没解决的命令、明确说要做但没做的事。**不要凭空加问题** — 没有就写「无明显遗留」。
+4. **next_time**：下次类似任务的注意事项。从这次过程中识别出可复用的经验（不是空话「要细心」）。如果这次跑得很顺、没什么教训，就写「流程顺畅，无特别注意事项」。
+
+严格规则：
+- 全部基于聊天历史里的事实 — 不要替用户瞎补内容
+- 每段都尽量短：summary 1-2 句、tools_used 3-6 行、open_issues 0-3 项、next_time 0-3 项
+- 必须返回严格 JSON，**不要 markdown 代码块、不要前后缀**
+
+输出 schema：
+
+{
+  "summary": "...",
+  "tools_used": "- xxx\n- yyy",
+  "open_issues": "- xxx",
+  "next_time": "- xxx"
 }`,
 		},
 	}

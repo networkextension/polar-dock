@@ -367,6 +367,28 @@
       </div>
     </div>
 
+    <!-- system_agent capability C: task retrospect modal. Opens from
+         the per-row 📋 button on done tasks. Shows the four-section
+         post-mortem (summary / tools used / open issues / next time)
+         with a regenerate button. -->
+    <div id="taskRetrospectModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" style="max-width:780px;">
+        <div class="modal-header">
+          <h3>📋 任务复盘</h3>
+          <button id="taskRetrospectCloseBtn" class="btn-inline btn-secondary" type="button">关闭</button>
+        </div>
+        <div class="modal-body">
+          <div id="taskRetrospectMeta" class="status-text" style="margin-bottom:10px;"></div>
+          <div id="taskRetrospectBody" class="bio-refine-results" style="display:flex; flex-direction:column; gap:14px;"></div>
+          <div class="task-form-actions" style="margin-top:14px;">
+            <button id="taskRetrospectRegenerateBtn" class="btn-inline btn-secondary" type="button">重新生成</button>
+            <span id="taskRetrospectStatus" class="status-text"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/scripts/projects.js"></script>
   </body>
 </html>
