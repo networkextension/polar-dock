@@ -124,15 +124,15 @@ function buildLineDiffHtml(beforeText: string, afterText: string): string {
     const newLine = after[i];
     if (oldLine === newLine) {
       if (oldLine !== undefined) {
-        lines.push(`<div style="white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;color:#6b7280;">  ${escapeHtml(oldLine)}</div>`);
+        lines.push(`<div class="diff-line diff-line-context">  ${escapeHtml(oldLine)}</div>`);
       }
       continue;
     }
     if (oldLine !== undefined) {
-      lines.push(`<div style="white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;background:#fff1f2;color:#9f1239;">- ${escapeHtml(oldLine)}</div>`);
+      lines.push(`<div class="diff-line diff-line-removed">- ${escapeHtml(oldLine)}</div>`);
     }
     if (newLine !== undefined) {
-      lines.push(`<div style="white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;background:#f0fdf4;color:#166534;">+ ${escapeHtml(newLine)}</div>`);
+      lines.push(`<div class="diff-line diff-line-added">+ ${escapeHtml(newLine)}</div>`);
     }
   }
   if (!lines.length) {

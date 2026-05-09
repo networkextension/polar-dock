@@ -36,6 +36,11 @@
   --link-hover:     #004999;
   --badge-neutral-bg: rgba(17, 17, 17, 0.06);
   --badge-neutral-fg: #4a4a4a;
+  --diff-context:        #6b7280;
+  --diff-removed-bg:     #fff1f2;
+  --diff-removed-fg:     #9f1239;
+  --diff-added-bg:       #f0fdf4;
+  --diff-added-fg:       #166534;
 }
 
 /* ── Prometheus dark (legacy "default" key) ──────────────────────── */
@@ -63,6 +68,11 @@
   --link-hover:     #7dc1fb;
   --badge-neutral-bg: rgba(255, 255, 255, 0.08);
   --badge-neutral-fg: #c9c9c9;
+  --diff-context:        #9aa0a6;
+  --diff-removed-bg:     rgba(220, 53, 69, 0.18);
+  --diff-removed-fg:     #fca5a5;
+  --diff-added-bg:       rgba(40, 167, 69, 0.18);
+  --diff-added-fg:       #86efac;
 }
 
 * {
@@ -4482,4 +4492,26 @@ textarea:focus-visible,
 .text-meta-mono {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   letter-spacing: -0.01em;
+}
+
+/* ── Diff lines (editor assist preview) ──────────────────────────── */
+/* Theme-aware paired palette. Light theme uses pale red/green
+   pastels (the GitHub diff convention); dark theme uses semi-
+   transparent danger/accent-2 mixes so the colored row reads on
+   the dark surface without bleaching the page. uifix.MD #11 follow-up. */
+.diff-line {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 0 6px;
+}
+.diff-line-context { color: var(--diff-context); }
+.diff-line-removed {
+  background: var(--diff-removed-bg);
+  color: var(--diff-removed-fg);
+}
+.diff-line-added {
+  background: var(--diff-added-bg);
+  color: var(--diff-added-fg);
 }
