@@ -65,7 +65,7 @@ Shot 3 prompt...`,"video.bulkImportConfirm":"Import shots","video.bulkImportPrev
             <code style="font-size:11px; color:var(--text-muted,#888);">${c(e.slug)}</code>
             ${a}
             <span style="flex:1;"></span>
-            <span style="font-size:11px; color:var(--text-muted,#888);">\u66F4\u65B0\u4E8E ${c(t)}</span>
+            <span class="text-meta-mono" style="font-size:11px; color:var(--text-muted,#888);">\u66F4\u65B0\u4E8E ${c(t)}</span>
           </div>
           ${e.description?`<div style="font-size:12px; color:var(--text-muted,#888); margin-bottom:8px; white-space:pre-wrap;">${c(e.description)}</div>`:""}
           <textarea

@@ -64,7 +64,7 @@ Shot 3 prompt...`,"video.bulkImportConfirm":"Import shots","video.bulkImportPrev
         <img class="avatar-sm" src="${o}" alt="${e.username}" />
         <span class="post-author-name">${e.username}</span>
       </div>
-      <div class="post-time">${xe(e.uploaded_at)}</div>
+      <div class="post-time text-meta-mono">${xe(e.uploaded_at)}</div>
     </div>
     ${t}
     <div class="markdown-card-title">${e.title}</div>

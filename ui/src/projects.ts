@@ -1389,12 +1389,12 @@ function renderAgentTokens(tokens: AgentToken[]): void {
         ? `<span class="tag-chip tag-chip-accent" style="font-size:10px;">${escapeHTML(coderBits.join(" + "))}</span>`
         : "";
       return `
-        <div style="padding:8px 10px; background:${t.revoked_at ? "#f7f7f9" : "#fff"}; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <div style="padding:8px 10px; background:${t.revoked_at ? "var(--surface,#f7f7f9)" : "var(--card,#fff)"}; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <div style="flex:1; min-width:200px;">
             <div style="font-weight:500; font-size:13px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
               ${escapeHTML(t.name || "(no name)")} ${revoked} ${hostPill} ${coderPill}
             </div>
-            <div style="font-size:11px; color:var(--text-muted,#888);">创建 ${escapeHTML(created)} · 最后上线 ${escapeHTML(lastSeen)}</div>
+            <div class="text-meta-mono" style="font-size:11px; color:var(--text-muted,#888);">创建 ${escapeHTML(created)} · 最后上线 ${escapeHTML(lastSeen)}</div>
           </div>
           ${
             t.revoked_at
