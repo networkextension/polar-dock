@@ -1,27 +1,17 @@
-/* ── Prometheus dark (default) ─────────────────────────────────────── */
-:root {
-  --bg:             #191d21;
-  --card:           #212529;
-  --muted:          #a0a0a0;
-  --text:           #e6e6e6;
-  --text-muted:     #a0a0a0;
-  --accent:         #e6522c;
-  --accent-2:       #28a745;
-  --danger:         #dc3545;
-  --page-bg:        #191d21;
-  --surface:        #1e2227;
-  --surface-strong: #282d32;
-  --border:         #343a40;
-  --badge-bg:       rgba(230, 82, 44, 0.14);
-  --active-bg:      rgba(230, 82, 44, 0.18);
-  --active-border:  rgba(230, 82, 44, 0.45);
-  --active-shadow:  rgba(230, 82, 44, 0.14);
-  --secondary-bg:   rgba(108, 117, 125, 0.18);
-  --secondary-shadow: rgba(0, 0, 0, 0.25);
-  --overlay:        rgba(0, 0, 0, 0.65);
-}
-
-/* ── Mono / light ───────────────────────────────────────────────────── */
+/* Theme tokens.
+   :root carries the LIGHT (mono) palette so a fresh page paints
+   light immediately — no flash-of-wrong-theme before JS sets the
+   data-theme attribute. The dark palette overrides under
+   :root[data-theme="default"] (kept as the legacy name for stored
+   user preferences from before the flip).
+   :root[data-theme="mono"] is also defined explicitly as a no-op
+   override so re-applying it doesn't fall through to dark via some
+   weird specificity edge case.
+   --link / --link-hover / --badge-neutral-* are added for the
+   orange-convergence pass — non-CTA decoration uses the neutral
+   tokens, brand orange only stays on primary CTA + selected/active
+   states + focus ring (uifix.MD #8/#9/#13). */
+:root,
 :root[data-theme="mono"] {
   --bg:             #f4f4f4;
   --card:           #ffffff;
@@ -42,6 +32,37 @@
   --secondary-bg:   rgba(17, 17, 17, 0.08);
   --secondary-shadow: rgba(17, 17, 17, 0.12);
   --overlay:        rgba(17, 17, 17, 0.18);
+  --link:           #0066cc;
+  --link-hover:     #004999;
+  --badge-neutral-bg: rgba(17, 17, 17, 0.06);
+  --badge-neutral-fg: #4a4a4a;
+}
+
+/* ── Prometheus dark (legacy "default" key) ──────────────────────── */
+:root[data-theme="default"] {
+  --bg:             #191d21;
+  --card:           #212529;
+  --muted:          #a0a0a0;
+  --text:           #e6e6e6;
+  --text-muted:     #a0a0a0;
+  --accent:         #e6522c;
+  --accent-2:       #28a745;
+  --danger:         #dc3545;
+  --page-bg:        #191d21;
+  --surface:        #1e2227;
+  --surface-strong: #282d32;
+  --border:         #343a40;
+  --badge-bg:       rgba(230, 82, 44, 0.14);
+  --active-bg:      rgba(230, 82, 44, 0.18);
+  --active-border:  rgba(230, 82, 44, 0.45);
+  --active-shadow:  rgba(230, 82, 44, 0.14);
+  --secondary-bg:   rgba(108, 117, 125, 0.18);
+  --secondary-shadow: rgba(0, 0, 0, 0.25);
+  --overlay:        rgba(0, 0, 0, 0.65);
+  --link:           #5aaef7;
+  --link-hover:     #7dc1fb;
+  --badge-neutral-bg: rgba(255, 255, 255, 0.08);
+  --badge-neutral-fg: #c9c9c9;
 }
 
 * {
@@ -283,8 +304,12 @@ button:hover {
   display: block;
   text-align: center;
   margin-top: 16px;
-  color: var(--accent);
+  color: var(--link);
   text-decoration: none;
+}
+
+.link:hover {
+  color: var(--link-hover);
 }
 
 .alert {
@@ -344,9 +369,9 @@ button:hover {
 }
 
 .role-badge-admin {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  color: color-mix(in srgb, var(--accent) 70%, var(--text-muted));
 }
 
 .role-badge-inline {
@@ -1536,12 +1561,13 @@ button:hover {
 }
 
 .profile-email-link {
-  color: var(--accent);
+  color: var(--link);
   text-decoration: none;
   word-break: break-all;
 }
 
 .profile-email-link:hover {
+  color: var(--link-hover);
   text-decoration: underline;
 }
 
@@ -1927,11 +1953,12 @@ textarea {
 }
 
 .chat-link {
-  color: var(--accent);
+  color: var(--link);
   text-decoration: none;
 }
 
 .chat-link:hover {
+  color: var(--link-hover);
   text-decoration: underline;
 }
 
@@ -2929,9 +2956,9 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 }
 .lp-foot-avatar {
   width: 30px; height: 30px; border-radius: 50%;
-  background: var(--active-bg); display: flex; align-items: center;
+  background: var(--badge-neutral-bg); display: flex; align-items: center;
   justify-content: center; font-size: 12px; font-weight: 700;
-  color: var(--accent); flex-shrink: 0;
+  color: var(--badge-neutral-fg); flex-shrink: 0;
 }
 .lp-foot-avatar img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
 .lp-foot-info { min-width: 0; }
@@ -2970,7 +2997,8 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 .lp-topbar-back:hover { background: var(--surface-strong); color: var(--text); box-shadow: none; transform: none; }
 .lp-mode-badge {
   font-size: 12px; padding: 3px 10px; border-radius: 20px;
-  background: var(--active-bg); color: var(--accent); font-weight: 500;
+  background: var(--badge-neutral-bg); color: var(--badge-neutral-fg);
+  border: 1px solid var(--border); font-weight: 500;
 }
 
 /* Content */
@@ -3066,10 +3094,10 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 }
 .lp-act:hover { background: var(--surface-strong); border-color: var(--border); color: var(--text); box-shadow: none; transform: none; }
 .lp-act.del:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); border-color: color-mix(in srgb, var(--danger) 40%, transparent); color: var(--danger); }
-.lp-ver { display: inline-block; padding: 2px 7px; background: var(--active-bg); color: var(--accent); border-radius: 4px; font-size: 11px; font-weight: 600; }
+.lp-ver { display: inline-block; padding: 2px 7px; background: var(--badge-neutral-bg); color: var(--badge-neutral-fg); border-radius: 4px; font-size: 11px; font-weight: 600; }
 .lp-flag { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; background: var(--secondary-bg); color: var(--muted); }
 .lp-flag.on { background: color-mix(in srgb, var(--accent-2) 14%, transparent); color: var(--accent-2); }
-.lp-proxy-chip { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; background: var(--active-bg); color: var(--accent); margin-right: 3px; }
+.lp-proxy-chip { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; background: var(--badge-neutral-bg); color: var(--badge-neutral-fg); margin-right: 3px; }
 .lp-manage-btn {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 7px 14px; border: 1px solid var(--border); border-radius: 6px;
@@ -3167,7 +3195,7 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 .lp-post-author { display: flex; align-items: center; gap: 10px; text-decoration: none; }
 .lp-post-author-info { display: flex; flex-direction: column; gap: 2px; }
 .lp-post-author-name { font-size: 14px; font-weight: 600; color: var(--text); text-decoration: none; }
-.lp-post-author-name:hover { color: var(--accent); }
+.lp-post-author-name:hover { color: var(--link); }
 .lp-post-time { font-size: 12px; color: var(--muted); }
 .lp-post-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 .lp-post-body { font-size: 14px; color: var(--text); line-height: 1.6; margin-bottom: 12px; white-space: pre-wrap; word-break: break-word; }
@@ -3176,7 +3204,8 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 .lp-post-videos { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .lp-post-videos video { max-width: 100%; max-height: 300px; border-radius: 8px; }
 .lp-post-foot { display: flex; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--border); flex-wrap: wrap; }
-.lp-post-tag { display: inline-flex; align-items: center; padding: 2px 10px; background: var(--active-bg); color: var(--accent); border-radius: 20px; font-size: 12px; }
+.lp-post-tag { display: inline-flex; align-items: center; padding: 2px 10px; background: var(--badge-neutral-bg); color: var(--badge-neutral-fg); border-radius: 20px; font-size: 12px; transition: background .12s, color .12s; }
+.lp-post-tag:hover { background: var(--active-bg); color: var(--accent); }
 .lp-task-strip { background: rgba(217, 119, 6, 0.1); border: 1px solid rgba(217, 119, 6, 0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: #fbbf24; }
 
 /* Filter bar */
@@ -4169,7 +4198,7 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 }
 
 .dashboard-widget-header > a:hover {
-  color: var(--accent);
+  color: var(--link);
 }
 
 .dashboard-widget-list {
@@ -4258,7 +4287,7 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 }
 
 .dashboard-widget-badge-unread {
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 80%, var(--text));
   color: #fff;
   border-radius: 10px;
   padding: 1px 7px;
