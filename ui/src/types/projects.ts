@@ -160,6 +160,10 @@ export type AgentToken = {
 export type AgentTokenCreatePayload = {
   name: string;
   coders?: { [k in CoderName]?: AgentCoderEntry };
+  // api_keys: only sent for coders the user picked api_key auth
+  // mode for. Server filters and renders into install script's
+  // ~/.polar/tools.json env block; never persisted to DB.
+  api_keys?: { [k in CoderName]?: string };
 };
 
 export type AgentTokenCreateResponse = {
