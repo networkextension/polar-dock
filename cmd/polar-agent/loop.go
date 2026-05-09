@@ -235,6 +235,17 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 				}
 				emitChatReply(send, reply)
 			}(msg)
+		case "research_task":
+			var env researchTaskEnvelope
+			if err := json.Unmarshal(raw, &env); err != nil {
+				log.Printf("research_task parse: %v", err)
+				continue
+			}
+			go func(e researchTaskEnvelope) {
+				if err := runResearchTask(ctx, cfg, workdir, e, verbose); err != nil {
+					log.Printf("[research] run=%d error: %v", e.ResearchRunID, err)
+				}
+			}(env)
 		case "ping":
 			// app-level ping (websocket protocol pings handled above)
 		default:

@@ -1189,6 +1189,46 @@ CREATE INDEX IF NOT EXISTS idx_iosdist_agent_builds_workspace ON iosdist_agent_b
 CREATE INDEX IF NOT EXISTS idx_iosdist_agent_builds_project ON iosdist_agent_builds(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iosdist_agent_builds_app ON iosdist_agent_builds(iosdist_app_id, updated_at DESC);
 
+-- project_research_runs: lifecycle of a research-mode dispatch
+-- (research-runtime project → polar-agent runs an Aider-style local
+-- LLM loop → writes markdown / docs to workdir → git add/commit/push
+-- → reports back). LLM snapshot columns are intentional: the operator
+-- needs to see WHICH model produced the artifact, both during the run
+-- and forever in history (the bound LLM config can change later).
+--
+-- status state machine:
+--   queued     — dispatched, agent has not yet acked
+--   running    — agent ack'd via /start, LLM loop in progress
+--   succeeded  — agent finished, commit_sha + files_written populated
+--   failed     — terminal failure; error_message + log_text capped
+CREATE TABLE IF NOT EXISTS project_research_runs (
+	id BIGSERIAL PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+	task_id TEXT REFERENCES project_tasks(id) ON DELETE SET NULL,
+	bot_user_id TEXT NOT NULL,
+	chat_thread_id BIGINT,
+	llm_thread_id BIGINT,
+	llm_config_id BIGINT,
+	llm_name TEXT NOT NULL DEFAULT '',
+	llm_model TEXT NOT NULL DEFAULT '',
+	llm_base_url TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'queued',
+	iterations INTEGER NOT NULL DEFAULT 0,
+	files_written JSONB,
+	commit_sha TEXT NOT NULL DEFAULT '',
+	summary TEXT NOT NULL DEFAULT '',
+	error_message TEXT NOT NULL DEFAULT '',
+	log_text TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	started_at TIMESTAMPTZ,
+	completed_at TIMESTAMPTZ,
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_research_runs_project ON project_research_runs(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_research_runs_workspace ON project_research_runs(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_research_runs_open ON project_research_runs(status) WHERE status IN ('queued','running');
+
 -- attachments: workspace-scoped file uploads with content-addressed
 -- storage. Backs posts + chat_messages today via junction tables;
 -- markdown_entries' .md body and cover stay separate (the body is

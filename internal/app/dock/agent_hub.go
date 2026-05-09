@@ -292,6 +292,58 @@ func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content
 	}
 }
 
+// agentResearchTask is the fire-and-forget envelope used to push a
+// research-mode task to a polar-agent. The agent acks lifecycle via
+// HTTP callback (POST /research/runs/:id/start, /result), not via WS,
+// so dispatchResearchTask returns as soon as the WS send succeeds.
+type agentResearchTask struct {
+	Kind          string                  `json:"kind"` // "research_task"
+	ResearchRunID int64                   `json:"research_run_id"`
+	ProjectID     string                  `json:"project_id"`
+	TaskID        string                  `json:"task_id,omitempty"`
+	TaskTitle     string                  `json:"task_title,omitempty"`
+	ChatThreadID  int64                   `json:"chat_thread_id,omitempty"`
+	LLMThreadID   int64                   `json:"llm_thread_id,omitempty"`
+	Workdir       string                  `json:"workdir,omitempty"`
+	GitRemoteURL  string                  `json:"git_remote_url,omitempty"`
+	TaskContent   string                  `json:"task_content"`
+	LLM           agentResearchLLMSnapshot `json:"llm"`
+	CallbackToken string                  `json:"callback_token,omitempty"`
+}
+
+type agentResearchLLMSnapshot struct {
+	ConfigID int64  `json:"config_id,omitempty"`
+	Name     string `json:"name"`
+	Model    string `json:"model"`
+	Provider string `json:"provider,omitempty"`
+	BaseURL  string `json:"base_url"`
+	APIKey   string `json:"api_key"`
+}
+
+// dispatchResearchTask hands the task envelope to the agent over WS
+// and returns immediately on send. Lifecycle reporting (running →
+// succeeded/failed) flows back via HTTP, not WS — so we don't track a
+// pending channel here.
+func (h *agentHub) dispatchResearchTask(botUserID string, task agentResearchTask) error {
+	conn := h.lookup(botUserID)
+	if conn == nil {
+		return errAgentNotAttached
+	}
+	task.Kind = "research_task"
+	payload, err := json.Marshal(task)
+	if err != nil {
+		return err
+	}
+	select {
+	case conn.send <- payload:
+		return nil
+	case <-conn.close:
+		return errAgentDisconnected
+	case <-time.After(5 * time.Second):
+		return errAgentSendTimeout
+	}
+}
+
 // agentChatTimeout caps how long the platform waits for a
 // chat_reply. Must comfortably exceed polar-agent's own kimi
 // timeout (30min default, configurable via POLAR_KIMI_TIMEOUT) so

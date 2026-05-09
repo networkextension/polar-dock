@@ -112,6 +112,60 @@ export async function pickupProjectTask(id: string, taskID: string, botUserID: s
   );
 }
 
+// ---- research dispatch (research-runtime project only) -----------
+
+export type ResearchRun = {
+  id: number;
+  workspace_id: string;
+  project_id: string;
+  task_id?: string;
+  bot_user_id: string;
+  chat_thread_id?: number;
+  llm_thread_id?: number;
+  llm_config_id?: number;
+  llm_name: string;
+  llm_model: string;
+  llm_base_url: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  iterations: number;
+  files_written?: string[];
+  commit_sha: string;
+  summary: string;
+  error_message: string;
+  log_text: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  updated_at: string;
+};
+
+export type ResearchDispatchResponse = {
+  research_run: ResearchRun;
+  bot: { id: number; user_id: string; name: string };
+  llm: { config_id?: number; name: string; model: string; base_url?: string };
+  workdir?: string;
+};
+
+export async function dispatchResearchTask(
+  projectID: string,
+  taskID: string,
+  botUserID: string,
+  llmConfigID?: number,
+) {
+  const body: Record<string, unknown> = { bot_user_id: botUserID };
+  if (llmConfigID && llmConfigID > 0) body.llm_config_id = llmConfigID;
+  return requestJson<ResearchDispatchResponse>(
+    `/api/projects/${encodeURIComponent(projectID)}/tasks/${encodeURIComponent(taskID)}/research/dispatch`,
+    { method: "POST", body },
+  );
+}
+
+export async function fetchResearchRuns(projectID: string, limit = 20) {
+  return requestJson<{ runs: ResearchRun[] }>(
+    `/api/projects/${encodeURIComponent(projectID)}/research/runs?limit=${limit}`,
+  );
+}
+
 // ---- agent tokens (polar-agent CLI credentials) ------------------
 
 export async function fetchAgentTokens() {
