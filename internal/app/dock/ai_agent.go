@@ -504,6 +504,7 @@ func (a *aiAgent) handleStreamingTask(task aiAgentTask, cfg aiRuntimeConfig) {
 		log.Printf("build ai context failed: %v", ctxErr)
 	}
 
+	cfg.Endpoint = "chat"
 	payload := aiChatCompletionRequest{
 		Model: cfg.Model,
 		Messages: []aiChatCompletionMessage{
