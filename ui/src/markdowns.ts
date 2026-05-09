@@ -56,7 +56,7 @@ function createMarkdownCard(entry: PublicMarkdownEntry): HTMLElement {
         <img class="avatar-sm" src="${avatar}" alt="${entry.username}" />
         <span class="post-author-name">${entry.username}</span>
       </div>
-      <div class="post-time">${formatTime(entry.uploaded_at)}</div>
+      <div class="post-time text-meta-mono">${formatTime(entry.uploaded_at)}</div>
     </div>
     ${cover}
     <div class="markdown-card-title">${entry.title}</div>

@@ -66,7 +66,7 @@ function renderList(): void {
             <code style="font-size:11px; color:var(--text-muted,#888);">${escapeHTML(p.slug)}</code>
             ${dirtyTag}
             <span style="flex:1;"></span>
-            <span style="font-size:11px; color:var(--text-muted,#888);">更新于 ${escapeHTML(updated)}</span>
+            <span class="text-meta-mono" style="font-size:11px; color:var(--text-muted,#888);">更新于 ${escapeHTML(updated)}</span>
           </div>
           ${p.description ? `<div style="font-size:12px; color:var(--text-muted,#888); margin-bottom:8px; white-space:pre-wrap;">${escapeHTML(p.description)}</div>` : ""}
           <textarea
