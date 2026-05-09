@@ -49,6 +49,12 @@ const (
 	// rewrites, no DB write (user adopts via existing
 	// PUT /users/me/profile).
 	promptSlugBioRefine = "system_agent.bio_refine"
+
+	// Task sharpening (system_agent capability B) — projects page
+	// "✨ 优化需求" button on a task row. Drafts a clearer
+	// title/description using the user's industry + project's
+	// runtime/scenario as context.
+	promptSlugTaskSharpen = "system_agent.task_sharpen"
 )
 
 // promptTemplateDefaults is the canonical registry. Each entry is
@@ -573,6 +579,49 @@ to inspect and modify the codebase. Important rules:
 }
 
 候选数量：默认 2-3 个，不要超过 3。如果用户当前 bio 是空的或只有几个字，drafts 可以只给 1 个 + 在 notes 里说明"建议先写个初稿再让我改"。`,
+		},
+
+		// ── Task sharpen (system_agent 能力 B) ──────────────────
+		// JSON 输出 {drafts: [{title, description, rationale}], notes}。
+		// 提示词里嵌入用户行业 + 项目 runtime / 业务场景上下文，让
+		// 改写带行业惯例。
+		{
+			Slug:        promptSlugTaskSharpen,
+			Name:        "项目任务需求优化（task sharpen）",
+			Description: "项目页 ✨ 优化需求 modal 的 system prompt。变量：{{.PlatformName}}, {{.Industry}}（用户行业，可空）, {{.RuntimeEnv}}（项目 runtime 标签，可空）, {{.Scenario}}（业务场景标签，可空）。输入：当前 task title + description + 用户额外要求。输出严格 JSON {drafts: [{title, description, rationale}], notes}。",
+			Content: `你是 {{.PlatformName}} 的需求工程助手。任务是把当前 task 描述改写得更清晰、更可执行。
+
+上下文：
+{{- if .Industry }}
+- 用户行业：{{.Industry}}（改写时考虑该行业的术语、流程和验收标准）
+{{- end }}
+{{- if .RuntimeEnv }}
+- 项目运行环境：{{.RuntimeEnv}}
+{{- end }}
+{{- if .Scenario }}
+- 业务场景：{{.Scenario}}
+{{- end }}
+{{- if and (not .Industry) (not .RuntimeEnv) (not .Scenario) }}
+- （没有特定的行业 / 环境 / 场景上下文 — 给通用的工程视角改写）
+{{- end }}
+
+严格规则：
+- **不要凭空加事实**：用户没说的功能、字段、依赖、库 — 不要替他指定。当前描述含糊处用 \[需澄清: ...\] 标注，而不是猜
+- 给 **2 个候选**：一个保守版（小改 title + description）+ 一个进取版（结构化拆步骤、加验收标准、加可能盲点）
+- title ≤ 60 字；description 不限但建议 ≤ 300 字
+- rationale 一句话说明你做了什么调整
+- 如果当前任务已经很清楚，drafts 可以只给 1 个 + 在 notes 里说"原描述已经清晰，无需改写"
+- 必须返回严格 JSON，**不要 markdown 代码块、不要 plain-text 解释**
+
+输出 schema：
+
+{
+  "drafts": [
+    { "title": "...", "description": "...", "rationale": "保守版：仅修措辞 + 补一条验收" },
+    { "title": "...", "description": "...", "rationale": "进取版：拆 4 步 + 标 \[需澄清: API 速率\]" }
+  ],
+  "notes": "可选：对用户的额外提示"
+}`,
 		},
 	}
 }

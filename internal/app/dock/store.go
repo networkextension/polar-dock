@@ -695,6 +695,7 @@ type UserProfileDetail struct {
 	Email           string                  `json:"email,omitempty"`
 	IconURL         string                  `json:"icon_url"`
 	Bio             string                  `json:"bio"`
+	Industry        string                  `json:"industry,omitempty"`
 	CreatedAt       time.Time               `json:"created_at"`
 	IsMe            bool                    `json:"is_me"`
 	CanRecommend    bool                    `json:"can_recommend"`
@@ -755,6 +756,12 @@ ALTER TABLE users
 	ADD COLUMN IF NOT EXISTS last_active_device_type TEXT NOT NULL DEFAULT 'browser';
 ALTER TABLE users
 	ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+-- industry: optional self-reported domain (free-text). Powers
+-- system_agent.task_sharpen prompts so an iOS dev's tasks get
+-- iOS-specific guidance instead of generic web boilerplate. Empty
+-- = the prompt skips industry context entirely.
+ALTER TABLE users
+	ADD COLUMN IF NOT EXISTS industry TEXT NOT NULL DEFAULT '';
 -- dashboard_widgets: comma-separated slug list controlling which
 -- widgets render on the user's Dashboard, in order. Empty / NULL
 -- falls back to the platform default (set in dashboardDefaultLayout
@@ -2091,6 +2098,26 @@ ALTER TABLE project_tasks
 CREATE INDEX IF NOT EXISTS idx_project_tasks_project ON project_tasks(project_id, ord);
 CREATE INDEX IF NOT EXISTS idx_project_tasks_status ON project_tasks(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_project_tasks_project_sprint ON project_tasks(project_id, sprint_number, ord);
+
+-- project_task_revisions: append-only audit of major task edits.
+-- Today only system_agent_sharpen-driven updates write here so users
+-- can see "what was the description before AI rewrote it"; future
+-- manual revisions can also flow through this table. source labels
+-- the origin so admin tooling can filter. llm_name/model snapshot
+-- the LLM that produced the rewrite, mirroring the 4-touchpoint
+-- transparency rule.
+CREATE TABLE IF NOT EXISTS project_task_revisions (
+	id BIGSERIAL PRIMARY KEY,
+	task_id TEXT NOT NULL REFERENCES project_tasks(id) ON DELETE CASCADE,
+	title TEXT NOT NULL DEFAULT '',
+	description TEXT NOT NULL DEFAULT '',
+	source TEXT NOT NULL DEFAULT 'manual',
+	llm_name TEXT NOT NULL DEFAULT '',
+	llm_model TEXT NOT NULL DEFAULT '',
+	created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_task_revisions_task ON project_task_revisions(task_id, created_at DESC);
 
 -- prompt_templates: site-wide admin-managed prompt strings used
 -- across the platform (AI 拆解、pickup body、markdown/post 助手、
@@ -4133,6 +4160,29 @@ func (s *Server) updateUserBio(userID, bio string) error {
 	return err
 }
 
+// updateUserIndustry writes the optional industry tag. Free text;
+// caller is responsible for length validation. Empty string is
+// allowed (clears the field).
+func (s *Server) updateUserIndustry(userID, industry string) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET industry = $1 WHERE id = $2`,
+		industry,
+		userID,
+	)
+	return err
+}
+
+// getUserIndustry returns the user's self-reported industry tag, or
+// empty string if not set / row missing. Used by system_agent
+// task-sharpen to inject industry context into the prompt.
+func (s *Server) getUserIndustry(userID string) string {
+	var industry string
+	if err := s.db.QueryRow(`SELECT COALESCE(industry, '') FROM users WHERE id = $1`, userID).Scan(&industry); err != nil {
+		return ""
+	}
+	return industry
+}
+
 func (s *Server) upsertProfileRecommendation(targetUserID, authorUserID, content string, now time.Time) error {
 	_, err := s.db.Exec(
 		`INSERT INTO profile_recommendations (target_user_id, author_user_id, content, created_at, updated_at)
@@ -4276,6 +4326,7 @@ func (s *Server) getUserProfileDetail(targetUserID, viewerUserID string) (*UserP
 		}(),
 		IconURL:         user.IconURL,
 		Bio:             user.Bio,
+		Industry:        s.getUserIndustry(targetUserID),
 		CreatedAt:       user.CreatedAt,
 		IsMe:            targetUserID == viewerUserID,
 		CanRecommend:    targetUserID != viewerUserID,

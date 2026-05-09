@@ -182,6 +182,164 @@ func buildBioRefineUserPrompt(req bioRefineRequest) string {
 	return b.String()
 }
 
+// ── Capability B: project task sharpen ────────────────────────────
+
+type taskSharpenRequest struct {
+	Instruction string `json:"instruction"` // optional user note
+}
+
+type taskSharpenDraft struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Rationale   string `json:"rationale"`
+}
+
+type taskSharpenResponse struct {
+	Drafts   []taskSharpenDraft `json:"drafts"`
+	Notes    string             `json:"notes"`
+	Original taskSharpenDraft   `json:"original"` // pre-rewrite snapshot
+	LLM      bioRefineLLMTag    `json:"llm"`      // reuse the simple struct
+}
+
+type taskSharpenPromptData struct {
+	PlatformName string
+	Industry     string
+	RuntimeEnv   string
+	Scenario     string
+}
+
+func (s *Server) handleProjectTaskSharpen(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	userID, _ := c.Get("user_id")
+	userIDStr, _ := userID.(string)
+	projectID := strings.TrimSpace(c.Param("id"))
+	taskID := strings.TrimSpace(c.Param("task_id"))
+
+	project, err := s.getProject(projectID, workspaceID)
+	if err != nil || project == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
+		return
+	}
+	task, err := s.loadProjectTask(projectID, taskID)
+	if err != nil || task == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
+		return
+	}
+
+	var req taskSharpenRequest
+	_ = c.ShouldBindJSON(&req) // body is optional
+
+	runtimeConfig, llmName, err := s.resolveSystemAgentLLM(workspaceID)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+
+	siteName := "Polar"
+	if site, err := s.getSiteSettings(); err == nil && site != nil && strings.TrimSpace(site.Name) != "" {
+		siteName = site.Name
+	}
+	industry := s.getUserIndustry(userIDStr)
+	envLabel := runtimeEnvLabel(project.RuntimeEnv)
+	scenario := businessScenarioLabel(project.BusinessScenario)
+	systemPrompt := s.renderPrompt(promptSlugTaskSharpen, taskSharpenPromptData{
+		PlatformName: siteName,
+		Industry:     industry,
+		RuntimeEnv:   envLabel,
+		Scenario:     scenario,
+	}, "")
+	runtimeConfig.SystemPrompt = systemPrompt
+
+	userPrompt := buildTaskSharpenUserPrompt(task.Title, task.Description, req.Instruction)
+	payload := aiChatCompletionRequest{
+		Model: runtimeConfig.Model,
+		Messages: []aiChatCompletionMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+		MaxTokens: 1200,
+	}
+	resp, err := s.aiAgent.requestChatCompletion(runtimeConfig, payload)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	if len(resp.Choices) == 0 {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "模型返回为空"})
+		return
+	}
+	parsed, perr := parseTaskSharpenOutput(resp.Choices[0].Message.Content)
+	if perr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "无法解析模型输出: " + perr.Error()})
+		return
+	}
+	parsed.Original = taskSharpenDraft{Title: task.Title, Description: task.Description}
+	parsed.LLM = bioRefineLLMTag{Name: llmName, Model: runtimeConfig.Model}
+	c.JSON(http.StatusOK, parsed)
+}
+
+func buildTaskSharpenUserPrompt(title, description, instruction string) string {
+	var b strings.Builder
+	b.WriteString("当前任务：\n\n标题：")
+	b.WriteString(strings.TrimSpace(title))
+	b.WriteString("\n\n描述：\n")
+	d := strings.TrimSpace(description)
+	if d == "" {
+		b.WriteString("（空 — 用户尚未填写）")
+	} else {
+		b.WriteString(d)
+	}
+	if extra := strings.TrimSpace(instruction); extra != "" {
+		b.WriteString("\n\n用户额外要求：\n")
+		b.WriteString(extra)
+	}
+	return b.String()
+}
+
+func parseTaskSharpenOutput(raw string) (*taskSharpenResponse, error) {
+	trimmed := strings.TrimSpace(raw)
+	if strings.HasPrefix(trimmed, "```") {
+		if idx := strings.Index(trimmed, "\n"); idx >= 0 {
+			trimmed = trimmed[idx+1:]
+		}
+		trimmed = strings.TrimSuffix(strings.TrimSpace(trimmed), "```")
+	}
+	first := strings.Index(trimmed, "{")
+	last := strings.LastIndex(trimmed, "}")
+	if first < 0 || last <= first {
+		return nil, fmt.Errorf("no JSON object in model output")
+	}
+	jsonChunk := trimmed[first : last+1]
+	var parsed taskSharpenResponse
+	if err := json.Unmarshal([]byte(jsonChunk), &parsed); err != nil {
+		return nil, err
+	}
+	if len(parsed.Drafts) == 0 {
+		return nil, fmt.Errorf("model returned no drafts")
+	}
+	clean := make([]taskSharpenDraft, 0, len(parsed.Drafts))
+	for _, d := range parsed.Drafts {
+		d.Title = strings.TrimSpace(d.Title)
+		d.Description = strings.TrimSpace(d.Description)
+		d.Rationale = strings.TrimSpace(d.Rationale)
+		// drafts must at least update title or description; reject
+		// any "empty" suggestion the model emits.
+		if d.Title == "" && d.Description == "" {
+			continue
+		}
+		clean = append(clean, d)
+	}
+	if len(clean) == 0 {
+		return nil, fmt.Errorf("model returned drafts with empty fields")
+	}
+	parsed.Drafts = clean
+	parsed.Notes = strings.TrimSpace(parsed.Notes)
+	return &parsed, nil
+}
+
 // parseBioRefineOutput is forgiving: tolerates ```json ... ``` fences
 // or stray prose around the JSON object. Validates the schema enough
 // to reject empty drafts.
