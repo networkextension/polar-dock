@@ -3013,7 +3013,7 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 .lp-tab:hover { color: var(--text); box-shadow: none; transform: none; }
 .lp-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .lp-tab-icon { font-size: 14px; }
-.lp-topbar-title { font-size: 15px; font-weight: 600; color: var(--text); padding: 0 8px; }
+.lp-topbar-title { font-size: 15px; font-weight: 600; color: var(--text); padding: 0 8px; white-space: nowrap; }
 .lp-topbar-end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .lp-topbar-back {
   font-size: 13px; color: var(--muted); background: none;
@@ -3021,6 +3021,10 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
   padding: 5px 12px; cursor: pointer;
   text-decoration: none; display: inline-flex; align-items: center; gap: 5px;
   font-family: inherit; transition: background .15s; width: auto; box-shadow: none;
+  /* Without nowrap + flex-shrink:0, narrow viewports shrink the
+     button past its content width and CJK text wraps character-by-
+     character vertically — uifix v2 §9 "返回控制台 vertical" glitch. */
+  white-space: nowrap; flex-shrink: 0;
 }
 .lp-topbar-back:hover { background: var(--surface-strong); color: var(--text); box-shadow: none; transform: none; }
 .lp-mode-badge {
