@@ -45,13 +45,15 @@ function formatTime(s: string | null | undefined, kind: "date" | "datetime" = "d
 }
 
 function widgetCard(title: string, body: string, opts: { headerExtra?: string } = {}): string {
-  // Title row: title + spacer + headerExtra. Class hooks let CSS
-  // apply the unified card-header style (font/weight/color set in
-  // styles.css's .dashboard-widget rules so we don't repeat inline).
+  // Title row: title + spacer + headerExtra. The heading is an <h2>
+  // (page <h1> is the topbar title) so screen readers can navigate
+  // by widget; styles.css's .dashboard-widget-header > h2 rule
+  // overrides the default user-agent margin so it visually matches
+  // the previous <strong>.
   return `
     <div class="dashboard-widget">
       <div class="dashboard-widget-header">
-        <strong>${escapeHTML(title)}</strong>
+        <h2>${escapeHTML(title)}</h2>
         <span style="flex:1;"></span>
         ${opts.headerExtra ?? ""}
       </div>

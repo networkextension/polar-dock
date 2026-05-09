@@ -4202,11 +4202,14 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
   margin-bottom: 8px;
 }
 
+.dashboard-widget-header > h2,
 .dashboard-widget-header > strong {
+  margin: 0;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
   letter-spacing: 0.01em;
+  line-height: 1.4;
 }
 
 .dashboard-widget-header > a {
@@ -4423,4 +4426,50 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
   .dashboard-widgets > .dashboard-widget:has(.dashboard-quickstart-grid) {
     grid-column: 1 / -1;
   }
+}
+
+/* ── a11y: keyboard focus ring (uifix.MD #17) ──────────────────── */
+/* Default browser outline is invisible-ish on most surfaces (light
+   thin black ring; mostly hidden on light pages). We replace it
+   globally with a brand-tinted 2px ring that tracks --accent so it
+   reads on both light and dark themes. :focus-visible is mouse-
+   safe — only shows when the user navigates with keyboard.
+   Components with a more specific :focus-visible rule (dashboard
+   row, quickstart tile) keep their richer style; this is the
+   fallback. */
+:focus { outline: none; }
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── responsive: ≤900px hide secondary mode badges (uifix.MD #20)  */
+/* Below 900px the dashboard topbar packs Hello pill + Admin pill +
+   ⚙ 自定义 + ＋ New Markdown. The two badges have no critical
+   action behind them (info-only) so we drop them so the primary CTA
+   stays in the visible row. lp-foot still shows the username + role,
+   so the info isn't lost — just deferred to the user menu. */
+@media (max-width: 900px) {
+  .lp-topbar-end .lp-mode-badge { display: none; }
+}
+
+/* ── responsive: hamburger button visibility (uifix.MD #21) ─────── */
+/* The toggle was a borderless ☰ that disappeared on the topbar. Add
+   a soft border + bg so it's discoverable, especially when the
+   sidebar is collapsed and the rest of the topbar is sparse. */
+.lp-sidebar-toggle {
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.lp-sidebar-toggle:hover {
+  background: var(--surface-strong);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
