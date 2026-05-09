@@ -49,6 +49,15 @@ export function renderSiteBrand(site?: SiteSettings): void {
       iconEl.alt = `${safeSite.name} ${t("brand.icon")}`;
     }
   });
+
+  // Pages that opt in via <title data-site-title>...</title> get the
+  // configured site name written into document.title. Other pages
+  // keep whatever static title their HTML already has (e.g.
+  // <title data-i18n-title="login.title">Login</title>).
+  const titleEl = document.querySelector<HTMLTitleElement>("title[data-site-title]");
+  if (titleEl) {
+    titleEl.textContent = safeSite.name;
+  }
 }
 
 const SIDEBAR_COLLAPSED_KEY = "lp_sidebar_collapsed";
