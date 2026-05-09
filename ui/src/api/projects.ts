@@ -1,5 +1,6 @@
 import { requestJson } from "./http.js";
 import type {
+  AgentTokenCreatePayload,
   AgentTokenCreateResponse,
   AgentTokenListResponse,
   ProjectCreatePayload,
@@ -117,10 +118,10 @@ export async function fetchAgentTokens() {
   return requestJson<AgentTokenListResponse>("/api/agent/tokens");
 }
 
-export async function createAgentToken(name: string) {
+export async function createAgentToken(payload: AgentTokenCreatePayload) {
   return requestJson<AgentTokenCreateResponse>("/api/agent/tokens", {
     method: "POST",
-    body: { name },
+    body: payload,
   });
 }
 

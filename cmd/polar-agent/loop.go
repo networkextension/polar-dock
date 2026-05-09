@@ -8,12 +8,23 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// hostName returns os.Hostname() with errors swallowed — the host
+// info is non-critical metadata for the dock-side agent list.
+func hostName() string {
+	n, err := os.Hostname()
+	if err != nil || n == "" {
+		return "unknown"
+	}
+	return n
+}
 
 // isSafeSubpath blocks workdir_subpath values that would escape the
 // agent's pinned workdir. Allowed: relative paths with no "..",
@@ -82,6 +93,9 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 		"version":      "polar-agent 0.3",
 		"workdir":      workdir,
 		"capabilities": helloCapabilities(spec != nil),
+		"host_os":      runtime.GOOS,
+		"host_arch":    runtime.GOARCH,
+		"host_name":    hostName(),
 	}
 	if spec != nil {
 		hello["tool"] = spec.Name

@@ -1832,6 +1832,24 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_agent_tokens_user ON agent_tokens(user_id, created_at DESC);
+-- Provisioning extras for the create-agent wizard:
+--   coder_config: JSON {kimi: {auth: api_key|login}, claude: {...}}
+--                 picked at create time so the install script knows
+--                 which CLIs to brew/uv/install + which auth to ask for
+--   host_*:       populated on first WS attach via the hello frame
+--                 (uname -s/-m + hostname + remote ip from upgrade headers)
+ALTER TABLE agent_tokens
+	ADD COLUMN IF NOT EXISTS coder_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE agent_tokens
+	ADD COLUMN IF NOT EXISTS host_os TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_tokens
+	ADD COLUMN IF NOT EXISTS host_arch TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_tokens
+	ADD COLUMN IF NOT EXISTS host_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_tokens
+	ADD COLUMN IF NOT EXISTS host_ip TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_tokens
+	ADD COLUMN IF NOT EXISTS last_attached_at TIMESTAMPTZ;
 
 -- projects: top-level container for an AI-driven product. One row =
 -- "the thing being built". The chat-with-AI flow lives under it:

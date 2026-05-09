@@ -128,18 +128,44 @@ export type ProjectTaskUpdatePayload = {
   status?: TaskStatus;
 };
 
+export type CoderName = "kimi" | "claude" | "codex";
+export type CoderAuthMode = "api_key" | "login";
+
+export type AgentCoderEntry = {
+  enabled: boolean;
+  auth_mode: CoderAuthMode;
+};
+
+export type AgentCoderConfig = {
+  kimi?: AgentCoderEntry;
+  claude?: AgentCoderEntry;
+  codex?: AgentCoderEntry;
+};
+
 export type AgentToken = {
   id: string;
   user_id: string;
   name: string;
+  coder_config?: AgentCoderConfig;
+  host_os?: string;
+  host_arch?: string;
+  host_name?: string;
+  host_ip?: string;
+  last_attached_at?: string;
   last_used_at?: string;
   revoked_at?: string;
   created_at: string;
 };
 
+export type AgentTokenCreatePayload = {
+  name: string;
+  coders?: { [k in CoderName]?: AgentCoderEntry };
+};
+
 export type AgentTokenCreateResponse = {
   token: AgentToken;
   raw: string;
+  install_script: string;
   hint: string;
 };
 

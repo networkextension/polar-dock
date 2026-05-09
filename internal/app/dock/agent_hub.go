@@ -49,7 +49,8 @@ type agentToolResult struct {
 // each tracked separately so the platform can match responses to
 // requests.
 type agentConn struct {
-	tokenID    string
+	tokenID           string
+	requestRemoteAddr string
 	userID     string
 	botUserID  string
 	workspaceID string
