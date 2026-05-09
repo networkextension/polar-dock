@@ -859,8 +859,15 @@ function renderMessages(messages: ChatMessage[], scrollToBottom = false): void {
           : "";
       const avatar = resolveAvatar(msg.sender_username, msg.sender_icon, 48);
       const activeThread = activeLLMThreads.find((thread) => thread.id === (msg.llm_thread_id || activeLLMThreadId)) || null;
+      // Per-message LLM snapshot. Prefer the message's own captured
+      // config (so swapping the bot's LLM later doesn't retroactively
+      // re-label history) and fall back to the thread's currently-
+      // bound config for legacy rows that pre-date the snapshot.
+      const messageModel = msg.llm_model || "";
+      const messageConfig = msg.llm_config_name || "";
+      const fallbackModel = activeThread?.config_model || activeThread?.config_name || "LLM";
       const botModelMeta = isBotReply
-        ? (activeThread?.config_model || activeThread?.config_name || "LLM")
+        ? (messageModel || messageConfig || fallbackModel)
         : "";
       // Hide latency until the stream completes; show "streaming…" instead.
       const latencyMeta = isBotReply && !isStreamingBot && typeof msg.latency_ms === "number" && msg.latency_ms > 0

@@ -49,6 +49,13 @@ export type ChatMessage = {
   seq?: number;
   updated_at?: string;
   attachment?: ChatMessageAttachment;
+  // Per-message LLM snapshot — captured at reply-generation time.
+  // Empty for user-sent messages and passthrough-bot replies.
+  // llm_config_id may go nil if the source config is later deleted;
+  // the snapshot fields preserve the human-readable identity.
+  llm_config_id?: number;
+  llm_config_name?: string;
+  llm_model?: string;
   deleted?: boolean;
   created_at: string;
 };
