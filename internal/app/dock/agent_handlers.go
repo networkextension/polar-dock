@@ -496,6 +496,38 @@ func remoteIPForRequest(remoteAddr string) string {
 	return remoteAddr
 }
 
+// handleAgentBotConfig returns a bot user's config that polar-agent
+// needs at attach time (preferred_tool, bot_kind, bot_name).
+// Auth: agent token bearer — distinct from /api/agent/bots/:bot_id/status
+// which uses user session for the dashboard widget.
+//
+// Polar-agent uses this to implement `attach --tool=auto`: instead
+// of operator manually setting POLAR_BOT_TOOLS env per bot, the
+// agent fetches the bot's stored preferred_tool from dock and uses
+// that. Empty preferred_tool → tool-loop mode (no --tool flag).
+func (s *Server) handleAgentBotConfig(c *gin.Context) {
+	botID := strings.TrimSpace(c.Param("bot_id"))
+	if botID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bot_id required"})
+		return
+	}
+	bot, err := s.getBotUserByUserID(botID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if bot == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "bot not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"bot_id":         bot.BotUserID,
+		"bot_name":       bot.Name,
+		"bot_kind":       bot.BotKind,
+		"preferred_tool": bot.PreferredTool,
+	})
+}
+
 // handleAgentStatus tells the UI whether a bot has an agent attached
 // and which capabilities the agent declared at hello time. The UI
 // uses capabilities to render passthrough mode badges (e.g. "本地

@@ -13,11 +13,50 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
+	"strings"
+	"time"
 )
+
+// fetchBotPreferredTool asks the dock what the bot's stored
+// preferred_tool is. Used by `attach --tool=auto` so the operator
+// running the docker image doesn't have to set POLAR_BOT_TOOLS
+// per bot — the wizard set the bot's preferred_tool already.
+//
+// Returns "" + nil error when the bot has no preferred_tool set
+// (legitimate signal: tool-loop mode). Real network/auth errors
+// bubble up.
+func fetchBotPreferredTool(cfg AgentConfig, botID string) (string, error) {
+	url := strings.TrimRight(cfg.Server, "/") + "/api/agent/bots/" + botID + "/config"
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("dock returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		PreferredTool string `json:"preferred_tool"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("decode bot config: %w", err)
+	}
+	return strings.TrimSpace(out.PreferredTool), nil
+}
 
 const (
 	exitOK         = 0
@@ -60,6 +99,7 @@ Usage:
   polar-agent login   --server=<url> --token=<raw>     # write ~/.polar/agent.toml
   polar-agent status                                    # show config + last verify
   polar-agent attach  --bot=<bot_id> --workdir=<path>             # tool-call loop mode
+  polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=auto  # ask dock for bot's preferred_tool
   polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=kimi  # passthrough to local kimi-cli
   polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=claude
   polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=codex
@@ -151,6 +191,21 @@ func runAttach(args []string) int {
 		fmt.Fprintf(os.Stderr, "no config (run `polar-agent login` first): %v\n", err)
 		return exitConfig
 	}
+
+	// --tool=auto: ask the dock what this bot's preferred_tool is.
+	// Empty preferred_tool → fall back to tool-loop mode (no --tool).
+	// Non-empty → use that as the passthrough tool name.
+	if strings.EqualFold(strings.TrimSpace(*tool), "auto") {
+		resolvedTool, ferr := fetchBotPreferredTool(cfg, *bot)
+		if ferr != nil {
+			fmt.Fprintf(os.Stderr, "warning: --tool=auto fetch failed (%v); falling back to tool-loop mode\n", ferr)
+			*tool = ""
+		} else {
+			log.Printf("tool=auto resolved to %q for bot=%s", resolvedTool, *bot)
+			*tool = resolvedTool
+		}
+	}
+
 	resolved, err := resolveWorkdir(*workdir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "workdir invalid: %v\n", err)
