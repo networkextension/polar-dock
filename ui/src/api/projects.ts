@@ -64,6 +64,13 @@ export async function updateProjectFeature(id: string, featureID: string, payloa
   );
 }
 
+export async function deleteProjectFeature(id: string, featureID: string) {
+  return requestJson<{ ok: boolean }>(
+    `/api/projects/${encodeURIComponent(id)}/features/${encodeURIComponent(featureID)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function generateProjectPlan(id: string) {
   return requestJson<ProjectGeneratePlanResponse>(`/api/projects/${encodeURIComponent(id)}/plan`, {
     method: "POST",

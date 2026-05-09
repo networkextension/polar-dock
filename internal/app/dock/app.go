@@ -773,6 +773,7 @@ func (s *Server) registerRoutes() {
 		api.DELETE("/projects/:id", s.AuthMiddleware(), s.handleProjectDelete)
 		api.POST("/projects/:id/decompose", s.AuthMiddleware(), s.handleProjectDecompose)
 		api.PUT("/projects/:id/features/:feature_id", s.AuthMiddleware(), s.handleProjectFeatureUpdate)
+		api.DELETE("/projects/:id/features/:feature_id", s.AuthMiddleware(), s.handleProjectFeatureDelete)
 		api.POST("/projects/:id/plan", s.AuthMiddleware(), s.handleProjectGeneratePlan)
 		api.PUT("/projects/:id/tasks/:task_id", s.AuthMiddleware(), s.handleProjectTaskUpdate)
 		api.POST("/projects/:id/tasks/:task_id/pickup", s.AuthMiddleware(), s.handleProjectTaskPickup)

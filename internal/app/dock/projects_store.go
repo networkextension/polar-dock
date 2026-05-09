@@ -405,6 +405,28 @@ func (s *Server) updateProjectFeature(projectID, featureID, title, description, 
 	return nil
 }
 
+// deleteProjectFeature removes a single feature row. Tasks derived
+// from this feature survive — project_tasks.feature_id has
+// ON DELETE SET NULL by design (features can be re-decomposed; tasks
+// are the persistent execution record).
+func (s *Server) deleteProjectFeature(projectID, featureID string) error {
+	res, err := s.db.Exec(
+		`DELETE FROM project_features WHERE id = $1 AND project_id = $2`,
+		featureID, projectID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // ---- tasks ---------------------------------------------------------
 
 // generatePlanFromSelectedFeatures creates one task per selected
