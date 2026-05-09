@@ -38,6 +38,11 @@ const (
 	promptSlugCodeStageArchitecture   = "system_agent.code.architecture"
 	promptSlugCodeStageImplementation = "system_agent.code.implementation"
 	promptSlugCodeStageSprint         = "system_agent.code.sprint"
+
+	// Thread summary (system_agent capability D) — system prompt
+	// fed to the LLM that produces the 1–2 sentence "上次停在哪"
+	// banner shown at the top of /chat.html.
+	promptSlugThreadSummary = "system_agent.thread_summary"
 )
 
 // promptTemplateDefaults is the canonical registry. Each entry is
@@ -513,6 +518,27 @@ to inspect and modify the codebase. Important rules:
 - Sprint 的目标不是塞满，而是稳定交付
 - 比"做多少"更重要的是"学到什么"
 - 任何会议 / 流程不能服务交付，就砍掉`,
+		},
+
+		// ── Thread summary (system_agent 能力 D) ────────────────
+		// One per chat thread. Output is read by the user, not
+		// piped to another LLM, so plain natural Chinese, no JSON.
+		{
+			Slug:        promptSlugThreadSummary,
+			Name:        "聊天 thread 最近消息总结",
+			Description: "为单个 chat thread 生成 1-2 句话的「上次停在哪」状态描述。变量：{{.PlatformName}}。输入是按时间排序的最近 N 条消息（角色 + 内容）。",
+			Content: `你是 {{.PlatformName}} 的会话状态助手。任务是：用 1-2 句话总结这个 chat thread 的当前状态，让用户重新打开时能立刻知道「上次停在哪」。
+
+规则：
+- **不要复述消息** — 摘录原文是没用的，你要提炼状态
+- 像朋友提醒的口吻："上次看你停在 X，正在 Y"
+- 中文，不超过 80 字
+- 不要使用列表 / markdown / 代码块；纯文本
+- 如果用户在问问题没得到答复，明确指出："上次问 X 没回完"
+- 如果对话已自然收束，可以说"X 已搞定"
+- 如果消息少（< 3 条），可以说"这是新话题，刚起头讲到 X"
+
+只输出总结本身，不要任何前后缀（不要"以下是总结："这种）。`,
 		},
 	}
 }

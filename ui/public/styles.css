@@ -4647,3 +4647,59 @@ textarea:focus-visible,
    above; .btn-danger.is-confirm flip is also already defined and
    composes cleanly when .btn is present. */
 
+/* ── Chat thread summary banner (system_agent capability D) ───────
+   Lazy-loaded "上次停在哪" 1–2 sentence summary at the top of an
+   open chat thread. Subtle by default — sits between the chat
+   header and the messages list, dismissible with the × button. */
+.chat-thread-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  margin: 0 12px 4px;
+  background: var(--badge-neutral-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.chat-thread-summary[hidden] { display: none; }
+.chat-thread-summary-icon { font-size: 14px; opacity: 0.75; flex-shrink: 0; }
+.chat-thread-summary-text { flex: 1; min-width: 0; color: var(--text); }
+.chat-thread-summary-llm {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: -0.01em;
+  flex-shrink: 0;
+}
+.chat-thread-summary-stale {
+  font-size: 11px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.chat-thread-summary-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+  /* Defense vs base button {} cascade — keep tight + neutral. */
+  width: 22px;
+  box-shadow: none;
+  transform: none;
+}
+.chat-thread-summary-dismiss:hover {
+  background: var(--surface-strong);
+  color: var(--text);
+  box-shadow: none;
+  transform: none;
+}
+

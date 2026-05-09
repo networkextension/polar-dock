@@ -1442,6 +1442,25 @@ CREATE TABLE IF NOT EXISTS chat_threads (
 ALTER TABLE chat_threads
 	ADD COLUMN IF NOT EXISTS last_message_id BIGINT;
 
+-- chat_thread_summaries — system agent's "上次停在哪" 1-2 sentence
+-- summary per thread. UNIQUE on thread_id since we keep at most one
+-- live summary per thread. up_to_message_id tracks how fresh the
+-- summary is: comparing it to chat_threads.last_message_id tells the
+-- caller whether the summary is stale (newer messages exist).
+CREATE TABLE IF NOT EXISTS chat_thread_summaries (
+	id BIGSERIAL PRIMARY KEY,
+	thread_id BIGINT NOT NULL UNIQUE REFERENCES chat_threads(id) ON DELETE CASCADE,
+	summary TEXT NOT NULL DEFAULT '',
+	up_to_message_id BIGINT,
+	message_count INTEGER NOT NULL DEFAULT 0,
+	llm_config_id BIGINT REFERENCES llm_configs(id) ON DELETE SET NULL,
+	llm_name TEXT NOT NULL DEFAULT '',
+	llm_model TEXT NOT NULL DEFAULT '',
+	generated_at TIMESTAMPTZ,
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_thread_summaries_thread ON chat_thread_summaries(thread_id);
+
 CREATE TABLE IF NOT EXISTS llm_threads (
 	id BIGSERIAL PRIMARY KEY,
 	chat_thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
