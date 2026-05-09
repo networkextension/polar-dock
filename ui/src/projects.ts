@@ -17,13 +17,16 @@ import {
   fetchAgentTokens,
   fetchProject,
   fetchProjects,
+  fetchResearchRuns,
   generateProjectPlan,
   pickupProjectTask,
+  dispatchResearchTask,
   revokeAgentToken,
   updateProject,
   updateProjectFeature,
   updateProjectTask,
 } from "./api/projects.js";
+import type { ResearchRun } from "./api/projects.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
 import { fetchIOSApps } from "./api/iosdist.js";
 import type { BotUser } from "./types/dashboard.js";
@@ -89,6 +92,11 @@ const dispatchAllBtn = byId<HTMLButtonElement>("projectsDispatchAllBtn");
 const finishAllBtn = byId<HTMLButtonElement>("projectsFinishAllBtn");
 const cancelAllBtn = byId<HTMLButtonElement>("projectsCancelAllBtn");
 const dispatchAllStatusEl = byId<HTMLElement>("projectsDispatchAllStatus");
+const researchSectionEl = byId<HTMLElement>("projectsResearchSection");
+const researchListEl = byId<HTMLElement>("projectsResearchList");
+const researchCountEl = byId<HTMLElement>("projectsResearchCount");
+const researchRefreshBtn = byId<HTMLButtonElement>("projectsResearchRefreshBtn");
+const researchCollapseBtn = byId<HTMLButtonElement>("projectsResearchCollapseBtn");
 
 const newBtn = byId<HTMLButtonElement>("projectsNewBtn");
 const agentTokensBtn = byId<HTMLButtonElement>("projectsAgentTokensBtn");
@@ -142,6 +150,7 @@ let activeProjectID: string | null = null;
 let activeProject: Project | null = null;
 let activeFeatures: ProjectFeature[] = [];
 let activeTasks: ProjectTask[] = [];
+let activeResearchRuns: ResearchRun[] = [];
 let availableBots: BotUser[] = [];
 let pickerOpenForTaskID: string | null = null;
 // botToolMap caches each bot's currently-attached agent tool name
@@ -316,6 +325,7 @@ function renderProjectPanel(): void {
 
   renderFeatures();
   renderTasks();
+  renderResearchRuns();
 }
 
 // groupBySprint splits a sorted-by-sprint slice into [sprint, items[]].
@@ -585,7 +595,28 @@ async function openProject(id: string): Promise<void> {
   activeProject = data.project;
   activeFeatures = data.features;
   activeTasks = data.tasks;
+  activeResearchRuns = [];
   renderProjectPanel();
+  // Research history is research-only and a separate API call —
+  // load it lazily after the main panel renders.
+  if (activeProject?.runtime_env === "research") {
+    void loadResearchRuns();
+  }
+}
+
+async function loadResearchRuns(): Promise<void> {
+  if (!activeProject) return;
+  const projectID = activeProject.id;
+  const { response, data } = await fetchResearchRuns(projectID);
+  // Guard against the user having navigated away while we were
+  // fetching — only commit results for the still-open project.
+  if (activeProject?.id !== projectID) return;
+  if (!response.ok) {
+    activeResearchRuns = [];
+  } else {
+    activeResearchRuns = data.runs ?? [];
+  }
+  renderResearchRuns();
 }
 
 // iosdist app cache for the binding selector. Populated lazily on
@@ -837,24 +868,45 @@ async function dispatchAllTodos(): Promise<void> {
   let done = 0;
   let failed = 0;
   let lastError = "";
+  // Research projects use a separate dispatch endpoint that runs the
+  // LLM loop on the agent. Mirror the loop shape; the per-call confirm
+  // (LLM transparency) is already handled by the bulk-confirm above
+  // since one bot = one resolved LLM for the whole batch.
+  const isResearchBulk = activeProject.runtime_env === "research";
   for (const t of todos) {
     setStatus(dispatchAllStatusEl, `派单中 ${done + 1}/${todos.length} · ${escapeHTML(t.title)}`, false);
     try {
-      const { response, data } = await pickupProjectTask(activeProject.id, t.id, botID);
-      if (response.ok) {
-        const idx = activeTasks.findIndex((x) => x.id === t.id);
-        if (idx >= 0) {
-          activeTasks[idx] = data.task;
+      let ok: boolean;
+      let status: number;
+      let errMsg: string | undefined;
+      let updatedTask: ProjectTask | null = null;
+      if (isResearchBulk) {
+        const { response, data } = await dispatchResearchTask(activeProject.id, t.id, botID);
+        ok = response.ok;
+        status = response.status;
+        if (!ok) errMsg = (data as { error?: string }).error;
+      } else {
+        const { response, data } = await pickupProjectTask(activeProject.id, t.id, botID);
+        ok = response.ok;
+        status = response.status;
+        if (!ok) errMsg = (data as { error?: string }).error;
+        if (ok) updatedTask = data.task;
+      }
+      if (ok) {
+        if (updatedTask) {
+          const idx = activeTasks.findIndex((x) => x.id === t.id);
+          if (idx >= 0) {
+            activeTasks[idx] = updatedTask;
+          }
         }
         done++;
       } else {
         failed++;
-        const err = (data as { error?: string }).error;
-        if (err) lastError = err;
+        if (errMsg) lastError = errMsg;
         // Stop on first failure — when the precheck (e.g. agent
         // not attached, 503) fails for one task, every following
         // task will fail the same way. No point hammering.
-        if (response.status === 503) {
+        if (status === 503) {
           break;
         }
       }
@@ -863,6 +915,19 @@ async function dispatchAllTodos(): Promise<void> {
       lastError = String(e);
     }
     renderTasks();
+  }
+  if (isResearchBulk && done > 0) {
+    // Refresh the activeTasks from server (research dispatch doesn't
+    // return the updated task in body, unlike pickup) + reload the
+    // research history panel so the new queued runs show up.
+    void (async () => {
+      const proj = await fetchProject(activeProject!.id);
+      if (proj.response.ok) {
+        activeTasks = proj.data.tasks;
+        renderTasks();
+      }
+      void loadResearchRuns();
+    })();
   }
   setStatus(
     dispatchAllStatusEl,
@@ -999,6 +1064,16 @@ function loadDecomposeBots(): void {
 async function doPickup(taskID: string, botUserID: string): Promise<void> {
   if (!activeProject) return;
   pickerOpenForTaskID = null;
+
+  // Research projects use a different dispatch endpoint that runs a
+  // local LLM loop on the agent. The confirm dialog is also distinct
+  // — operators see WHICH LLM is about to do the work (transparency
+  // requirement).
+  if (activeProject.runtime_env === "research") {
+    await doResearchDispatch(taskID, botUserID);
+    return;
+  }
+
   const { response, data } = await pickupProjectTask(activeProject.id, taskID, botUserID);
   if (!response.ok) {
     window.alert(("error" in data && (data as { error?: string }).error) || "派单失败");
@@ -1013,6 +1088,111 @@ async function doPickup(taskID: string, botUserID: string): Promise<void> {
     activeTasks[idx] = data.task;
   }
   renderTasks();
+}
+
+async function doResearchDispatch(taskID: string, botUserID: string): Promise<void> {
+  if (!activeProject) return;
+  const task = activeTasks.find((t) => t.id === taskID);
+  if (!task) return;
+  // Look up the bot's bound LLM as a "best-effort preview" — final
+  // resolution happens server-side (workspace default fallback) and
+  // the actual LLM is shown again on success. We just want to give
+  // the operator something concrete to confirm.
+  const bot = availableBots.find((b) => b.bot_user_id === botUserID);
+  const llmPreview = bot && bot.llm_config_id > 0 && bot.config_name
+    ? bot.config_name
+    : "工作区默认 LLM（后端解析）";
+  const confirmMsg = [
+    `派发研究任务到 ${bot?.name ?? botUserID}？`,
+    "",
+    `任务: ${task.title}`,
+    `预计 LLM: ${llmPreview}`,
+    "",
+    "agent 会本地驱动 LLM 写文件并 git push。任务启动时聊天里会回写实际使用的 LLM 名 + 模型。",
+  ].join("\n");
+  if (!window.confirm(confirmMsg)) return;
+
+  pickerOpenForTaskID = null;
+  const { response, data } = await dispatchResearchTask(activeProject.id, taskID, botUserID);
+  if (!response.ok) {
+    window.alert(("error" in data && (data as { error?: string }).error) || "派研究任务失败");
+    renderTasks();
+    return;
+  }
+  const llm = data.llm;
+  // Toast-style confirmation showing the actual LLM the server resolved.
+  // Plain alert keeps it dependency-free; if/when we add a proper toast
+  // util this should swap to that.
+  window.alert(`已派发 · LLM: ${llm.name} (${llm.model})\n等待 agent 在聊天中回写「研究任务启动」。`);
+  // Refresh research history so the queued/running row appears.
+  void loadResearchRuns();
+  // Refresh tasks so the picked-up status flips immediately.
+  const proj = await fetchProject(activeProject.id);
+  if (proj.response.ok) {
+    activeTasks = proj.data.tasks;
+    renderTasks();
+  }
+}
+
+function renderResearchRuns(): void {
+  if (!activeProject || activeProject.runtime_env !== "research") {
+    researchSectionEl.hidden = true;
+    return;
+  }
+  researchSectionEl.hidden = false;
+  researchCountEl.textContent = `共 ${activeResearchRuns.length} 条`;
+  if (activeResearchRuns.length === 0) {
+    researchListEl.innerHTML = `<div style="color:var(--text-muted,#888); font-size:12px; padding:8px 0;">还没有研究记录。在任务列表里点「派单」给一个 classic bot 就会创建一条。</div>`;
+    return;
+  }
+  researchListEl.innerHTML = activeResearchRuns.map((r) => researchRunRowHTML(r)).join("");
+}
+
+function researchRunRowHTML(r: ResearchRun): string {
+  const statusBadge = researchStatusBadge(r.status);
+  const llm = `${escapeHTML(r.llm_name || "?")}${r.llm_model ? ` (${escapeHTML(r.llm_model)})` : ""}`;
+  const created = formatTime(r.created_at);
+  const sha = r.commit_sha ? `<code style="font-size:11px;">${escapeHTML(r.commit_sha.slice(0, 8))}</code>` : "—";
+  const filesCount = r.files_written?.length ?? 0;
+  const summary = r.summary ? escapeHTML(r.summary).replace(/\n/g, "<br>") : "";
+  const errBlock = r.error_message
+    ? `<div style="color:#c1383a; font-size:12px; padding-top:4px;">⚠️ ${escapeHTML(r.error_message)}</div>`
+    : "";
+  return [
+    `<div style="border:1px solid var(--border,#ececf0); border-radius:6px; padding:8px 10px; background:var(--surface,#fff); display:flex; flex-direction:column; gap:6px;">`,
+    `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:12px;">`,
+    statusBadge,
+    `<span style="color:var(--text-muted,#888);">${created}</span>`,
+    `<span title="LLM 快照">🤖 ${llm}</span>`,
+    `<span title="commit sha">📌 ${sha}</span>`,
+    `<span title="文件改动数">📁 ${filesCount}</span>`,
+    `<span title="LLM 调用轮数">🔄 ${r.iterations}</span>`,
+    `<span style="flex:1;"></span>`,
+    `<span style="color:var(--text-muted,#888);">run #${r.id}</span>`,
+    `</div>`,
+    summary ? `<div style="font-size:13px; color:var(--text,#333); line-height:1.5;">${summary}</div>` : "",
+    errBlock,
+    `</div>`,
+  ].join("");
+}
+
+function researchStatusBadge(status: ResearchRun["status"]): string {
+  const palette: Record<ResearchRun["status"], { label: string; color: string; bg: string }> = {
+    queued:    { label: "排队中",   color: "#7a5a00", bg: "#fff7d6" },
+    running:   { label: "进行中",   color: "#0c4f9c", bg: "#dde9fb" },
+    succeeded: { label: "✅ 成功", color: "#1f6f3a", bg: "#dff5e6" },
+    failed:    { label: "❌ 失败", color: "#a32424", bg: "#fde0e0" },
+  };
+  const p = palette[status] ?? { label: status, color: "#555", bg: "#eee" };
+  return `<span style="background:${p.bg}; color:${p.color}; padding:2px 6px; border-radius:4px; font-weight:600;">${p.label}</span>`;
+}
+
+function formatTime(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 async function doDeleteProject(): Promise<void> {
@@ -1338,6 +1518,7 @@ decomposeBtn.addEventListener("click", () => void decompose());
 
 const COLLAPSE_FEATURES_KEY = "polar_projects_features_collapsed";
 const COLLAPSE_TASKS_KEY = "polar_projects_tasks_collapsed";
+const COLLAPSE_RESEARCH_KEY = "polar_projects_research_collapsed";
 
 function applyCollapse(btn: HTMLButtonElement, body: HTMLElement, collapsed: boolean): void {
   body.style.display = collapsed ? "none" : "";
@@ -1376,6 +1557,13 @@ tasksCollapseBtn.addEventListener("click", () => {
   writeCollapse(COLLAPSE_TASKS_KEY, next);
   applyCollapse(tasksCollapseBtn, tasksListEl, next);
 });
+applyCollapse(researchCollapseBtn, researchListEl, readCollapse(COLLAPSE_RESEARCH_KEY));
+researchCollapseBtn.addEventListener("click", () => {
+  const next = !readCollapse(COLLAPSE_RESEARCH_KEY);
+  writeCollapse(COLLAPSE_RESEARCH_KEY, next);
+  applyCollapse(researchCollapseBtn, researchListEl, next);
+});
+researchRefreshBtn.addEventListener("click", () => void loadResearchRuns());
 generatePlanBtn.addEventListener("click", () => void generatePlan());
 deleteBtn.addEventListener("click", () => void doDeleteProject());
 dispatchAllBtn.addEventListener("click", () => void dispatchAllTodos());

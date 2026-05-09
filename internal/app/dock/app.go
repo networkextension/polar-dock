@@ -776,6 +776,10 @@ func (s *Server) registerRoutes() {
 		api.POST("/projects/:id/plan", s.AuthMiddleware(), s.handleProjectGeneratePlan)
 		api.PUT("/projects/:id/tasks/:task_id", s.AuthMiddleware(), s.handleProjectTaskUpdate)
 		api.POST("/projects/:id/tasks/:task_id/pickup", s.AuthMiddleware(), s.handleProjectTaskPickup)
+		api.POST("/projects/:id/tasks/:task_id/research/dispatch", s.AuthMiddleware(), s.handleResearchDispatch)
+		api.GET("/projects/:id/research/runs", s.AuthMiddleware(), s.handleResearchRunsList)
+		api.POST("/projects/research/runs/:run_id/start", s.PolarAgentAuthMiddleware(), s.handleResearchRunStart)
+		api.POST("/projects/research/runs/:run_id/result", s.PolarAgentAuthMiddleware(), s.handleResearchRunResult)
 		api.POST("/projects/:id/tasks/bulk-status", s.AuthMiddleware(), s.handleProjectTaskBulkStatus)
 		// teams (collaboration workspaces). T2 = CRUD + read-only members
 		// list. T3 = invitations. T5 = RequireTeamRole middleware
