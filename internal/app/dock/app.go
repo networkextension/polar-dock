@@ -671,6 +671,7 @@ func (s *Server) registerRoutes() {
 		api.POST("/markdown", s.AuthMiddleware(), s.handleMarkdownSubmit)
 		api.POST("/markdown/assist-with-bot", s.AuthMiddleware(), s.handleMarkdownAssistWithBot)
 		api.GET("/markdown", s.AuthMiddleware(), s.handleMarkdownList)
+		api.GET("/markdown/workspace", s.AuthMiddleware(), s.handleWorkspaceMarkdownList)
 		api.GET("/public/markdowns", s.handlePublicMarkdownList)
 		api.GET("/public/markdown/:id", s.handlePublicMarkdownRead)
 		api.GET("/markdown/:id", s.AuthMiddleware(), s.handleMarkdownRead)

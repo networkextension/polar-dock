@@ -17,6 +17,9 @@ const backBtn = byId<HTMLButtonElement>("backBtn");
 const welcomeText = byId<HTMLElement>("welcomeText");
 const publicToggle = byId<HTMLInputElement>("publicToggle");
 const publicHint = byId<HTMLElement>("publicHint");
+const visibilitySelect = byId<HTMLSelectElement>("visibilitySelect");
+const workspaceSelectLabel = byId<HTMLElement>("workspaceSelectLabel");
+const workspaceSelect = byId<HTMLSelectElement>("workspaceSelect");
 const assistBotSelect = byId<HTMLSelectElement>("assistBotSelect");
 const assistLLMSelect = byId<HTMLSelectElement>("assistLLMSelect");
 const assistInstructionInput = byId<HTMLTextAreaElement>("assistInstructionInput");
@@ -61,7 +64,18 @@ function getPublicUrl(): string {
   return `${window.location.origin}/markdown.html?id=${encodeURIComponent(entryId)}`;
 }
 
+function getVisibility(): "private" | "workspace" | "public" {
+  const v = (visibilitySelect.value || "private") as "private" | "workspace" | "public";
+  return v;
+}
+
 function updatePublicHint(): void {
+  // Keep the hidden checkbox mirrored to the select so any legacy
+  // listener (or tests) that watch publicToggle.checked still see
+  // the right state. visibilitySelect is the source of truth.
+  publicToggle.checked = getVisibility() === "public";
+  workspaceSelectLabel.hidden = getVisibility() !== "workspace";
+
   if (!canEdit) {
     publicHint.textContent = publicToggle.checked
       ? t("editor.publicReadOnly", { url: getPublicUrl() })
@@ -69,14 +83,36 @@ function updatePublicHint(): void {
     return;
   }
 
-  if (!publicToggle.checked) {
+  const vis = getVisibility();
+  if (vis === "private") {
     publicHint.textContent = t("editor.publicByDefault");
     return;
   }
-
+  if (vis === "workspace") {
+    publicHint.textContent = "工作区成员可见，未登录或非成员不可见。";
+    return;
+  }
   publicHint.textContent = entryId
     ? t("editor.publicUrl", { url: getPublicUrl() })
     : t("editor.publicAfterSave");
+}
+
+// loadWorkspacesIntoSelect populates the workspace dropdown with the
+// teams the user is a member of. Called once on bootstrap; idempotent.
+async function loadWorkspacesIntoSelect(): Promise<void> {
+  if (workspaceSelect.options.length > 0) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/teams`, { credentials: "include" });
+    if (!res.ok) return;
+    const data = await res.json();
+    const teams: Array<{ id: string; name: string }> = data.teams || [];
+    workspaceSelect.innerHTML = teams
+      .map((t) => `<option value="${t.id}">${t.name}</option>`)
+      .join("");
+  } catch {
+    // Silent — workspace tier just won't be functional if we can't
+    // fetch the team list. The select stays empty.
+  }
 }
 
 function renderPreview(): void {
@@ -206,6 +242,21 @@ async function loadEntry(): Promise<void> {
   titleInput.value = data.entry ? data.entry.title : "";
   contentInput.value = data.content || "";
   publicToggle.checked = Boolean(data.entry?.is_public);
+  // Hydrate the new visibility select. Server returns visibility +
+  // workspace_id alongside the legacy is_public; either source can
+  // drive the initial state.
+  const initialVis = data.entry?.visibility as string | undefined;
+  if (initialVis === "private" || initialVis === "workspace" || initialVis === "public") {
+    visibilitySelect.value = initialVis;
+  } else {
+    visibilitySelect.value = data.entry?.is_public ? "public" : "private";
+  }
+  if (data.entry?.workspace_id) {
+    void loadWorkspacesIntoSelect().then(() => {
+      workspaceSelect.value = String(data.entry.workspace_id);
+    });
+  }
+  updatePublicHint();
   renderPreview();
   applyReadonlyState(data.can_edit === false);
 
@@ -217,6 +268,12 @@ async function loadEntry(): Promise<void> {
 
 contentInput.addEventListener("input", renderPreview);
 publicToggle.addEventListener("change", updatePublicHint);
+visibilitySelect.addEventListener("change", () => {
+  updatePublicHint();
+  if (visibilitySelect.value === "workspace") {
+    void loadWorkspacesIntoSelect();
+  }
+});
 
 // Drawer + modal open/close. The drawer slides in from the right; the
 // modal centers over the page with a backdrop. Both close on ESC and
@@ -343,6 +400,13 @@ saveBtn.addEventListener("click", async () => {
   try {
     const targetUrl = entryId ? `${API_BASE}/api/markdown/${entryId}` : `${API_BASE}/api/markdown`;
     const method = entryId ? "PUT" : "POST";
+    const visibility = getVisibility();
+    const workspaceID = visibility === "workspace" ? workspaceSelect.value || null : null;
+    if (visibility === "workspace" && !workspaceID) {
+      alertBox.className = "alert error";
+      alertBox.textContent = "请选择一个工作区";
+      return;
+    }
     const res = await fetch(targetUrl, {
       method,
       headers: { "Content-Type": "application/json" },
@@ -350,7 +414,12 @@ saveBtn.addEventListener("click", async () => {
       body: JSON.stringify({
         title,
         content,
-        is_public: publicToggle.checked,
+        visibility,
+        workspace_id: workspaceID,
+        // Keep is_public for older server versions that still
+        // expect it; new server reads visibility but tolerates
+        // both. Once everyone is on the new schema the field can go.
+        is_public: visibility === "public",
       }),
     });
     const data = await res.json();

@@ -9,7 +9,12 @@ import (
 	"time"
 )
 
-func (s *Server) saveMarkdownDocument(userID, title, content, editorMode string, isPublic bool, now time.Time) (*MarkdownEntry, string, error) {
+// saveMarkdownDocument persists the markdown body to disk and writes
+// the metadata row. visibility is the three-tier value
+// (private/workspace/public). workspaceID is required only for
+// workspace tier — caller is responsible for verifying that the
+// workspace_id is one the user is a member of.
+func (s *Server) saveMarkdownDocument(userID, title, content, editorMode, visibility string, workspaceID *string, now time.Time) (*MarkdownEntry, string, error) {
 	if err := os.MkdirAll(s.markdownDir, 0o755); err != nil {
 		return nil, "", err
 	}
@@ -29,26 +34,30 @@ func (s *Server) saveMarkdownDocument(userID, title, content, editorMode string,
 
 	mode := normalizeEditorMode(editorMode)
 	summary, coverURL := extractMarkdownMeta(content)
-	visibility := MarkdownVisibilityPrivate
-	if isPublic {
-		visibility = MarkdownVisibilityPublic
+	if visibility == "" {
+		visibility = MarkdownVisibilityPrivate
 	}
-	entryID, err := s.createMarkdownEntryReturningID(userID, title, path, summary, coverURL, mode, visibility, nil, now)
+	if visibility != MarkdownVisibilityWorkspace {
+		workspaceID = nil
+	}
+	entryID, err := s.createMarkdownEntryReturningID(userID, title, path, summary, coverURL, mode, visibility, workspaceID, now)
 	if err != nil {
 		_ = os.Remove(path)
 		return nil, "", err
 	}
 
 	return &MarkdownEntry{
-		ID:         entryID,
-		UserID:     userID,
-		Title:      title,
-		Summary:    summary,
-		CoverURL:   coverURL,
-		FilePath:   path,
-		IsPublic:   isPublic,
-		EditorMode: mode,
-		UploadedAt: now,
+		ID:          entryID,
+		UserID:      userID,
+		Title:       title,
+		Summary:     summary,
+		CoverURL:    coverURL,
+		FilePath:    path,
+		IsPublic:    visibility == MarkdownVisibilityPublic,
+		Visibility:  visibility,
+		WorkspaceID: workspaceID,
+		EditorMode:  mode,
+		UploadedAt:  now,
 	}, content, nil
 }
 

@@ -402,7 +402,7 @@ func (a *aiAgent) handleAgentTask(task aiAgentTask, cfg aiRuntimeConfig) {
 	// a markdown entry so the user can re-open the long output, and
 	// finalize the placeholder with a short preview + link.
 	title := buildSystemMarkdownTitle(reply, time.Now())
-	entry, _, mdErr := a.server.saveMarkdownDocument(task.ResponderUserID, title, reply, "markdown", false, time.Now())
+	entry, _, mdErr := a.server.saveMarkdownDocument(task.ResponderUserID, title, reply, "markdown", MarkdownVisibilityPrivate, nil, time.Now())
 	if mdErr != nil {
 		log.Printf("save agent markdown failed: %v (finalizing as plain text)", mdErr)
 		if finalErr := a.server.finalizeChatMessageWithLLM(placeholderID, reply, nil, "", latencyPtr, false, chatLLMSnapshotFromCfg(cfg)); finalErr != nil {
@@ -440,7 +440,7 @@ func (a *aiAgent) handleSyncTask(task aiAgentTask, cfg aiRuntimeConfig) {
 	log.Printf("ai agent reply ok in %dms (thread=%d)", latencyMs, task.ThreadID)
 	now := time.Now()
 	title := buildSystemMarkdownTitle(reply, now)
-	entry, _, err := a.server.saveMarkdownDocument(task.ResponderUserID, title, reply, "markdown", false, now)
+	entry, _, err := a.server.saveMarkdownDocument(task.ResponderUserID, title, reply, "markdown", MarkdownVisibilityPrivate, nil, now)
 	if err != nil {
 		log.Printf("save ai markdown failed: %v", err)
 		if _, sendErr := a.server.sendBotChatMessageWithLLM(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, reply, latencyPtr, snap, now); sendErr != nil {
@@ -570,7 +570,7 @@ func (a *aiAgent) handleStreamingTask(task aiAgentTask, cfg aiRuntimeConfig) {
 
 	completedAt := time.Now()
 	title := buildSystemMarkdownTitle(finalText, completedAt)
-	entry, _, err := a.server.saveMarkdownDocument(task.ResponderUserID, title, finalText, "markdown", false, completedAt)
+	entry, _, err := a.server.saveMarkdownDocument(task.ResponderUserID, title, finalText, "markdown", MarkdownVisibilityPrivate, nil, completedAt)
 	if err != nil {
 		log.Printf("save ai markdown failed: %v", err)
 		// Finalize without a markdown link; the streaming bubble keeps the
