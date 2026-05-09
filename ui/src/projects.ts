@@ -1161,46 +1161,91 @@ const CODER_ROWS: CoderUIRow[] = [
   { name: "codex", label: "codex", install: "npm i -g @openai/codex-cli" },
 ];
 
+// API key env var names per coder — what the install script will
+// write into ~/.polar/tools.json's per-tool env block.
+const CODER_API_ENV: { [k in CoderName]: string } = {
+  kimi: "KIMI_API_KEY",
+  claude: "ANTHROPIC_API_KEY",
+  codex: "OPENAI_API_KEY",
+};
+
 function renderCoderRows(): void {
-  agentTokenCoderRowsEl.innerHTML = CODER_ROWS.map((r, idx) => {
+  agentTokenCoderRowsEl.innerHTML = CODER_ROWS.map((r) => {
     const checked = r.name === "kimi" ? "checked" : "";
     return `
-      <div style="display:flex; gap:10px; align-items:center; padding:6px; background:#fafafa; border-radius:4px;">
-        <label style="display:flex; gap:6px; align-items:center; cursor:pointer; min-width:130px;">
-          <input type="checkbox" data-coder-toggle="${r.name}" ${checked} style="margin:0; padding:0; width:auto; flex-shrink:0;" />
-          <span style="font-size:13px; font-weight:500;">${r.label}</span>
-        </label>
-        <code style="font-size:10px; color:var(--text-muted,#888); flex:1; overflow:hidden; text-overflow:ellipsis;">${r.install}</code>
-        <label style="display:flex; gap:4px; align-items:center; cursor:pointer; font-size:12px;">
-          <input type="radio" name="coderAuth_${r.name}" value="api_key" ${idx === 0 ? "checked" : "checked"} style="margin:0; padding:0; width:auto; flex-shrink:0;" />
-          <span>api_key</span>
-        </label>
-        <label style="display:flex; gap:4px; align-items:center; cursor:pointer; font-size:12px;">
-          <input type="radio" name="coderAuth_${r.name}" value="login" style="margin:0; padding:0; width:auto; flex-shrink:0;" />
-          <span>login</span>
-        </label>
+      <div data-coder-row="${r.name}" style="display:flex; flex-direction:column; gap:6px; padding:6px; background:#fafafa; border-radius:4px;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <label style="display:flex; gap:6px; align-items:center; cursor:pointer; min-width:130px;">
+            <input type="checkbox" data-coder-toggle="${r.name}" ${checked} style="margin:0; padding:0; width:auto; flex-shrink:0;" />
+            <span style="font-size:13px; font-weight:500;">${r.label}</span>
+          </label>
+          <code style="font-size:10px; color:var(--text-muted,#888); flex:1; min-width:140px; overflow:hidden; text-overflow:ellipsis;">${r.install}</code>
+          <label style="display:flex; gap:4px; align-items:center; cursor:pointer; font-size:12px;">
+            <input type="radio" name="coderAuth_${r.name}" value="api_key" checked style="margin:0; padding:0; width:auto; flex-shrink:0;" />
+            <span>api_key</span>
+          </label>
+          <label style="display:flex; gap:4px; align-items:center; cursor:pointer; font-size:12px;">
+            <input type="radio" name="coderAuth_${r.name}" value="login" style="margin:0; padding:0; width:auto; flex-shrink:0;" />
+            <span>login</span>
+          </label>
+        </div>
+        <div data-coder-key-row="${r.name}" style="display:flex; gap:6px; align-items:center; padding-left:24px;">
+          <span style="font-size:11px; color:var(--text-muted,#888); white-space:nowrap;">${CODER_API_ENV[r.name]}：</span>
+          <input type="password" data-coder-key="${r.name}" class="input" placeholder="留空 = 安装脚本里只写提示" autocomplete="new-password" spellcheck="false" style="flex:1; min-width:200px; font-size:12px; padding:4px 8px;" />
+        </div>
       </div>
     `;
   }).join("");
+  // Wire change handlers so the api-key row visibility tracks the
+  // checkbox + radio state. login mode hides the key input; api_key
+  // mode shows it.
+  CODER_ROWS.forEach((r) => {
+    syncCoderKeyRowVisibility(r.name);
+    const cb = agentTokenCoderRowsEl.querySelector<HTMLInputElement>(`input[data-coder-toggle="${r.name}"]`);
+    cb?.addEventListener("change", () => syncCoderKeyRowVisibility(r.name));
+    agentTokenCoderRowsEl
+      .querySelectorAll<HTMLInputElement>(`input[name="coderAuth_${r.name}"]`)
+      .forEach((radio) => {
+        radio.addEventListener("change", () => syncCoderKeyRowVisibility(r.name));
+      });
+  });
 }
 
-function readCoderSelections(): { [k in CoderName]?: AgentCoderEntry } {
-  const out: { [k in CoderName]?: AgentCoderEntry } = {};
+function syncCoderKeyRowVisibility(name: CoderName): void {
+  const cb = agentTokenCoderRowsEl.querySelector<HTMLInputElement>(`input[data-coder-toggle="${name}"]`);
+  const radio = agentTokenCoderRowsEl.querySelector<HTMLInputElement>(`input[name="coderAuth_${name}"]:checked`);
+  const keyRow = agentTokenCoderRowsEl.querySelector<HTMLElement>(`[data-coder-key-row="${name}"]`);
+  if (!cb || !keyRow) return;
+  const showKey = cb.checked && radio?.value === "api_key";
+  keyRow.style.display = showKey ? "flex" : "none";
+}
+
+function readCoderSelections(): {
+  coders: { [k in CoderName]?: AgentCoderEntry };
+  apiKeys: { [k in CoderName]?: string };
+} {
+  const coders: { [k in CoderName]?: AgentCoderEntry } = {};
+  const apiKeys: { [k in CoderName]?: string } = {};
   for (const r of CODER_ROWS) {
     const cb = agentTokenCoderRowsEl.querySelector<HTMLInputElement>(`input[data-coder-toggle="${r.name}"]`);
     if (!cb || !cb.checked) continue;
     const radio = agentTokenCoderRowsEl.querySelector<HTMLInputElement>(`input[name="coderAuth_${r.name}"]:checked`);
     const auth: CoderAuthMode = (radio?.value === "login" ? "login" : "api_key") as CoderAuthMode;
-    out[r.name] = { enabled: true, auth_mode: auth };
+    coders[r.name] = { enabled: true, auth_mode: auth };
+    if (auth === "api_key") {
+      const keyEl = agentTokenCoderRowsEl.querySelector<HTMLInputElement>(`input[data-coder-key="${r.name}"]`);
+      const key = (keyEl?.value || "").trim();
+      if (key) apiKeys[r.name] = key;
+    }
   }
-  return out;
+  return { coders, apiKeys };
 }
 
 async function doCreateAgentToken(): Promise<void> {
   const name = agentTokenNameInput.value.trim() || "polar-agent";
-  const coders = readCoderSelections();
+  const { coders, apiKeys } = readCoderSelections();
   agentTokenCreateBtn.disabled = true;
-  const { response, data } = await createAgentToken({ name, coders });
+  const { response, data } = await createAgentToken({ name, coders, api_keys: apiKeys });
   agentTokenCreateBtn.disabled = false;
   if (!response.ok) {
     window.alert("创建失败");
@@ -1210,6 +1255,11 @@ async function doCreateAgentToken(): Promise<void> {
   agentTokenInstallScriptEl.value = data.install_script || "";
   agentTokenJustCreatedEl.hidden = false;
   agentTokenNameInput.value = "";
+  // Clear all key inputs so they don't linger if the modal stays open.
+  CODER_ROWS.forEach((r) => {
+    const keyEl = agentTokenCoderRowsEl.querySelector<HTMLInputElement>(`input[data-coder-key="${r.name}"]`);
+    if (keyEl) keyEl.value = "";
+  });
   await loadAgentTokens();
 }
 

@@ -33,9 +33,16 @@ import (
 // captured at the wizard's coder-pick step. Sane defaults apply
 // when fields are missing (legacy clients calling without coder
 // config still get a working token).
+//
+// api_keys is a separate map from coders so the keys never accidentally
+// land in the persisted coder_config JSONB — they flow into the
+// install script render and are otherwise discarded after the
+// HTTP handler returns. Only present for coders the user picked
+// api_key auth_mode for.
 type agentTokenCreateRequest struct {
-	Name   string                     `json:"name"`
-	Coders map[string]AgentCoderEntry `json:"coders"`
+	Name    string                     `json:"name"`
+	Coders  map[string]AgentCoderEntry `json:"coders"`
+	APIKeys map[string]string          `json:"api_keys"`
 }
 
 type agentTokenCreateResponse struct {
@@ -71,11 +78,34 @@ func (s *Server) handleAgentTokenCreate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	// Filter API keys to only those whose coder is enabled + api_key auth.
+	// Keys for disabled coders or login-mode coders are silently dropped
+	// (no point baking them into the script).
+	apiKeys := map[string]string{}
+	for _, name := range []string{"kimi", "claude", "codex"} {
+		k := strings.TrimSpace(req.APIKeys[name])
+		if k == "" {
+			continue
+		}
+		var entry AgentCoderEntry
+		switch name {
+		case "kimi":
+			entry = coders.Kimi
+		case "claude":
+			entry = coders.Claude
+		case "codex":
+			entry = coders.Codex
+		}
+		if entry.Enabled && entry.AuthMode == "api_key" {
+			apiKeys[name] = k
+		}
+	}
 	script, scriptErr := renderAgentInstallScript(installScriptInput{
-		ServerURL:   serverPublicURL(c),
-		Token:       raw,
-		Coders:      coders,
-		AgentName:   tok.Name,
+		ServerURL: serverPublicURL(c),
+		Token:     raw,
+		Coders:    coders,
+		APIKeys:   apiKeys,
+		AgentName: tok.Name,
 	})
 	if scriptErr != nil {
 		// Fall back to a minimal script — never fail the token create

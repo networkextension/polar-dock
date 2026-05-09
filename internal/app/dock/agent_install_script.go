@@ -34,7 +34,23 @@ type installScriptInput struct {
 	ServerURL string
 	Token     string
 	Coders    AgentCoderConfig
+	// APIKeys maps coder name → raw API key, only for coders the
+	// user picked api_key auth mode + provided a key. Keys are
+	// rendered into ~/.polar/tools.json on the agent host so
+	// polar-agent's per-tool env merge picks them up at spawn time.
+	// Never persisted to DB — flow is wizard-input → render → drop.
+	APIKeys   map[string]string
 	AgentName string
+}
+
+// envVarFor returns the env var name a given coder reads its API
+// key from. Used by the install script template to emit the right
+// env entry in ~/.polar/tools.json per coder.
+func (i installScriptInput) KimiKey() string   { return strings.TrimSpace(i.APIKeys["kimi"]) }
+func (i installScriptInput) ClaudeKey() string { return strings.TrimSpace(i.APIKeys["claude"]) }
+func (i installScriptInput) CodexKey() string  { return strings.TrimSpace(i.APIKeys["codex"]) }
+func (i installScriptInput) HasAnyKey() bool {
+	return i.KimiKey() != "" || i.ClaudeKey() != "" || i.CodexKey() != ""
 }
 
 const installScriptTemplate = `#!/bin/sh
@@ -152,6 +168,41 @@ if command -v npm >/dev/null 2>&1; then
 else
   record_err "codex skipped: npm not on PATH (install Node.js first)"
 fi
+{{end}}
+
+{{if .HasAnyKey}}
+# ---- ~/.polar/tools.json with API keys ----
+# Writes a per-tool env block so polar-agent passes the key to each
+# coder subprocess. Backs up any existing tools.json first; you can
+# manually merge customizations after.
+if [ -f "$HOME/.polar/tools.json" ]; then
+  cp "$HOME/.polar/tools.json" "$HOME/.polar/tools.json.bak.$(date +%Y%m%d%H%M%S)"
+  record_ok "existing ~/.polar/tools.json backed up"
+fi
+cat > "$HOME/.polar/tools.json" << TOOLSEOF
+{
+  "tools": [
+{{- $first := true -}}
+{{- if .KimiKey}}
+{{- if not $first}},{{end}}
+    { "name": "kimi", "env": {"KIMI_API_KEY": "{{.KimiKey}}"} }
+{{- $first = false -}}
+{{- end}}
+{{- if .ClaudeKey}}
+{{- if not $first}},{{end}}
+    { "name": "claude", "env": {"ANTHROPIC_API_KEY": "{{.ClaudeKey}}"} }
+{{- $first = false -}}
+{{- end}}
+{{- if .CodexKey}}
+{{- if not $first}},{{end}}
+    { "name": "codex", "env": {"OPENAI_API_KEY": "{{.CodexKey}}"} }
+{{- $first = false -}}
+{{- end}}
+  ]
+}
+TOOLSEOF
+chmod 600 "$HOME/.polar/tools.json"
+record_ok "~/.polar/tools.json written (chmod 600) with API keys for: {{if .KimiKey}}kimi {{end}}{{if .ClaudeKey}}claude {{end}}{{if .CodexKey}}codex{{end}}"
 {{end}}
 
 # ---- starter env files ----
