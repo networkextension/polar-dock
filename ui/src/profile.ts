@@ -252,6 +252,7 @@ function renderBioPanel(profile: UserProfileDetail): void {
         <div id="profileBioStatus" class="status-text"></div>
         <div class="task-form-actions">
           <button class="btn-inline btn-secondary" type="submit">${t("profile.saveProfile")}</button>
+          <button id="profileBioRefineBtn" class="btn-inline btn-secondary" type="button" title="用 AI 帮我改写">✨ AI 改写</button>
         </div>
       </form>
     `;
@@ -262,6 +263,10 @@ function renderBioPanel(profile: UserProfileDetail): void {
     const status = byId<HTMLElement>("profileBioStatus");
     const verificationStatus = byId<HTMLElement>("profileEmailVerificationStatus");
     const verificationBtn = document.getElementById("profileSendVerificationBtn") as HTMLButtonElement | null;
+    const refineBtn = document.getElementById("profileBioRefineBtn") as HTMLButtonElement | null;
+    refineBtn?.addEventListener("click", () => {
+      openBioRefineModal(bioInput);
+    });
 
     verificationBtn?.addEventListener("click", async () => {
       verificationBtn.disabled = true;
@@ -420,4 +425,153 @@ void init();
 document.getElementById("logoutBtn")?.addEventListener("click", async () => {
   try { await logout(); } finally { window.location.replace("/login.html"); }
 });
+
+// ── system_agent capability A: bio refine modal ─────────────────
+//
+// Owns the "AI 改写自我介绍" modal. Reads the current bio textarea,
+// fires POST /api/system-agent/bio/refine, renders 2-3 candidate
+// cards. Clicking 采用 writes the chosen draft into the bio
+// textarea — the user still has to hit "保存个人资料" to persist
+// (intentional: avoid surprise writes; reuse the existing audit/
+// validation path on update).
+
+const HINT_OPTIONS: Array<{ key: string; label: string }> = [
+  { key: "more_professional", label: "更专业" },
+  { key: "more_concise", label: "更简短" },
+  { key: "more_structured", label: "更结构化" },
+  { key: "add_industry_keywords", label: "加上行业关键词" },
+  { key: "warmer", label: "更亲切口语" },
+];
+
+let activeBioInput: HTMLTextAreaElement | null = null;
+const selectedHints = new Set<string>();
+
+function setBioRefineModalOpen(open: boolean): void {
+  const modal = document.getElementById("bioRefineModal");
+  if (!modal) return;
+  modal.classList.toggle("open", open);
+  modal.setAttribute("aria-hidden", open ? "false" : "true");
+}
+
+function openBioRefineModal(bioInput: HTMLTextAreaElement): void {
+  activeBioInput = bioInput;
+  selectedHints.clear();
+  // Render the chips fresh each open (state is local to the modal).
+  const chipHost = document.getElementById("bioRefineHints");
+  if (chipHost) {
+    chipHost.innerHTML = HINT_OPTIONS.map(
+      (o) => `<button type="button" class="btn-chip" data-hint="${o.key}">${o.label}</button>`,
+    ).join("");
+    chipHost.querySelectorAll<HTMLButtonElement>("[data-hint]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const k = btn.dataset.hint!;
+        if (selectedHints.has(k)) {
+          selectedHints.delete(k);
+          btn.classList.remove("is-active");
+        } else {
+          selectedHints.add(k);
+          btn.classList.add("is-active");
+        }
+      });
+    });
+  }
+  const currentEl = document.getElementById("bioRefineCurrent");
+  if (currentEl) {
+    currentEl.textContent = bioInput.value.trim() || "（空 — 系统会建议先写个初稿）";
+  }
+  const extraEl = document.getElementById("bioRefineExtra") as HTMLTextAreaElement | null;
+  if (extraEl) extraEl.value = "";
+  const resultsEl = document.getElementById("bioRefineResults");
+  if (resultsEl) resultsEl.innerHTML = "";
+  const notesEl = document.getElementById("bioRefineNotes");
+  if (notesEl) notesEl.textContent = "";
+  const statusEl = document.getElementById("bioRefineStatus");
+  if (statusEl) statusEl.textContent = "";
+  setBioRefineModalOpen(true);
+}
+
+document.getElementById("bioRefineCloseBtn")?.addEventListener("click", () => {
+  setBioRefineModalOpen(false);
+});
+document
+  .querySelector("#bioRefineModal .modal-backdrop")
+  ?.addEventListener("click", () => setBioRefineModalOpen(false));
+
+document.getElementById("bioRefineRunBtn")?.addEventListener("click", async () => {
+  if (!activeBioInput) return;
+  const runBtn = document.getElementById("bioRefineRunBtn") as HTMLButtonElement | null;
+  const statusEl = document.getElementById("bioRefineStatus");
+  const resultsEl = document.getElementById("bioRefineResults");
+  const notesEl = document.getElementById("bioRefineNotes");
+  if (runBtn) runBtn.disabled = true;
+  if (statusEl) statusEl.textContent = "生成中...";
+  if (resultsEl) resultsEl.innerHTML = "";
+  if (notesEl) notesEl.textContent = "";
+  try {
+    const extraEl = document.getElementById("bioRefineExtra") as HTMLTextAreaElement | null;
+    const res = await fetch("/api/system-agent/bio/refine", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        current_bio: activeBioInput.value,
+        hints: Array.from(selectedHints),
+        extra: extraEl?.value ?? "",
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (statusEl) statusEl.textContent = data?.error || "生成失败";
+      return;
+    }
+    if (statusEl && data.llm) {
+      statusEl.textContent = `由 ${data.llm.name}${data.llm.model ? ` · ${data.llm.model}` : ""} 生成`;
+    } else if (statusEl) {
+      statusEl.textContent = "";
+    }
+    type Draft = { label: string; text: string; rationale: string };
+    const drafts: Draft[] = data.drafts || [];
+    if (resultsEl) {
+      resultsEl.innerHTML = drafts
+        .map(
+          (d, i) => `
+            <div class="bio-refine-draft">
+              <div class="bio-refine-draft-head">
+                <span class="bio-refine-draft-label">${escapeHtmlBio(d.label || `候选 ${i + 1}`)}</span>
+                <button type="button" class="btn-inline btn-secondary" data-adopt="${i}">采用</button>
+              </div>
+              <div class="bio-refine-draft-text">${escapeHtmlBio(d.text)}</div>
+              ${d.rationale ? `<div class="bio-refine-draft-rationale">调整：${escapeHtmlBio(d.rationale)}</div>` : ""}
+            </div>
+          `,
+        )
+        .join("");
+      resultsEl.querySelectorAll<HTMLButtonElement>("[data-adopt]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.dataset.adopt);
+          if (Number.isNaN(idx) || !drafts[idx] || !activeBioInput) return;
+          activeBioInput.value = drafts[idx].text;
+          activeBioInput.dispatchEvent(new Event("input", { bubbles: true }));
+          setBioRefineModalOpen(false);
+        });
+      });
+    }
+    if (notesEl && data.notes) {
+      notesEl.textContent = data.notes;
+    }
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `生成失败：${(e as Error).message}`;
+  } finally {
+    if (runBtn) runBtn.disabled = false;
+  }
+});
+
+function escapeHtmlBio(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 

@@ -82,6 +82,38 @@
       </div>
     </div>
 
+    <!-- system_agent capability A: bio refine modal. Opens from
+         /profileBioPanel; system agent generates 2-3 rewrite drafts;
+         user picks one to load into the bio textarea (manual save
+         goes through the existing form). -->
+    <div id="bioRefineModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <h3>AI 改写自我介绍</h3>
+          <button id="bioRefineCloseBtn" class="btn-inline btn-secondary" type="button">关闭</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-label">当前自我介绍</div>
+          <div id="bioRefineCurrent" class="profile-bio-copy" style="margin-bottom:14px; min-height:48px;"></div>
+
+          <div class="form-label">期望方向（可多选）</div>
+          <div id="bioRefineHints" class="bio-refine-chips" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;"></div>
+
+          <label class="form-label" for="bioRefineExtra">其他要求（可选）</label>
+          <textarea id="bioRefineExtra" class="input textarea" rows="3" maxlength="200" placeholder="例如：突出我的工程背景；不要写得太正式；保留 emoji"></textarea>
+
+          <div class="task-form-actions" style="margin-top:14px;">
+            <button id="bioRefineRunBtn" class="btn-inline btn-secondary" type="button">生成候选</button>
+            <span id="bioRefineStatus" class="status-text"></span>
+          </div>
+
+          <div id="bioRefineResults" class="bio-refine-results" style="margin-top:18px; display:flex; flex-direction:column; gap:10px;"></div>
+          <div id="bioRefineNotes" class="status-text" style="margin-top:10px;"></div>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/scripts/profile.js"></script>
   </body>
 </html>

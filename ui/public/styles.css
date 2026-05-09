@@ -4703,3 +4703,47 @@ textarea:focus-visible,
   transform: none;
 }
 
+/* ── Bio refine modal (system_agent capability A) ─────────────────
+   Hint chips toggle a brand-tinted "is-active" state; draft cards
+   are subtle bordered blocks with a label + rewritten text +
+   "调整：..." rationale + 采用 button. */
+.btn-chip.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  color: var(--accent);
+}
+.bio-refine-draft {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bio-refine-draft-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bio-refine-draft-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  padding: 2px 8px;
+  border-radius: 999px;
+  flex: 1;
+}
+.bio-refine-draft-text {
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.bio-refine-draft-rationale {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-style: italic;
+}
+
