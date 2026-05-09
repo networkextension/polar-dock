@@ -94,14 +94,14 @@ record_err() { SUMMARY="$SUMMARY
 
 # ---- polar-agent binary ----
 echo "→ downloading polar-agent binary..."
-ASSET_URL="$SERVER/releases/latest/polar-agent_${OS}_${ARCH}"
+ASSET_URL="$SERVER/api/agent/binary?os=${OS}&arch=${ARCH}"
 if curl -fsSL "$ASSET_URL" -o "$INSTALL_PREFIX/polar-agent.new"; then
   mv "$INSTALL_PREFIX/polar-agent.new" "$INSTALL_PREFIX/polar-agent"
   chmod +x "$INSTALL_PREFIX/polar-agent"
   record_ok "polar-agent binary installed at $INSTALL_PREFIX/polar-agent"
 else
   rm -f "$INSTALL_PREFIX/polar-agent.new"
-  record_err "polar-agent binary download failed from $ASSET_URL — check release mirror"
+  record_err "polar-agent binary download failed from $ASSET_URL — dock may be missing release dist or go toolchain. See dock logs / configure POLAR_AGENT_DIST_DIR."
 fi
 
 # ---- login (writes ~/.polar/agent.toml) ----
@@ -115,12 +115,25 @@ fi
 
 {{if .Coders.Kimi.Enabled}}
 # ---- kimi-cli ----
-echo "→ installing kimi-cli (uv tool install)..."
+echo "→ installing kimi-cli (via uv)..."
+# Bootstrap uv if missing — it's not in apt/yum, only the official curl|sh installer.
+if ! command -v uv >/dev/null 2>&1; then
+  echo "  uv not on PATH; installing via official script..."
+  if curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1; then
+    # uv installs to ~/.local/bin; we already put that on PATH earlier but the
+    # current shell may not have re-evaluated. Source the env file uv writes.
+    [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
+    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+    if command -v uv >/dev/null 2>&1; then
+      record_ok "uv bootstrapped via curl|sh"
+    fi
+  fi
+fi
 if command -v uv >/dev/null 2>&1; then
   if uv tool install kimi-cli; then
     record_ok "kimi-cli installed"
 {{if eq .Coders.Kimi.AuthMode "api_key"}}
-    record_ok "kimi auth = api_key — set KIMI_API_KEY in your shell rc before attaching"
+    record_ok "kimi auth = api_key — KIMI_API_KEY written to ~/.polar/tools.json"
 {{else}}
     record_ok "kimi auth = login — run 'kimi login' once before attaching"
 {{end}}
@@ -128,7 +141,7 @@ if command -v uv >/dev/null 2>&1; then
     record_err "kimi-cli install failed (uv tool install kimi-cli) — check uv/network"
   fi
 else
-  record_err "kimi-cli skipped: uv not on PATH (install: curl -LsSf https://astral.sh/uv/install.sh | sh)"
+  record_err "kimi-cli skipped: uv bootstrap failed. Manual: curl -LsSf https://astral.sh/uv/install.sh | sh && uv tool install kimi-cli"
 fi
 {{end}}
 

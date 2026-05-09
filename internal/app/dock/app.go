@@ -759,6 +759,7 @@ func (s *Server) registerRoutes() {
 		api.GET("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenList)
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
 		api.GET("/agent/whoami", s.handleAgentWhoAmI)
+		api.GET("/agent/binary", s.handleAgentBinary)
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
 		api.POST("/agent/bots/:bot_id/dispatch", s.AuthMiddleware(), s.handleAgentDispatch)
 		// projects (workspace-scoped product container with AI
