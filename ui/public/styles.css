@@ -2948,7 +2948,18 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 }
 .lp-nav-item:hover { background: var(--surface-strong); color: var(--text); transform: none; box-shadow: none; }
 .lp-nav-item.active { background: var(--active-bg); color: var(--accent); font-weight: 500; }
-.lp-nav-icon { width: 18px; text-align: center; font-size: 16px; flex-shrink: 0; }
+.lp-nav-icon {
+  width: 18px; height: 18px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px; line-height: 1;
+}
+.lp-nav-icon svg {
+  width: 18px; height: 18px; stroke: currentColor;
+  display: block;
+}
+.lp-foot-icon-btn svg { width: 16px; height: 16px; stroke: currentColor; display: block; }
+.settings-center-nav-icon svg { width: 18px; height: 18px; stroke: currentColor; display: block; }
+.dashboard-quickstart-icon svg { width: 22px; height: 22px; stroke: currentColor; display: block; }
 .lp-nav-divider { height: 1px; background: var(--border); margin: 8px 10px; }
 .lp-sidebar-foot {
   padding: 14px 16px; border-top: 1px solid var(--border);
@@ -4359,9 +4370,13 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
 }
 
 .dashboard-quickstart-icon {
-  font-size: 18px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
-  opacity: 0.75;
+  opacity: 0.85;
   color: var(--text);
   flex-shrink: 0;
 }

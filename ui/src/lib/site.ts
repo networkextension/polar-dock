@@ -1,4 +1,5 @@
 import { makeDefaultAvatar } from "./avatar.js";
+import { hydrateIcons } from "./icons.js";
 import { applyI18n, t } from "./i18n.js";
 import { installWorkspaceSwitcher } from "./workspace.js";
 
@@ -90,6 +91,12 @@ export function initSidebarToggle(): void {
 
 export async function hydrateSiteBrand(): Promise<void> {
   applyI18n();
+  // Inline-SVG icon hydration runs early so the nav doesn't show a
+  // brief Unicode-fallback glyph when the page first paints. Re-run
+  // is cheap; pages that mutate the DOM after their own bootstrap
+  // (e.g. project list rendering) can call hydrateIcons() again on
+  // the changed subtree.
+  hydrateIcons();
   initSidebarToggle();
   initSettingsButton();
   await hydrateSidebarFoot();
