@@ -166,3 +166,80 @@ func scrapeRegistry(t *testing.T, m *metrics) string {
 type errBoom struct{}
 
 func (errBoom) Error() string { return "boom" }
+
+// Phase 3 — fleet gauge + business counters. We can't bring up a real
+// agentHub in unit tests but we can exercise the recorder helpers and
+// confirm the registry reports the labels/values we expect.
+
+func TestRecordResearchDispatchTransitions(t *testing.T) {
+	m := newMetrics()
+	m.recordResearchDispatch("queued")
+	m.recordResearchDispatch("running")
+	m.recordResearchDispatch("running")
+	m.recordResearchDispatch("succeeded")
+	m.recordResearchDispatch("failed")
+
+	body := scrapeRegistry(t, m)
+	for _, want := range []string{
+		`polar_research_dispatch_total{status="queued"} 1`,
+		`polar_research_dispatch_total{status="running"} 2`,
+		`polar_research_dispatch_total{status="succeeded"} 1`,
+		`polar_research_dispatch_total{status="failed"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q", want)
+		}
+	}
+}
+
+func TestRecordIOSDistBuildOutcome(t *testing.T) {
+	m := newMetrics()
+	m.recordIOSDistBuild("zsign", "success")
+	m.recordIOSDistBuild("zsign", "success")
+	m.recordIOSDistBuild("zsign", "failed")
+
+	body := scrapeRegistry(t, m)
+	if !strings.Contains(body, `polar_iosdist_build_total{sign_method="zsign",status="success"} 2`) {
+		t.Errorf("expected 2 success samples")
+	}
+	if !strings.Contains(body, `polar_iosdist_build_total{sign_method="zsign",status="failed"} 1`) {
+		t.Errorf("expected 1 failed sample")
+	}
+}
+
+func TestSnapshotByToolBucketsEmptyAsToolLoop(t *testing.T) {
+	hub := newAgentHub()
+	hub.byBot["bot_a"] = &agentConn{tool: "kimi"}
+	hub.byBot["bot_b"] = &agentConn{tool: "kimi"}
+	hub.byBot["bot_c"] = &agentConn{tool: "claude"}
+	hub.byBot["bot_d"] = &agentConn{tool: ""} // tool-loop mode
+
+	got := hub.snapshotByTool()
+	if got["kimi"] != 2 {
+		t.Errorf("kimi count: got %d want 2", got["kimi"])
+	}
+	if got["claude"] != 1 {
+		t.Errorf("claude count: got %d want 1", got["claude"])
+	}
+	if got["tool_loop"] != 1 {
+		t.Errorf("empty tool should bucket as tool_loop: got %d want 1", got["tool_loop"])
+	}
+	if _, ok := got[""]; ok {
+		t.Errorf("empty-string label leaked into snapshot")
+	}
+}
+
+func TestNilRegistryRecordersNoop(t *testing.T) {
+	// Calling the recorders on a nil registry should not panic. Defends
+	// against test setups (and any future paths) that build a Server
+	// without metrics.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("nil-registry recorder panicked: %v", r)
+		}
+	}()
+	var m *metrics
+	m.recordLLMCall("p", "m", "e", time.Second, nil, 1, 1)
+	m.recordResearchDispatch("queued")
+	m.recordIOSDistBuild("zsign", "success")
+}

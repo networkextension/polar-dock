@@ -64,6 +64,27 @@ datasource → Import。
 Messages / Gemini / XAI Responses / 流式 SSE 暂不解析 —— 那些 endpoint 的
 token panel 显示为 0 是预期。
 
+### 4c. 导入 Agents & Business dashboard（Phase 3）
+
+`dashboards/polar-agents.json`，6 个 panel：
+
+- **Agents attached now**：当前 attached 的 polar-agent 数（按 tool
+  flavor 切：kimi / claude / codex / tool_loop）
+- **Agents attached over time**：变化曲线
+- **Research dispatches per minute**：按 status 切（queued / running /
+  succeeded / failed）
+- **Research success rate (24h)**：成功率 + 成功/失败计数
+- **iOS sign-task throughput**：每分钟成功/失败签名数
+- **iOS build outcomes (24h)**：24 小时成功/失败累计
+
+**说明**：
+- agent gauge 是 15s 周期采样（每 tool flavor 一条 series）。无任何
+  agent attach 时 gauge 自动 reset，不留 stale 标签
+- iosdist 当前只覆盖 zsign 路径（`sign_method="zsign"`）；codesign /
+  asc 路径在 mac-agent 那条线落地后再加 sign_method 维度
+- research 成功率公式 `succeeded / (succeeded+failed)`，`clamp_min` 防分
+  母为 0
+
 ## 验证
 
 dock 启动后跑：

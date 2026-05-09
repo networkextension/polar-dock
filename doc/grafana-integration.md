@@ -214,10 +214,27 @@ doc/grafana-integration.md     ← 本文件（Phase 1 落地时一起合）
   `markdown_assist` / `post_assist` / `reply_assist` / `test_connectivity`。
   未设 = 落入 `endpoint="unknown"`。
 
+## Phase 3 已落地（2026-05-09）
+
+- **`polar_agent_attached{tool}`** — 15s 周期采样
+  `agentHub.snapshotByTool`，空 tool 归为 `tool_loop`。`Reset()` 后
+  再写入，gauge 不留 stale 标签。
+- **`polar_research_dispatch_total{status}`** — 在 createResearchRun /
+  markRunning / finalize 三个转换点 +1（status: queued / running /
+  succeeded / failed）。
+- **`polar_iosdist_build_total{sign_method,status}`** — 在
+  processIOSSignTask 的 deferred terminal-outcome 闭包里 +1，复用现
+  有的 final status 读取逻辑。今期只覆盖 `sign_method="zsign"`。
+
 ## 仍开放（后续 phase 决）
 
 - **流式 SSE token 计数** — OpenAI SSE 协议尾部有 `usage` frame，目前
   没解。等真有人盯流式 token 用量再补，否则 panel 显示 0 也行。
+- **mac-agent codesign 路径计数** — Phase 3 只盖 zsign；codesign / ASC
+  upload 那条线落地后加 `sign_method=codesign|asc`。
+- **agent_attached + bot_kind 维度** — 当前只切 tool；要加 bot_kind 需
+  要在 conn 上挂字段（agentHub 注册时塞）。等 dashboard 用起来发现需
+  要再补。
 
 ## 验证（Phase 1 ship 时）
 

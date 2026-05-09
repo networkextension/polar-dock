@@ -205,6 +205,24 @@ func (h *agentHub) lookup(botUserID string) *agentConn {
 	return h.byBot[botUserID]
 }
 
+// snapshotByTool returns a count of currently-attached agents grouped
+// by their declared tool flavor. Empty tool (= tool-loop mode bots)
+// is mapped to "tool_loop" so the metric exposition has a stable
+// non-empty label. Used by the metrics sampler.
+func (h *agentHub) snapshotByTool() map[string]int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make(map[string]int, len(h.byBot))
+	for _, c := range h.byBot {
+		tool := c.tool
+		if tool == "" {
+			tool = "tool_loop"
+		}
+		out[tool]++
+	}
+	return out
+}
+
 // dispatchToolCall sends a tool_call to the agent attached to this
 // bot and waits up to agentToolCallTimeout for the result.
 // Caller-supplied id should be unique per call (we generate via

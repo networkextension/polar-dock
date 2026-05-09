@@ -167,6 +167,7 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	s.metricsRegistry.recordResearchDispatch(ResearchRunStatusQueued)
 
 	// Persist the wiring on the task so UI shows it as in-progress
 	// just like normal pickup does.
@@ -260,6 +261,7 @@ func (s *Server) handleResearchRunStart(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update status failed"})
 		return
 	}
+	s.metricsRegistry.recordResearchDispatch(ResearchRunStatusRunning)
 
 	// Transparency: write a system-side chat message into the thread
 	// announcing the LLM in use. The operator sees this whenever they
@@ -324,6 +326,11 @@ func (s *Server) handleResearchRunResult(c *gin.Context) {
 	if finalErr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "finalize failed"})
 		return
+	}
+	if req.OK {
+		s.metricsRegistry.recordResearchDispatch(ResearchRunStatusSucceeded)
+	} else {
+		s.metricsRegistry.recordResearchDispatch(ResearchRunStatusFailed)
 	}
 
 	// Optional: post a terminal status message back into chat for
