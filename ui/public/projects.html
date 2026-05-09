@@ -338,6 +338,35 @@
       </div>
     </div>
 
+    <!-- system_agent capability B: task sharpen modal. Opens from the
+         per-row ✨ button. Shows original vs draft side-by-side; user
+         picks one to write back via PUT /tasks/:id (with audit_source
+         flag so the prev row gets snapshotted to project_task_revisions). -->
+    <div id="taskSharpenModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" style="max-width:780px;">
+        <div class="modal-header">
+          <h3>✨ AI 优化任务需求</h3>
+          <button id="taskSharpenCloseBtn" class="btn-inline btn-secondary" type="button">关闭</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-label">原任务</div>
+          <div id="taskSharpenOriginal" class="profile-bio-copy" style="margin-bottom:14px; min-height:60px; white-space:pre-wrap;"></div>
+
+          <label class="form-label" for="taskSharpenInstruction">额外要求（可选）</label>
+          <textarea id="taskSharpenInstruction" class="input textarea" rows="2" maxlength="200" placeholder="例如：拆成更细的步骤；加上验收标准；保持简短"></textarea>
+
+          <div class="task-form-actions" style="margin-top:14px;">
+            <button id="taskSharpenRunBtn" class="btn-inline btn-secondary" type="button">生成候选</button>
+            <span id="taskSharpenStatus" class="status-text"></span>
+          </div>
+
+          <div id="taskSharpenResults" class="bio-refine-results" style="margin-top:18px; display:flex; flex-direction:column; gap:10px;"></div>
+          <div id="taskSharpenNotes" class="status-text" style="margin-top:10px;"></div>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/scripts/projects.js"></script>
   </body>
 </html>

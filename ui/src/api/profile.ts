@@ -17,6 +17,7 @@ export type UserProfileDetail = {
   email?: string;
   icon_url?: string;
   bio?: string;
+  industry?: string;
   created_at: string;
   is_me: boolean;
   can_recommend: boolean;
@@ -56,10 +57,14 @@ export async function fetchUserProfile(userId: string) {
   return requestJson<UserProfileResponse>(`/api/users/${encodeURIComponent(userId)}/profile`);
 }
 
-export async function updateMyProfile(bio: string) {
+export async function updateMyProfile(bio: string, industry?: string) {
+  // industry is optional — pass undefined to leave the column
+  // unchanged. Empty string clears it.
+  const body: Record<string, unknown> = { bio };
+  if (industry !== undefined) body.industry = industry;
   return requestJson<UserProfileResponse>("/api/users/me/profile", {
     method: "PUT",
-    body: { bio },
+    body,
   });
 }
 

@@ -939,6 +939,14 @@ type projectTaskUpdateRequest struct {
 	Title       *string `json:"title"`
 	Description *string `json:"description"`
 	Status      *string `json:"status"`
+	// AuditSource (optional): when set to "system_agent_sharpen",
+	// the handler snapshots the pre-update task into
+	// project_task_revisions before applying the change. AuditLLMName
+	// + AuditLLMModel are the LLM that produced the rewrite (4-touchpoint
+	// transparency rule). Empty source = no audit row.
+	AuditSource   string `json:"audit_source"`
+	AuditLLMName  string `json:"audit_llm_name"`
+	AuditLLMModel string `json:"audit_llm_model"`
 }
 
 func (s *Server) handleProjectTaskUpdate(c *gin.Context) {
@@ -946,6 +954,8 @@ func (s *Server) handleProjectTaskUpdate(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userIDAny, _ := c.Get("user_id")
+	userIDStr, _ := userIDAny.(string)
 	projectID := strings.TrimSpace(c.Param("id"))
 	if _, err := s.getProject(projectID, workspaceID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -976,6 +986,21 @@ func (s *Server) handleProjectTaskUpdate(c *gin.Context) {
 			return
 		}
 	}
+
+	// Audit hook: snapshot the pre-update task before applying the
+	// change so the user can see "what was the description before AI
+	// rewrote it". Only fires when AuditSource is set; failure to
+	// write the audit row is logged but does NOT block the update —
+	// losing audit visibility is less bad than losing the user's
+	// edit.
+	if strings.TrimSpace(req.AuditSource) != "" {
+		if prev, err := s.loadProjectTask(projectID, taskID); err == nil && prev != nil {
+			if aerr := s.createProjectTaskRevision(prev.ID, prev.Title, prev.Description, req.AuditSource, req.AuditLLMName, req.AuditLLMModel, userIDStr); aerr != nil {
+				log.Printf("project_task_revisions audit insert failed: task=%s err=%v", taskID, aerr)
+			}
+		}
+	}
+
 	if err := s.updateProjectTask(projectID, taskID, u); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return

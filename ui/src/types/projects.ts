@@ -126,6 +126,14 @@ export type ProjectTaskUpdatePayload = {
   title?: string;
   description?: string;
   status?: TaskStatus;
+  // Audit hints (system_agent capability B): when set, the server
+  // snapshots the pre-update task to project_task_revisions before
+  // applying the change. Used by the ✨ task sharpen flow to track
+  // "what was the description before AI rewrote it" + which LLM did
+  // the rewrite (4-touchpoint transparency).
+  audit_source?: string;
+  audit_llm_name?: string;
+  audit_llm_model?: string;
 };
 
 export type CoderName = "kimi" | "claude" | "codex";

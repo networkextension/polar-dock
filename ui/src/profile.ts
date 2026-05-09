@@ -247,6 +247,18 @@ function renderBioPanel(profile: UserProfileDetail): void {
       <form id="profileBioForm" class="task-result-form">
         <label class="form-label" for="profileBioInput">${t("profile.personalBio")}</label>
         <textarea id="profileBioInput" class="input textarea" rows="5" maxlength="500" placeholder="${t("profile.bioPlaceholder")}">${escapeHtml(profile.bio || "")}</textarea>
+        <label class="form-label" for="profileIndustryInput">行业 / 领域 <span style="color:var(--text-muted); font-weight:normal; font-size:11px;">（可选 — 用于 AI 任务优化时注入领域上下文）</span></label>
+        <input id="profileIndustryInput" class="input" type="text" maxlength="80" list="profileIndustryOptions" value="${escapeHtml(profile.industry || "")}" placeholder="例如：iOS 应用开发、量化金融、临床研究、教育科技" />
+        <datalist id="profileIndustryOptions">
+          <option value="iOS 应用开发"></option>
+          <option value="Web 全栈开发"></option>
+          <option value="量化金融"></option>
+          <option value="医疗 / 临床研究"></option>
+          <option value="法律 / 合规"></option>
+          <option value="科研 / 数据分析"></option>
+          <option value="增长 / 营销运营"></option>
+          <option value="教育科技"></option>
+        </datalist>
         <label class="form-label" for="profileIconInput">${t("profile.avatar")}</label>
         <input id="profileIconInput" class="input" type="file" accept="image/*" />
         <div id="profileBioStatus" class="status-text"></div>
@@ -293,7 +305,9 @@ function renderBioPanel(profile: UserProfileDetail): void {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       status.textContent = t("profile.saving");
-      const { response, data } = await updateMyProfile(bioInput.value.trim());
+      const industryInput = document.getElementById("profileIndustryInput") as HTMLInputElement | null;
+      const industry = industryInput?.value.trim() ?? undefined;
+      const { response, data } = await updateMyProfile(bioInput.value.trim(), industry);
       if (!response.ok) {
         status.textContent = data.error || t("profile.saveFailed");
         return;

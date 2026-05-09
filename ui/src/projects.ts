@@ -442,6 +442,7 @@ function renderTasks(): void {
           const cancelBtn = t.status !== "blocked" && t.status !== "done"
             ? `<button type="button" class="btn-inline btn-secondary" data-task-cancel="${escapeHTML(t.id)}" title="标记为阻塞 / 取消" style="font-size:11px; padding:3px 6px;">✗</button>`
             : "";
+          const sharpenBtn = `<button type="button" class="btn-inline btn-secondary" data-task-sharpen="${escapeHTML(t.id)}" title="用 AI 改写需求" style="font-size:11px; padding:3px 6px;">✨</button>`;
           return `
             <div style="padding:10px; background:var(--card,#fff); border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:10px; align-items:flex-start;">
               <div style="flex:1; min-width:0;">
@@ -452,7 +453,7 @@ function renderTasks(): void {
                 </div>
               </div>
               <div style="display:flex; gap:4px; align-items:center;">
-                ${finishBtn}${cancelBtn}
+                ${sharpenBtn}${finishBtn}${cancelBtn}
                 <select class="input" style="font-size:12px; padding:4px 6px; width:auto;" data-task-status="${escapeHTML(t.id)}">${opts}</select>
               </div>
             </div>`;
@@ -477,6 +478,12 @@ function renderTasks(): void {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-task-cancel");
       if (id) void changeTaskStatus(id, "blocked");
+    });
+  });
+  tasksListEl.querySelectorAll<HTMLElement>("[data-task-sharpen]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-task-sharpen");
+      if (id) void openTaskSharpenModal(id);
     });
   });
   tasksListEl.querySelectorAll<HTMLElement>("[data-task-pickup]").forEach((btn) => {
@@ -826,6 +833,140 @@ async function changeTaskStatus(taskID: string, status: TaskStatus): Promise<voi
   if (!t) return;
   t.status = status;
   await updateProjectTask(activeProject.id, taskID, { status });
+}
+
+// ── system_agent capability B: task sharpen modal ─────────────────
+//
+// ✨ button on each task row → modal. Calls
+// POST /api/projects/:id/tasks/:taskID/sharpen which returns 1-2
+// candidate {title, description, rationale} drafts. Adopting writes
+// the chosen draft back via PUT /tasks/:id with audit_source set,
+// which makes the server snapshot the pre-update version into
+// project_task_revisions for history.
+
+let activeTaskSharpenID: string | null = null;
+let lastTaskSharpenLLM: { name: string; model: string } | null = null;
+
+function setTaskSharpenOpen(open: boolean): void {
+  const modal = document.getElementById("taskSharpenModal");
+  if (!modal) return;
+  modal.classList.toggle("open", open);
+  modal.setAttribute("aria-hidden", open ? "false" : "true");
+}
+
+async function openTaskSharpenModal(taskID: string): Promise<void> {
+  if (!activeProject) return;
+  const t = activeTasks.find((x) => x.id === taskID);
+  if (!t) return;
+  activeTaskSharpenID = taskID;
+  lastTaskSharpenLLM = null;
+  const original = document.getElementById("taskSharpenOriginal");
+  if (original) {
+    original.textContent = `${t.title}\n\n${t.description || "（描述为空）"}`;
+  }
+  const instr = document.getElementById("taskSharpenInstruction") as HTMLTextAreaElement | null;
+  if (instr) instr.value = "";
+  const results = document.getElementById("taskSharpenResults");
+  if (results) results.innerHTML = "";
+  const notes = document.getElementById("taskSharpenNotes");
+  if (notes) notes.textContent = "";
+  const status = document.getElementById("taskSharpenStatus");
+  if (status) status.textContent = "";
+  setTaskSharpenOpen(true);
+}
+
+document.getElementById("taskSharpenCloseBtn")?.addEventListener("click", () => setTaskSharpenOpen(false));
+document
+  .querySelector("#taskSharpenModal .modal-backdrop")
+  ?.addEventListener("click", () => setTaskSharpenOpen(false));
+
+document.getElementById("taskSharpenRunBtn")?.addEventListener("click", async () => {
+  if (!activeProject || !activeTaskSharpenID) return;
+  const runBtn = document.getElementById("taskSharpenRunBtn") as HTMLButtonElement | null;
+  const statusEl = document.getElementById("taskSharpenStatus");
+  const resultsEl = document.getElementById("taskSharpenResults");
+  const notesEl = document.getElementById("taskSharpenNotes");
+  if (runBtn) runBtn.disabled = true;
+  if (statusEl) statusEl.textContent = "生成中...";
+  if (resultsEl) resultsEl.innerHTML = "";
+  if (notesEl) notesEl.textContent = "";
+  try {
+    const instrEl = document.getElementById("taskSharpenInstruction") as HTMLTextAreaElement | null;
+    const res = await fetch(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/tasks/${encodeURIComponent(activeTaskSharpenID)}/sharpen`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ instruction: instrEl?.value ?? "" }),
+      },
+    );
+    const data = await res.json();
+    if (!res.ok) {
+      if (statusEl) statusEl.textContent = data?.error || "生成失败";
+      return;
+    }
+    lastTaskSharpenLLM = data.llm || null;
+    if (statusEl && data.llm) {
+      statusEl.textContent = `由 ${data.llm.name}${data.llm.model ? ` · ${data.llm.model}` : ""} 生成`;
+    } else if (statusEl) {
+      statusEl.textContent = "";
+    }
+    type Draft = { title: string; description: string; rationale: string };
+    const drafts: Draft[] = data.drafts || [];
+    if (resultsEl) {
+      resultsEl.innerHTML = drafts
+        .map(
+          (d, i) => `
+            <div class="bio-refine-draft">
+              <div class="bio-refine-draft-head">
+                <span class="bio-refine-draft-label">候选 ${i + 1}</span>
+                <button type="button" class="btn-inline btn-secondary" data-adopt-task="${i}">采用</button>
+              </div>
+              <div class="bio-refine-draft-text"><strong>${escapeHTML(d.title || "(no title)")}</strong>\n\n${escapeHTML(d.description)}</div>
+              ${d.rationale ? `<div class="bio-refine-draft-rationale">调整：${escapeHTML(d.rationale)}</div>` : ""}
+            </div>
+          `,
+        )
+        .join("");
+      resultsEl.querySelectorAll<HTMLButtonElement>("[data-adopt-task]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.dataset.adoptTask);
+          if (Number.isNaN(idx) || !drafts[idx]) return;
+          void adoptTaskDraft(drafts[idx]);
+        });
+      });
+    }
+    if (notesEl && data.notes) {
+      notesEl.textContent = data.notes;
+    }
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `生成失败：${(e as Error).message}`;
+  } finally {
+    if (runBtn) runBtn.disabled = false;
+  }
+});
+
+async function adoptTaskDraft(draft: { title: string; description: string }): Promise<void> {
+  if (!activeProject || !activeTaskSharpenID) return;
+  const { response, data } = await updateProjectTask(activeProject.id, activeTaskSharpenID, {
+    title: draft.title,
+    description: draft.description,
+    audit_source: "system_agent_sharpen",
+    audit_llm_name: lastTaskSharpenLLM?.name ?? "",
+    audit_llm_model: lastTaskSharpenLLM?.model ?? "",
+  });
+  if (!response.ok) {
+    window.alert(("error" in data && (data as { error?: string }).error) || "更新失败");
+    return;
+  }
+  // Update in-memory task so the row re-renders without a refetch.
+  const idx = activeTasks.findIndex((x) => x.id === activeTaskSharpenID);
+  if (idx >= 0) {
+    activeTasks[idx] = { ...activeTasks[idx], title: draft.title, description: draft.description };
+    renderTasks();
+  }
+  setTaskSharpenOpen(false);
 }
 
 // syncDispatchAllBotOptions populates the "派全部" bot dropdown

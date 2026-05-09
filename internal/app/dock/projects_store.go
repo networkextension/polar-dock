@@ -611,6 +611,28 @@ func (s *Server) updateProjectTask(projectID, taskID string, u ProjectTaskUpdate
 	return nil
 }
 
+// createProjectTaskRevision appends an audit row recording the
+// pre-update task state. Caller passes title + description from the
+// task BEFORE the update; that's what's snapshotted. source labels
+// the origin (e.g. "system_agent_sharpen"), llmName/llmModel record
+// which LLM produced the rewrite for the 4-touchpoint transparency
+// rule. createdBy is the user who triggered it (nullable for
+// system-driven flows).
+func (s *Server) createProjectTaskRevision(taskID, title, description, source, llmName, llmModel, createdBy string) error {
+	var createdByArg any
+	if strings.TrimSpace(createdBy) != "" {
+		createdByArg = createdBy
+	} else {
+		createdByArg = nil
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO project_task_revisions (task_id, title, description, source, llm_name, llm_model, created_by, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+		taskID, title, description, source, llmName, llmModel, createdByArg,
+	)
+	return err
+}
+
 // bulkUpdateProjectTaskStatus updates every task in the project
 // (optionally filtered by current status) to a single new
 // status. started_at / completed_at are stamped when transitioning

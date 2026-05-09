@@ -44,7 +44,8 @@ func (s *Server) handleMyProfileUpdate(c *gin.Context) {
 	}
 
 	var req struct {
-		Bio string `json:"bio"`
+		Bio      string  `json:"bio"`
+		Industry *string `json:"industry"` // pointer so absent != ""
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
@@ -59,6 +60,20 @@ func (s *Server) handleMyProfileUpdate(c *gin.Context) {
 	if err := s.updateUserBio(userIDStr, bio); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
+	}
+	// Industry is optional and saved separately so an unrelated bio
+	// edit (no industry field in request) doesn't blank the column.
+	// Free-text capped at 80 runes.
+	if req.Industry != nil {
+		industry := strings.TrimSpace(*req.Industry)
+		if len([]rune(industry)) > 80 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "行业字段不能超过 80 字"})
+			return
+		}
+		if err := s.updateUserIndustry(userIDStr, industry); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存行业失败"})
+			return
+		}
 	}
 
 	profile, err := s.getUserProfileDetail(userIDStr, userIDStr)
