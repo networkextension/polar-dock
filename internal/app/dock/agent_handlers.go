@@ -528,6 +528,128 @@ func (s *Server) handleAgentBotConfig(c *gin.Context) {
 	})
 }
 
+// agentAutoRegisterRequest is what polar-agent POSTs at startup to
+// declare its capabilities. Two registration tracks today:
+//
+//   coders   — one passthrough bot per coder (kimi/claude/codex);
+//              agent's local CLI handles the LLM call. Code projects.
+//   research — one classic bot using workspace default LLM + agent
+//              for tool execution. Research / non-code projects;
+//              dock makes the LLM call, agent runs read_file /
+//              write_file / run_cmd / etc. tool_calls.
+//
+// Both tracks are idempotent per (token, kind) — re-registering
+// returns the existing bot ids.
+type agentAutoRegisterRequest struct {
+	Coders    []string `json:"coders"`
+	Research  bool     `json:"research"`
+	AgentName string   `json:"agent_name"`
+}
+
+type agentAutoRegisteredBot struct {
+	BotUserID     string `json:"bot_user_id"`
+	Name          string `json:"name"`
+	PreferredTool string `json:"preferred_tool"`
+	BotKind       string `json:"bot_kind"`
+}
+
+// handleAgentAutoRegister upserts one bot_users row per declared
+// coder. Idempotent: re-running with the same coder list returns
+// the same bot ids. The agent token determines ownership; the
+// owner's personal team is the workspace.
+//
+// Request body: {"coders": ["kimi","claude","codex"], "agent_name": "my-mac"}
+// Response:     {"bots": [{"bot_user_id": "bot_xxx", "preferred_tool": "kimi"}, ...]}
+func (s *Server) handleAgentAutoRegister(c *gin.Context) {
+	tokenIDVal, _ := c.Get("agent_token_id")
+	tokenID, _ := tokenIDVal.(string)
+	userIDVal, _ := c.Get("agent_user_id")
+	userID, _ := userIDVal.(string)
+	if tokenID == "" || userID == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "agent context missing"})
+		return
+	}
+
+	var req agentAutoRegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input"})
+		return
+	}
+	if len(req.Coders) == 0 && !req.Research {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "specify at least one of: coders[], research:true"})
+		return
+	}
+
+	workspaceID, err := s.personalWorkspaceForUser(userID)
+	if err != nil || workspaceID == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "personal workspace lookup failed"})
+		return
+	}
+
+	// Deduplicate + filter known coder names.
+	seen := map[string]bool{}
+	cleanCoders := []string{}
+	for _, raw := range req.Coders {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		switch name {
+		case "kimi", "claude", "codex":
+			// allow; expand if custom tools become a thing
+		default:
+			continue
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		cleanCoders = append(cleanCoders, name)
+	}
+
+	now := time.Now().UTC()
+	out := []agentAutoRegisteredBot{}
+	for _, coder := range cleanCoders {
+		bot, err := s.ensureAutoRegisteredCoderBot(tokenID, userID, workspaceID, req.AgentName, coder, now)
+		if err != nil {
+			log.Printf("[agent auto-register] %s coder=%s failed: %v", tokenID, coder, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "auto-register failed: " + err.Error()})
+			return
+		}
+		out = append(out, agentAutoRegisteredBot{
+			BotUserID:     bot.BotUserID,
+			Name:          bot.Name,
+			PreferredTool: coder,
+			BotKind:       "passthrough",
+		})
+	}
+
+	if req.Research {
+		bot, err := s.ensureAutoRegisteredResearchBot(tokenID, userID, workspaceID, req.AgentName, now)
+		if err != nil {
+			log.Printf("[agent auto-register] %s research failed: %v", tokenID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "research bot register failed: " + err.Error()})
+			return
+		}
+		if bot == nil {
+			// No workspace default LLM — surface a hint but don't
+			// fail the whole request; coder bots may still have
+			// registered successfully.
+			log.Printf("[agent auto-register] %s research skipped: workspace %s has no default_llm_config_id", tokenID, workspaceID)
+			c.JSON(http.StatusOK, gin.H{
+				"bots":          out,
+				"research_skip": "workspace has no default_llm_config_id; set one before research projects can use this agent",
+			})
+			return
+		}
+		out = append(out, agentAutoRegisteredBot{
+			BotUserID:     bot.BotUserID,
+			Name:          bot.Name,
+			PreferredTool: "",
+			BotKind:       "classic",
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"bots": out})
+}
+
 // handleAgentStatus tells the UI whether a bot has an agent attached
 // and which capabilities the agent declared at hello time. The UI
 // uses capabilities to render passthrough mode badges (e.g. "本地

@@ -415,21 +415,26 @@ type PackTunnelRuleFile struct {
 }
 
 type BotUser struct {
-	ID            int64     `json:"id"`
-	OwnerUserID   string    `json:"owner_user_id"`
-	WorkspaceID   string    `json:"workspace_id"`
-	BotUserID     string    `json:"bot_user_id"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	SystemPrompt  string    `json:"system_prompt"`
+	ID           int64  `json:"id"`
+	OwnerUserID  string `json:"owner_user_id"`
+	WorkspaceID  string `json:"workspace_id"`
+	BotUserID    string `json:"bot_user_id"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	SystemPrompt string `json:"system_prompt"`
 	// LLMConfigID is 0 for passthrough bots (the column is NULL in
 	// DB for those rows; we surface it as 0 in JSON for FE compat).
-	LLMConfigID   int64     `json:"llm_config_id"`
-	ConfigName    string    `json:"config_name"`
-	BotKind       string    `json:"bot_kind"`        // "classic" | "passthrough"
-	PreferredTool string    `json:"preferred_tool"`  // "" | "kimi" | "claude" | "codex" | custom
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	LLMConfigID   int64  `json:"llm_config_id"`
+	ConfigName    string `json:"config_name"`
+	BotKind       string `json:"bot_kind"`       // "classic" | "passthrough"
+	PreferredTool string `json:"preferred_tool"` // "" | "kimi" | "claude" | "codex" | custom
+	// IsAutoRegistered: bot row was created by POST /api/agent/auto-register
+	// when a polar-agent docker container booted. Operator can't
+	// edit/delete it from the UI; revoking the agent token removes
+	// the row via FK CASCADE.
+	IsAutoRegistered bool      `json:"is_auto_registered"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // Bot kind constants. Defined string literals (not iota) since they
@@ -1035,6 +1040,17 @@ ALTER TABLE bot_users
 	ADD COLUMN IF NOT EXISTS bot_kind TEXT NOT NULL DEFAULT 'classic';
 ALTER TABLE bot_users
 	ADD COLUMN IF NOT EXISTS preferred_tool TEXT NOT NULL DEFAULT '';
+-- Auto-registered coder bots: created by polar-agent at startup
+-- via POST /api/agent/auto-register. One bot per (agent_token,
+-- coder) tuple. bot_kind='passthrough', preferred_tool=<coder>,
+-- system_prompt='' (filled per-task from project/task templates).
+-- ON DELETE CASCADE → revoking the agent token cleans up its bots.
+ALTER TABLE bot_users
+	ADD COLUMN IF NOT EXISTS is_auto_registered BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE bot_users
+	ADD COLUMN IF NOT EXISTS auto_registered_by_token TEXT REFERENCES agent_tokens(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_bot_users_auto_registered_token
+	ON bot_users(auto_registered_by_token) WHERE auto_registered_by_token IS NOT NULL;
 ALTER TABLE bot_users
 	ALTER COLUMN llm_config_id DROP NOT NULL;
 
@@ -2850,7 +2866,7 @@ func decodePackTunnelJSON(raw []byte, dest any) error {
 // every bot_users read. Joined with llm_configs via LEFT JOIN
 // (passthrough bots may not have an llm_config_id), so c.name is
 // scanned through sql.NullString.
-const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), b.created_at, b.updated_at`
+const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.created_at, b.updated_at`
 
 // scanBotUser reads one row from a query that selected
 // botUserSelectColumns. nullable scan targets handle passthrough
@@ -2863,7 +2879,7 @@ func scanBotUser(scanFn func(...any) error) (*BotUser, error) {
 		&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID,
 		&item.Name, &item.Description, &item.SystemPrompt,
 		&llmConfigID, &configName,
-		&item.BotKind, &item.PreferredTool,
+		&item.BotKind, &item.PreferredTool, &item.IsAutoRegistered,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
@@ -3056,6 +3072,224 @@ func (s *Server) createBotUser(in CreateBotUserInput, now time.Time) (*BotUser, 
 		botUserID,
 	)
 	return scanBotUser(row.Scan)
+}
+
+// ensureAutoRegisteredCoderBot upserts a passthrough bot row owned
+// by the agent token's user. Idempotent — re-registering the same
+// (token, coder) returns the existing bot. Used by the auto-register
+// endpoint so a polar-agent host can declare "I have kimi + claude"
+// at startup and get back two stable bot ids it can attach to.
+func (s *Server) ensureAutoRegisteredCoderBot(tokenID, ownerUserID, workspaceID, agentName, coder string, now time.Time) (*BotUser, error) {
+	coder = strings.TrimSpace(coder)
+	if coder == "" {
+		return nil, errors.New("coder name required")
+	}
+	// Look for existing auto-registered bot for this (token, coder).
+	row := s.db.QueryRow(
+		`SELECT `+botUserSelectColumns+`
+		 FROM bot_users b
+		 LEFT JOIN llm_configs c ON c.id = b.llm_config_id
+		 WHERE b.auto_registered_by_token = $1 AND b.preferred_tool = $2
+		 LIMIT 1`,
+		tokenID, coder,
+	)
+	if existing, err := scanBotUser(row.Scan); err == nil && existing != nil {
+		return existing, nil
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	displayName := strings.TrimSpace(agentName)
+	if displayName == "" {
+		displayName = "agent"
+	}
+	displayName = displayName + " · " + coder
+
+	botUserID := "bot_" + generateSessionID()[:16]
+	botEmail := botUserID + "@local.polar"
+	password, err := hashPassword(generateSessionID())
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.Exec(
+		`INSERT INTO users (id, username, email, password_hash, role, bio, icon_url, is_online, last_active_device_type, last_seen_at, created_at)
+		 VALUES ($1, $2, $3, $4, 'bot', $5, '', FALSE, 'browser', NULL, $6)`,
+		botUserID, displayName, botEmail, password, "Auto-registered "+coder+" coder.", now,
+	); err != nil {
+		return nil, err
+	}
+
+	if _, err = tx.Exec(
+		`INSERT INTO bot_users
+		   (owner_user_id, workspace_id, bot_user_id, name, description, system_prompt,
+		    llm_config_id, bot_kind, preferred_tool,
+		    is_auto_registered, auto_registered_by_token,
+		    created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, '', NULL, $6, $7, TRUE, $8, $9, $9)`,
+		ownerUserID, workspaceID, botUserID, displayName,
+		"Auto-registered "+coder+" coder.",
+		BotKindPassthrough, coder, tokenID, now,
+	); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return s.getBotUserByUserID(botUserID)
+}
+
+// getWorkspaceDefaultLLMConfigID returns the workspace's
+// default_llm_config_id, or 0 + nil error if not set. Used by
+// auto-register's research bot creation path: when the operator
+// asks for a research bot, we need an LLM config to power it,
+// and the workspace default is the natural choice.
+func (s *Server) getWorkspaceDefaultLLMConfigID(workspaceID string) (int64, error) {
+	var id sql.NullInt64
+	err := s.db.QueryRow(
+		`SELECT default_llm_config_id FROM teams WHERE id = $1`,
+		workspaceID,
+	).Scan(&id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if !id.Valid {
+		return 0, nil
+	}
+	return id.Int64, nil
+}
+
+// ensureAutoRegisteredResearchBot upserts a classic-kind bot row
+// owned by the agent token's user, backed by the workspace's
+// default LLM. Used by research-mode projects: dock makes the LLM
+// call, agent runs the tool_calls. Idempotent — re-registering
+// returns the existing row.
+//
+// Returns nil + nil error when the workspace has no default LLM
+// config set; caller logs + skips.
+func (s *Server) ensureAutoRegisteredResearchBot(tokenID, ownerUserID, workspaceID, agentName string, now time.Time) (*BotUser, error) {
+	llmID, err := s.getWorkspaceDefaultLLMConfigID(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if llmID == 0 {
+		return nil, nil
+	}
+
+	// Look for existing research bot for this token. We use
+	// preferred_tool='' + bot_kind='classic' as the research-bot
+	// signature; coder bots all have non-empty preferred_tool.
+	row := s.db.QueryRow(
+		`SELECT `+botUserSelectColumns+`
+		 FROM bot_users b
+		 LEFT JOIN llm_configs c ON c.id = b.llm_config_id
+		 WHERE b.auto_registered_by_token = $1
+		   AND b.bot_kind = 'classic'
+		   AND COALESCE(b.preferred_tool, '') = ''
+		 LIMIT 1`,
+		tokenID,
+	)
+	if existing, err := scanBotUser(row.Scan); err == nil && existing != nil {
+		return existing, nil
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	displayName := strings.TrimSpace(agentName)
+	if displayName == "" {
+		displayName = "agent"
+	}
+	displayName = displayName + " · research"
+
+	botUserID := "bot_" + generateSessionID()[:16]
+	botEmail := botUserID + "@local.polar"
+	password, err := hashPassword(generateSessionID())
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.Exec(
+		`INSERT INTO users (id, username, email, password_hash, role, bio, icon_url, is_online, last_active_device_type, last_seen_at, created_at)
+		 VALUES ($1, $2, $3, $4, 'bot', $5, '', FALSE, 'browser', NULL, $6)`,
+		botUserID, displayName, botEmail, password,
+		"Auto-registered research bot. Uses workspace default LLM + agent tools (tool-loop mode).",
+		now,
+	); err != nil {
+		return nil, err
+	}
+
+	if _, err = tx.Exec(
+		`INSERT INTO bot_users
+		   (owner_user_id, workspace_id, bot_user_id, name, description, system_prompt,
+		    llm_config_id, bot_kind, preferred_tool,
+		    is_auto_registered, auto_registered_by_token,
+		    created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, '', $6, 'classic', '', TRUE, $7, $8, $8)`,
+		ownerUserID, workspaceID, botUserID, displayName,
+		"Auto-registered research bot. Uses workspace default LLM + agent tools (tool-loop mode).",
+		llmID, tokenID, now,
+	); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return s.getBotUserByUserID(botUserID)
+}
+
+// listAutoRegisteredBotsForToken returns every bot row created by
+// an auto-register call for the given agent token. Used by the
+// list/list endpoint that polar-agent calls on startup so it
+// learns which bots are already registered for it.
+func (s *Server) listAutoRegisteredBotsForToken(tokenID string) ([]BotUser, error) {
+	rows, err := s.db.Query(
+		`SELECT `+botUserSelectColumns+`
+		 FROM bot_users b
+		 LEFT JOIN llm_configs c ON c.id = b.llm_config_id
+		 WHERE b.auto_registered_by_token = $1
+		 ORDER BY b.created_at`,
+		tokenID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []BotUser{}
+	for rows.Next() {
+		b, err := scanBotUser(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		if b != nil {
+			out = append(out, *b)
+		}
+	}
+	return out, rows.Err()
 }
 
 // UpdateBotUserInput mirrors CreateBotUserInput for the edit path.
