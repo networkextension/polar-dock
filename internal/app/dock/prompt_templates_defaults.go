@@ -67,10 +67,11 @@ func promptTemplateDefaults() []promptDefault {
 		{
 			Slug:        promptSlugProjectPickupBody,
 			Name:        "任务派单接场白",
-			Description: "task pickup 时下发给 bot 的第一条消息。变量：{{.EnvLabel}} 运行环境标签（可空），{{.ScenarioLabel}} 业务场景标签（可空），{{.CodeProvider}} 首选编码工具（可空），{{.GitRemoteURL}} git 远端（可空），{{.Title}} 任务标题，{{.Description}} 任务描述（可空）。",
+			Description: "task pickup 时下发给 bot 的第一条消息。变量：{{.EnvLabel}} 运行环境标签（可空），{{.ScenarioLabel}} 业务场景标签（可空），{{.CodeProvider}} 首选编码工具（可空），{{.GitRemoteURL}} git 远端（可空），{{.BundleID}} iOS bundle id（可空，绑了 iosdist app 才有），{{.Title}} 任务标题，{{.Description}} 任务描述（可空）。",
 			Content: `{{- $hasHeader := or .EnvLabel .ScenarioLabel -}}
 {{- $hasHeader = or $hasHeader .CodeProvider -}}
 {{- $hasHeader = or $hasHeader .GitRemoteURL -}}
+{{- $hasHeader = or $hasHeader .BundleID -}}
 {{- if $hasHeader -}}
 【任务约束】
 {{- if .EnvLabel }}
@@ -84,6 +85,12 @@ func promptTemplateDefaults() []promptDefault {
 {{- end -}}
 {{- if .GitRemoteURL }}
 Git 远端：{{.GitRemoteURL}}（polar-agent 已 chdir 到 cwd 并配好 origin；只在 cwd 操作，不要 cd 到兄弟目录）
+{{- end -}}
+{{- if .BundleID }}
+iOS Bundle ID：{{.BundleID}}
+构建工具：用 xcodegen 生成 .xcodeproj，不要手编。Project.swift / project.yml 放在 cwd 根。
+最终输出：unsigned IPA。xcodebuild archive 时用 CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO，再 xcodebuild -exportArchive 用一份 method=development 的 ExportOptions.plist。
+任务结束前调用：polar-agent submit-build <path-to-ipa>，由 agent 完成签名 + 上传 TestFlight。
 {{- end }}
 
 【任务】

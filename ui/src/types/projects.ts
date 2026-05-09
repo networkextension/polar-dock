@@ -25,6 +25,10 @@ export type Project = {
   // git_remote_url: optional remote where polar-agent pushes
   // coder output after each task completes. Empty disables push.
   git_remote_url: string;
+  // iosdist_app_id: optional FK to iosdist_apps. When set, the
+  // pickup body includes the bundle id + xcodegen guidance and
+  // the iOS submit-build flow is enabled.
+  iosdist_app_id?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -96,6 +100,7 @@ export type ProjectCreatePayload = {
   business_scenario?: string;
   code_provider?: string;
   git_remote_url?: string;
+  iosdist_app_id?: number | null;
 };
 
 export type ProjectUpdatePayload = {
@@ -107,6 +112,7 @@ export type ProjectUpdatePayload = {
   business_scenario?: string;
   code_provider?: string;
   git_remote_url?: string;
+  iosdist_app_id?: number | null;
 };
 
 export type ProjectFeatureUpdatePayload = {

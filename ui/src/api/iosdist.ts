@@ -93,6 +93,36 @@ export async function createIOSInstallToken(appID: number, versionID: number) {
 
 // ---- Resource center: certificates + profiles ---------------------------
 
+// ---- ASC bundle id + app creation (Phase 3 of iOS pipeline) ----
+
+export type ASCBundleIDResponse = {
+  bundle_id: { id: string; identifier: string; name: string; platform: string; seed_id?: string };
+  reused: boolean;
+};
+
+export async function createASCBundleID(body: { identifier: string; name: string; platform?: string }) {
+  return requestJson<ASCBundleIDResponse>("/api/iosdist/asc/bundle-ids", {
+    method: "POST",
+    body,
+  });
+}
+
+export type ASCAppCreateResponse = {
+  app: { id: string; bundle_id: string; name: string; sku: string };
+};
+
+export async function createASCApp(body: {
+  bundle_id_resource_id: string;
+  name: string;
+  sku: string;
+  primary_locale?: string;
+}) {
+  return requestJson<ASCAppCreateResponse>("/api/iosdist/asc/apps", {
+    method: "POST",
+    body,
+  });
+}
+
 export async function fetchIOSCertificates() {
   return requestJson<IOSCertificateListResponse>("/api/iosdist/certificates");
 }

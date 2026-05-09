@@ -25,7 +25,9 @@ import {
   updateProjectTask,
 } from "./api/projects.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
+import { fetchIOSApps } from "./api/iosdist.js";
 import type { BotUser } from "./types/dashboard.js";
+import type { IOSApp } from "./types/iosdist.js";
 import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
@@ -59,6 +61,9 @@ const descEl = byId<HTMLTextAreaElement>("projectsDescription");
 const saveDescBtn = byId<HTMLButtonElement>("projectsSaveDescBtn");
 const gitRemoteUrlEl = byId<HTMLInputElement>("projectsGitRemoteUrl");
 const saveGitRemoteBtn = byId<HTMLButtonElement>("projectsSaveGitRemoteBtn");
+const iosDistAppSelect = byId<HTMLSelectElement>("projectsIOSDistAppSelect");
+const iosDistAppMetaEl = byId<HTMLElement>("projectsIOSDistAppMeta");
+const saveIOSDistAppBtn = byId<HTMLButtonElement>("projectsSaveIOSDistAppBtn");
 const decomposeBtn = byId<HTMLButtonElement>("projectsDecomposeBtn");
 const decomposeStatusEl = byId<HTMLElement>("projectsDecomposeStatus");
 const decomposeLLMSelect = byId<HTMLSelectElement>("projectsDecomposeLLMSelect");
@@ -291,6 +296,7 @@ function renderProjectPanel(): void {
   createdAtEl.textContent = `创建于 ${new Date(activeProject.created_at).toLocaleString()}`;
   descEl.value = activeProject.description;
   gitRemoteUrlEl.value = activeProject.git_remote_url || "";
+  syncIOSDistAppSelect();
   clearStatus(decomposeStatusEl);
   clearStatus(planStatusEl);
   // Decompose button text reflects whether this is the first
@@ -540,6 +546,67 @@ async function openProject(id: string): Promise<void> {
   activeFeatures = data.features;
   activeTasks = data.tasks;
   renderProjectPanel();
+}
+
+// iosdist app cache for the binding selector. Populated lazily on
+// first project panel render; refreshes when the user clicks the
+// save button (cheap; the list is short).
+let iosAppsCache: IOSApp[] = [];
+
+async function loadIOSAppsForBinding(): Promise<void> {
+  const { response, data } = await fetchIOSApps();
+  if (!response.ok) {
+    iosAppsCache = [];
+  } else {
+    iosAppsCache = data.apps ?? [];
+  }
+  // Re-render selector if a project is open.
+  if (activeProject) syncIOSDistAppSelect();
+}
+
+function syncIOSDistAppSelect(): void {
+  if (!activeProject) return;
+  const current = activeProject.iosdist_app_id ?? null;
+  const opts: string[] = [`<option value="">不绑定（项目不是 iOS）</option>`];
+  for (const a of iosAppsCache) {
+    const sel = current === a.id ? "selected" : "";
+    const ascTag = a.asc_app_id ? "（已绑 ASC）" : "（未绑 ASC）";
+    opts.push(
+      `<option value="${a.id}" ${sel}>${escapeHTML(a.name)} · ${escapeHTML(a.bundle_id)} ${ascTag}</option>`,
+    );
+  }
+  iosDistAppSelect.innerHTML = opts.join("");
+  if (current && current > 0) {
+    const a = iosAppsCache.find((x) => x.id === current);
+    if (a) {
+      iosDistAppMetaEl.textContent = `bundle_id=${a.bundle_id}${a.asc_app_id ? `, asc_app_id=${a.asc_app_id}` : " (未绑 ASC)"}`;
+    } else {
+      iosDistAppMetaEl.textContent = `(id=${current}, 已被删除？刷新重选)`;
+    }
+  } else {
+    iosDistAppMetaEl.textContent = "";
+  }
+}
+
+async function saveIOSDistAppBinding(): Promise<void> {
+  if (!activeProject) return;
+  const v = iosDistAppSelect.value.trim();
+  // Empty string in the dropdown = unbind. Send null so server
+  // distinguishes "no change" (field absent) from "unbind" (null).
+  const payload: { iosdist_app_id: number | null } = {
+    iosdist_app_id: v === "" ? null : Number(v),
+  };
+  saveIOSDistAppBtn.disabled = true;
+  setStatus(decomposeStatusEl, "保存中...", false);
+  const { response, data } = await updateProject(activeProject.id, payload);
+  saveIOSDistAppBtn.disabled = false;
+  if (!response.ok) {
+    setStatus(decomposeStatusEl, "保存失败", true);
+    return;
+  }
+  activeProject = data.project;
+  syncIOSDistAppSelect();
+  setStatus(decomposeStatusEl, "已保存", false);
 }
 
 async function saveGitRemoteUrl(): Promise<void> {
@@ -1058,6 +1125,7 @@ createModal.addEventListener("click", (e) => {
 createForm.addEventListener("submit", (e) => void submitCreate(e));
 saveDescBtn.addEventListener("click", () => void saveDescription());
 saveGitRemoteBtn.addEventListener("click", () => void saveGitRemoteUrl());
+saveIOSDistAppBtn.addEventListener("click", () => void saveIOSDistAppBinding());
 decomposeBtn.addEventListener("click", () => void decompose());
 
 // ── Section collapse ────────────────────────────────────────────
@@ -1139,7 +1207,7 @@ async function init(): Promise<void> {
     return;
   }
   renderSidebarFoot(data);
-  await Promise.all([loadProjects(), loadBots(), loadDecomposeLLMs()]);
+  await Promise.all([loadProjects(), loadBots(), loadDecomposeLLMs(), loadIOSAppsForBinding()]);
   // loadDecomposeBots reads availableBots which loadBots populated;
   // sequential so it sees the data.
   loadDecomposeBots();

@@ -139,6 +139,14 @@
                     <button id="projectsSaveGitRemoteBtn" class="btn-inline" type="button" style="font-size:12px;">保存 git 远端</button>
                   </div>
                   <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <label for="projectsIOSDistAppSelect" style="font-size:12px; color:var(--text-muted,#888); white-space:nowrap;">iOS 分发 App：</label>
+                    <select id="projectsIOSDistAppSelect" class="input" style="flex:1; min-width:240px; font-size:12px; padding:6px 8px;">
+                      <option value="">不绑定（项目不是 iOS）</option>
+                    </select>
+                    <span id="projectsIOSDistAppMeta" style="font-size:11px; color:var(--text-muted,#888);"></span>
+                    <button id="projectsSaveIOSDistAppBtn" class="btn-inline" type="button" style="font-size:12px;">保存绑定</button>
+                  </div>
+                  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <button id="projectsSaveDescBtn" class="btn-inline btn-secondary" type="button">保存描述</button>
                     <select id="projectsDecomposeBotSelect" class="input" style="width:auto; padding:6px 8px; font-size:12px;" title="用 bot 拆解会带上它的 system_prompt 作为人格（可在 bots 页编辑），覆盖 LLM 选择">
                       <option value="">Bot 角色（可选）</option>

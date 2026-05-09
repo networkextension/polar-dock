@@ -55,7 +55,13 @@ type Project struct {
 	// polar-agent pushes whatever the coder tool produced. Empty
 	// disables the agent's git logic entirely. Phase 1 assumes the
 	// agent host has its own git auth (SSH key or credential helper).
-	GitRemoteURL string    `json:"git_remote_url"`
+	GitRemoteURL string `json:"git_remote_url"`
+	// IOSDistAppID: optional FK to iosdist_apps in same workspace.
+	// When set, project is iOS-flavored: pickup body includes
+	// bundle_id + xcodegen guidance, polar-agent submit-build uses
+	// the bound app's cert / profile / ASC config to sign + upload
+	// to TestFlight. nil = project isn't iOS-tied.
+	IOSDistAppID *int64    `json:"iosdist_app_id,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -105,23 +111,34 @@ func (s *Server) createProject(p *Project) error {
 	now := time.Now().UTC()
 	p.CreatedAt = now
 	p.UpdatedAt = now
+	var iosAppArg any
+	if p.IOSDistAppID != nil && *p.IOSDistAppID > 0 {
+		iosAppArg = *p.IOSDistAppID
+	} else {
+		iosAppArg = nil
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO projects (id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, current_sprint, git_remote_url, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)`,
+		`INSERT INTO projects (id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, current_sprint, git_remote_url, iosdist_app_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)`,
 		p.ID, p.WorkspaceID, p.CreatorUserID, p.Name, p.Description, p.Status, p.Template,
-		p.RuntimeEnv, p.BusinessScenario, p.CodeProvider, p.CurrentSprint, p.GitRemoteURL, now,
+		p.RuntimeEnv, p.BusinessScenario, p.CodeProvider, p.CurrentSprint, p.GitRemoteURL, iosAppArg, now,
 	)
 	return err
 }
 
 // projectSelectColumns is the canonical SELECT list for projects.
 // Centralized so adding a column means touching one place.
-const projectSelectColumns = `id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, COALESCE(current_sprint, 0), COALESCE(git_remote_url, ''), created_at, updated_at`
+const projectSelectColumns = `id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, COALESCE(current_sprint, 0), COALESCE(git_remote_url, ''), iosdist_app_id, created_at, updated_at`
 
 func scanProject(scanFn func(...any) error) (*Project, error) {
 	var p Project
-	if err := scanFn(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CurrentSprint, &p.GitRemoteURL, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	var iosAppID sql.NullInt64
+	if err := scanFn(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CurrentSprint, &p.GitRemoteURL, &iosAppID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
+	}
+	if iosAppID.Valid {
+		v := iosAppID.Int64
+		p.IOSDistAppID = &v
 	}
 	return &p, nil
 }
@@ -174,6 +191,10 @@ type ProjectMetaUpdate struct {
 	BusinessScenario *string
 	CodeProvider     *string
 	GitRemoteURL     *string
+	// IOSDistAppID double-pointer: nil outer = no change; outer
+	// non-nil with inner nil = unbind (set NULL); outer non-nil
+	// with inner non-nil = set the FK value.
+	IOSDistAppID **int64
 }
 
 func (s *Server) updateProjectMetadata(id, workspaceID string, u ProjectMetaUpdate) error {
@@ -210,6 +231,19 @@ func (s *Server) updateProjectMetadata(id, workspaceID string, u ProjectMetaUpda
 	if u.GitRemoteURL != nil {
 		args = append(args, *u.GitRemoteURL)
 		sets = append(sets, "git_remote_url = $"+itoa(len(args)))
+	}
+	if u.IOSDistAppID != nil {
+		// Double-pointer: outer non-nil signals "user wants to change
+		// this column"; inner nil means clear the FK, inner non-nil
+		// means set it.
+		var v any
+		if *u.IOSDistAppID != nil && **u.IOSDistAppID > 0 {
+			v = **u.IOSDistAppID
+		} else {
+			v = nil
+		}
+		args = append(args, v)
+		sets = append(sets, "iosdist_app_id = $"+itoa(len(args)))
 	}
 	if len(args) == 0 {
 		return nil
