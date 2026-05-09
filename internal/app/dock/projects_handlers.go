@@ -469,11 +469,17 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 
 	// Optional explicit picks (for A/B comparison: same project,
 	// different bot/LLM each click). Body is JSON:
-	//   - bot_user_id: use this bot's LLM config + system_prompt
-	//     as a custom decompose persona prefix
-	//   - llm_config_id: use this raw LLM config (no bot persona)
-	//   - both empty = auto-pick first available with API key
-	// bot_user_id wins when both are set.
+	//   - bot_user_id:   contributes the bot's system_prompt as a
+	//                    custom decompose persona prefix
+	//   - llm_config_id: which LLM config to actually call
+	//   - both empty:    auto-pick first available with API key
+	//
+	// Resolution order (explicit user pick wins):
+	//   1. If llm_config_id is set, use that LLM (whether or not a
+	//      bot was also picked).
+	//   2. Else if bot_user_id is set + bot has an LLM, use bot's LLM.
+	//   3. Else auto-pick first available.
+	// bot_user_id always contributes the persona prefix when present.
 	var req struct {
 		LLMConfigID int64  `json:"llm_config_id"`
 		BotUserID   string `json:"bot_user_id"`
@@ -481,8 +487,8 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 
 	var (
-		chosen        *LLMConfig
-		botPersona    string
+		chosen     *LLMConfig
+		botPersona string
 	)
 	if bid := strings.TrimSpace(req.BotUserID); bid != "" {
 		bot, err := s.getBotUserByUserID(bid)
@@ -494,14 +500,17 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "选定的 bot 不在当前工作区"})
 			return
 		}
-		if bot.BotKind == BotKindPassthrough || bot.LLMConfigID <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "passthrough bot 不能用于拆解（没有 LLM config）"})
-			return
-		}
-		// Override LLMConfigID with the bot's binding so the rest of
-		// the auto-pick path resolves to the right config row.
-		req.LLMConfigID = bot.LLMConfigID
 		botPersona = strings.TrimSpace(bot.SystemPrompt)
+		// Only fall back to the bot's LLM when the user didn't pick
+		// one explicitly. Explicit llm_config_id always wins —
+		// otherwise the dropdown is a lie.
+		if req.LLMConfigID <= 0 {
+			if bot.BotKind == BotKindPassthrough || bot.LLMConfigID <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "未选 LLM 且该 bot 没绑定 LLM config（passthrough bot 不能裸用）"})
+				return
+			}
+			req.LLMConfigID = bot.LLMConfigID
+		}
 	}
 
 	configs, err := s.listAvailableLLMConfigs(workspaceID)
