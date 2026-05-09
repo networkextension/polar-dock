@@ -443,6 +443,9 @@ function renderTasks(): void {
             ? `<button type="button" class="btn-inline btn-secondary" data-task-cancel="${escapeHTML(t.id)}" title="标记为阻塞 / 取消" style="font-size:11px; padding:3px 6px;">✗</button>`
             : "";
           const sharpenBtn = `<button type="button" class="btn-inline btn-secondary" data-task-sharpen="${escapeHTML(t.id)}" title="用 AI 改写需求" style="font-size:11px; padding:3px 6px;">✨</button>`;
+          const retrospectBtn = t.status === "done"
+            ? `<button type="button" class="btn-inline btn-secondary" data-task-retrospect="${escapeHTML(t.id)}" title="AI 复盘" style="font-size:11px; padding:3px 6px;">📋</button>`
+            : "";
           return `
             <div style="padding:10px; background:var(--card,#fff); border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:10px; align-items:flex-start;">
               <div style="flex:1; min-width:0;">
@@ -453,7 +456,7 @@ function renderTasks(): void {
                 </div>
               </div>
               <div style="display:flex; gap:4px; align-items:center;">
-                ${sharpenBtn}${finishBtn}${cancelBtn}
+                ${sharpenBtn}${retrospectBtn}${finishBtn}${cancelBtn}
                 <select class="input" style="font-size:12px; padding:4px 6px; width:auto;" data-task-status="${escapeHTML(t.id)}">${opts}</select>
               </div>
             </div>`;
@@ -484,6 +487,12 @@ function renderTasks(): void {
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-task-sharpen");
       if (id) void openTaskSharpenModal(id);
+    });
+  });
+  tasksListEl.querySelectorAll<HTMLElement>("[data-task-retrospect]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-task-retrospect");
+      if (id) void openTaskRetrospectModal(id);
     });
   });
   tasksListEl.querySelectorAll<HTMLElement>("[data-task-pickup]").forEach((btn) => {
@@ -1784,3 +1793,115 @@ async function init(): Promise<void> {
 }
 
 void init();
+
+// ── system_agent capability C: task retrospect modal ───────────
+//
+// 📋 button on done tasks → modal. GET first; if no row, prompt
+// "尚无复盘 · 点击生成". Generate button hits the synchronous POST.
+// Same audit/transparency surface as sharpen — LLM tag rendered.
+
+let activeRetrospectTaskID: string | null = null;
+
+function setRetrospectModalOpen(open: boolean): void {
+  const modal = document.getElementById("taskRetrospectModal");
+  if (!modal) return;
+  modal.classList.toggle("open", open);
+  modal.setAttribute("aria-hidden", open ? "false" : "true");
+}
+
+async function openTaskRetrospectModal(taskID: string): Promise<void> {
+  if (!activeProject) return;
+  activeRetrospectTaskID = taskID;
+  const meta = document.getElementById("taskRetrospectMeta");
+  const body = document.getElementById("taskRetrospectBody");
+  const status = document.getElementById("taskRetrospectStatus");
+  if (meta) meta.textContent = "加载中...";
+  if (body) body.innerHTML = "";
+  if (status) status.textContent = "";
+  setRetrospectModalOpen(true);
+  try {
+    const res = await fetch(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/tasks/${encodeURIComponent(taskID)}/retrospect`,
+      { credentials: "include" },
+    );
+    const data = await res.json();
+    if (!res.ok) {
+      if (meta) meta.textContent = data?.error || "加载失败";
+      return;
+    }
+    renderRetrospect(data.retrospect);
+  } catch (e) {
+    if (meta) meta.textContent = `加载失败：${(e as Error).message}`;
+  }
+}
+
+type RetrospectShape = {
+  summary?: string;
+  tools_used?: string;
+  open_issues?: string;
+  next_time?: string;
+  llm_name?: string;
+  llm_model?: string;
+  generated_at?: string;
+} | null;
+
+function renderRetrospect(r: RetrospectShape): void {
+  const meta = document.getElementById("taskRetrospectMeta");
+  const body = document.getElementById("taskRetrospectBody");
+  if (!body || !meta) return;
+  if (!r || !r.summary) {
+    meta.textContent = "尚无复盘 — 点 \"重新生成\" 即可创建。";
+    body.innerHTML = "";
+    return;
+  }
+  const llmTag = r.llm_name ? `由 ${r.llm_name}${r.llm_model ? ` · ${r.llm_model}` : ""} 生成` : "";
+  meta.textContent = llmTag;
+  const sections: Array<[string, string | undefined]> = [
+    ["总结", r.summary],
+    ["用到的工具 / 模块", r.tools_used],
+    ["遗留问题", r.open_issues],
+    ["下次注意事项", r.next_time],
+  ];
+  body.innerHTML = sections
+    .map(
+      ([label, text]) => `
+      <div class="bio-refine-draft">
+        <div class="bio-refine-draft-head">
+          <span class="bio-refine-draft-label">${escapeHTML(label)}</span>
+        </div>
+        <div class="bio-refine-draft-text">${escapeHTML(text || "（空）")}</div>
+      </div>
+    `,
+    )
+    .join("");
+}
+
+document.getElementById("taskRetrospectCloseBtn")?.addEventListener("click", () => setRetrospectModalOpen(false));
+document
+  .querySelector("#taskRetrospectModal .modal-backdrop")
+  ?.addEventListener("click", () => setRetrospectModalOpen(false));
+
+document.getElementById("taskRetrospectRegenerateBtn")?.addEventListener("click", async () => {
+  if (!activeProject || !activeRetrospectTaskID) return;
+  const btn = document.getElementById("taskRetrospectRegenerateBtn") as HTMLButtonElement | null;
+  const status = document.getElementById("taskRetrospectStatus");
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = "生成中...";
+  try {
+    const res = await fetch(
+      `/api/projects/${encodeURIComponent(activeProject.id)}/tasks/${encodeURIComponent(activeRetrospectTaskID)}/retrospect`,
+      { method: "POST", credentials: "include" },
+    );
+    const data = await res.json();
+    if (!res.ok) {
+      if (status) status.textContent = data?.error || "生成失败";
+      return;
+    }
+    renderRetrospect(data.retrospect);
+    if (status) status.textContent = "";
+  } catch (e) {
+    if (status) status.textContent = `生成失败：${(e as Error).message}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});

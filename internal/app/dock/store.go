@@ -2119,6 +2119,27 @@ CREATE TABLE IF NOT EXISTS project_task_revisions (
 );
 CREATE INDEX IF NOT EXISTS idx_project_task_revisions_task ON project_task_revisions(task_id, created_at DESC);
 
+-- project_task_retrospects: post-completion summary written by the
+-- system agent (capability C). One row per task — UNIQUE constraint
+-- so manual regeneration just upserts. Auto-fired when a task's
+-- status flips to done; users can also POST .../retrospect to force
+-- regenerate (the auto path is fire-and-forget, single retry).
+-- Four-section structure mirrors the prompt schema so callers don't
+-- have to parse JSON every read.
+CREATE TABLE IF NOT EXISTS project_task_retrospects (
+	id BIGSERIAL PRIMARY KEY,
+	task_id TEXT NOT NULL UNIQUE REFERENCES project_tasks(id) ON DELETE CASCADE,
+	summary TEXT NOT NULL DEFAULT '',
+	tools_used TEXT NOT NULL DEFAULT '',
+	open_issues TEXT NOT NULL DEFAULT '',
+	next_time TEXT NOT NULL DEFAULT '',
+	llm_name TEXT NOT NULL DEFAULT '',
+	llm_model TEXT NOT NULL DEFAULT '',
+	generated_at TIMESTAMPTZ,
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_task_retrospects_task ON project_task_retrospects(task_id);
+
 -- prompt_templates: site-wide admin-managed prompt strings used
 -- across the platform (AI 拆解、pickup body、markdown/post 助手、
 -- AI default system prompt, tool-use addendum, etc.). slug is the
