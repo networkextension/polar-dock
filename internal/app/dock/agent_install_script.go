@@ -145,14 +145,59 @@ else
 fi
 {{end}}
 
+# ---- Node.js bootstrap helper ----
+# Downloads the official Node LTS tarball if npm is missing. Same
+# strategy as the uv bootstrap above: direct binary install under
+# ~/.local, no shell-rc pollution, no version manager.
+ensure_node() {
+  if command -v npm >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "  npm not on PATH; bootstrapping Node.js LTS..."
+  NODE_VERSION="22.11.0"
+  case "$ARCH" in
+    amd64) NODE_ARCH=x64 ;;
+    arm64) NODE_ARCH=arm64 ;;
+    *) echo "  unsupported arch for node bootstrap: $ARCH"; return 1 ;;
+  esac
+  case "$OS" in
+    linux)  EXT="tar.xz" ;;
+    darwin) EXT="tar.gz" ;;
+    *) echo "  unsupported os for node bootstrap: $OS"; return 1 ;;
+  esac
+  NODE_DIR="node-v${NODE_VERSION}-${OS}-${NODE_ARCH}"
+  URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_DIR}.${EXT}"
+  TMP="/tmp/${NODE_DIR}.${EXT}"
+  if ! curl -fsSL "$URL" -o "$TMP"; then
+    echo "  node download failed: $URL"
+    return 1
+  fi
+  mkdir -p "$HOME/.local"
+  if ! tar -xf "$TMP" -C "$HOME/.local"; then
+    rm -f "$TMP"
+    echo "  node tar extract failed"
+    return 1
+  fi
+  rm -f "$TMP"
+  for bin in node npm npx; do
+    ln -sf "$HOME/.local/${NODE_DIR}/bin/$bin" "$INSTALL_PREFIX/$bin"
+  done
+  command -v npm >/dev/null 2>&1
+}
+
 {{if .Coders.Claude.Enabled}}
 # ---- claude (claude-code CLI) ----
 echo "→ installing claude-code (npm)..."
+if ! command -v npm >/dev/null 2>&1; then
+  if ensure_node; then
+    record_ok "Node.js LTS bootstrapped at $HOME/.local"
+  fi
+fi
 if command -v npm >/dev/null 2>&1; then
   if npm install -g @anthropic-ai/claude-code; then
     record_ok "claude-code installed"
 {{if eq .Coders.Claude.AuthMode "api_key"}}
-    record_ok "claude auth = api_key — set ANTHROPIC_API_KEY in your shell rc before attaching"
+    record_ok "claude auth = api_key — ANTHROPIC_API_KEY written to ~/.polar/tools.json"
 {{else}}
     record_ok "claude auth = login — run 'claude' once and complete the browser OAuth"
 {{end}}
@@ -160,18 +205,23 @@ if command -v npm >/dev/null 2>&1; then
     record_err "claude-code install failed (npm install -g @anthropic-ai/claude-code) — check npm/network"
   fi
 else
-  record_err "claude-code skipped: npm not on PATH (install Node.js first)"
+  record_err "claude-code skipped: Node.js bootstrap failed. Manual: install Node 22+ then 'npm install -g @anthropic-ai/claude-code'"
 fi
 {{end}}
 
 {{if .Coders.Codex.Enabled}}
 # ---- codex (OpenAI codex CLI) ----
 echo "→ installing codex (npm)..."
+if ! command -v npm >/dev/null 2>&1; then
+  if ensure_node; then
+    record_ok "Node.js LTS bootstrapped at $HOME/.local"
+  fi
+fi
 if command -v npm >/dev/null 2>&1; then
   if npm install -g @openai/codex-cli; then
     record_ok "codex installed"
 {{if eq .Coders.Codex.AuthMode "api_key"}}
-    record_ok "codex auth = api_key — set OPENAI_API_KEY in your shell rc before attaching"
+    record_ok "codex auth = api_key — OPENAI_API_KEY written to ~/.polar/tools.json"
 {{else}}
     record_ok "codex auth = login — run 'codex login' once before attaching"
 {{end}}
@@ -179,7 +229,7 @@ if command -v npm >/dev/null 2>&1; then
     record_err "codex install failed (npm install -g @openai/codex-cli) — check npm/network"
   fi
 else
-  record_err "codex skipped: npm not on PATH (install Node.js first)"
+  record_err "codex skipped: Node.js bootstrap failed. Manual: install Node 22+ then 'npm install -g @openai/codex-cli'"
 fi
 {{end}}
 
