@@ -15,20 +15,24 @@
 # tool-specific subdir under POLAR_WORK_ROOT and are mkdir -p'd
 # on demand. Skipping a bot id (leave it empty) skips that tool.
 #
-#   POLAR_BOT_KIMI       bot_user_id paired with kimi-cli
-#   POLAR_BOT_CLAUDE     bot_user_id paired with claude
-#   POLAR_BOT_CODEX      bot_user_id paired with codex
-#   POLAR_WORK_ROOT      parent dir for per-tool workdirs (default:
-#                        $HOME/github)
-#   POLAR_WORKDIR_KIMI   override kimi's workdir (default:
-#                        $POLAR_WORK_ROOT/work_kimi)
-#   POLAR_WORKDIR_CLAUDE override claude's workdir
-#   POLAR_WORKDIR_CODEX  override codex's workdir
-#   POLAR_KIMI_TIMEOUT   wall-clock cap per spawn (default 1h);
-#                        applies to all tools, not just kimi
-#                        (env var name kept for compat with v1)
-#   POLAR_AGENT_BIN      path to polar-agent (default: which
-#                        polar-agent / fallback ~/.local/bin/polar-agent)
+#   POLAR_BOT_KIMI         bot_user_id paired with kimi-cli
+#   POLAR_BOT_CLAUDE       bot_user_id paired with claude
+#   POLAR_BOT_CODEX        bot_user_id paired with codex
+#   POLAR_BOT_TOOLLOOP     bot_user_id for tool-loop mode (research /
+#                          project bots that use the platform tool_call
+#                          protocol — no --tool flag passed)
+#   POLAR_WORK_ROOT        parent dir for per-tool workdirs (default:
+#                          $HOME/github)
+#   POLAR_WORKDIR_KIMI     override kimi's workdir (default:
+#                          $POLAR_WORK_ROOT/work_kimi)
+#   POLAR_WORKDIR_CLAUDE   override claude's workdir
+#   POLAR_WORKDIR_CODEX    override codex's workdir
+#   POLAR_WORKDIR_TOOLLOOP override tool-loop bot's workdir
+#   POLAR_KIMI_TIMEOUT     wall-clock cap per spawn (default 1h);
+#                          applies to all tools, not just kimi
+#                          (env var name kept for compat with v1)
+#   POLAR_AGENT_BIN        path to polar-agent (default: which
+#                          polar-agent / fallback ~/.local/bin/polar-agent)
 #
 # Persist your bot ids in ~/.polar/start_agents.env so this script
 # is idempotent across logins; the file is sourced if present.
@@ -51,6 +55,7 @@ TIMEOUT="${POLAR_KIMI_TIMEOUT:-1h}"
 WORKDIR_KIMI="${POLAR_WORKDIR_KIMI:-$WORK_ROOT/work_kimi}"
 WORKDIR_CLAUDE="${POLAR_WORKDIR_CLAUDE:-$WORK_ROOT/work_claude}"
 WORKDIR_CODEX="${POLAR_WORKDIR_CODEX:-$WORK_ROOT/work_codex}"
+WORKDIR_TOOLLOOP="${POLAR_WORKDIR_TOOLLOOP:-$WORK_ROOT/work_toolloop}"
 
 resolve_agent_bin() {
   if [ -n "${POLAR_AGENT_BIN:-}" ]; then
@@ -70,6 +75,17 @@ resolve_agent_bin() {
   exit 1
 }
 
+# Fast-fail when the agent isn't logged in. Otherwise each tmux window
+# would silently exit after `polar-agent attach` complains and the
+# operator would only notice from `status`.
+require_login() {
+  local cfg="${POLAR_AGENT_CONFIG:-$HOME/.polar/agent.toml}"
+  if [ ! -f "$cfg" ]; then
+    echo "no polar-agent config at $cfg — run 'polar-agent login --server=<URL> --token=<raw>' first" >&2
+    exit 1
+  fi
+}
+
 require_tmux() {
   if ! command -v tmux >/dev/null 2>&1; then
     echo "tmux required (install via 'brew install tmux' on macOS)" >&2
@@ -80,14 +96,26 @@ require_tmux() {
 # spawn_window <window-name> <bot_id> <tool> <workdir>
 # Creates a new tmux window in the session, mkdir -p's the workdir,
 # and runs polar-agent attach with --tool=<tool>.
+#
+# Empty <tool> is treated as tool-loop mode (no --tool flag emitted)
+# — used by the research / project bots that go through the platform's
+# tool_call protocol instead of a local CLI passthrough.
 spawn_window() {
   local name="$1" bot="$2" tool="$3" wd="$4"
   if [ -z "$bot" ]; then
-    echo "[skip] $tool: no bot id (set POLAR_BOT_${tool^^})"
+    if [ -z "$tool" ]; then
+      echo "[skip] $name: no bot id (set POLAR_BOT_TOOLLOOP)"
+    else
+      echo "[skip] $tool: no bot id (set POLAR_BOT_${tool^^})"
+    fi
     return
   fi
   mkdir -p "$wd"
-  local cmd="POLAR_KIMI_TIMEOUT=$TIMEOUT $AGENT_BIN attach --bot=$bot --workdir=$wd --tool=$tool --verbose"
+  local tool_arg=""
+  if [ -n "$tool" ]; then
+    tool_arg="--tool=$tool "
+  fi
+  local cmd="POLAR_KIMI_TIMEOUT=$TIMEOUT $AGENT_BIN attach --bot=$bot --workdir=$wd ${tool_arg}--verbose"
   if tmux list-windows -t "$SESSION" 2>/dev/null | grep -q ": ${name}\b"; then
     echo "[exists] $name (window already in session, leaving it)"
     return
@@ -102,11 +130,13 @@ spawn_window() {
 
 cmd_start() {
   require_tmux
+  require_login
   AGENT_BIN="$(resolve_agent_bin)"
 
-  spawn_window "kimi"   "${POLAR_BOT_KIMI:-}"   "kimi"   "$WORKDIR_KIMI"
-  spawn_window "claude" "${POLAR_BOT_CLAUDE:-}" "claude" "$WORKDIR_CLAUDE"
-  spawn_window "codex"  "${POLAR_BOT_CODEX:-}"  "codex"  "$WORKDIR_CODEX"
+  spawn_window "kimi"     "${POLAR_BOT_KIMI:-}"     "kimi"   "$WORKDIR_KIMI"
+  spawn_window "claude"   "${POLAR_BOT_CLAUDE:-}"   "claude" "$WORKDIR_CLAUDE"
+  spawn_window "codex"    "${POLAR_BOT_CODEX:-}"    "codex"  "$WORKDIR_CODEX"
+  spawn_window "toolloop" "${POLAR_BOT_TOOLLOOP:-}" ""       "$WORKDIR_TOOLLOOP"
 
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "no agents started — set at least one POLAR_BOT_* env var" >&2
