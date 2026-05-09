@@ -242,7 +242,10 @@ doc/grafana-integration.md     ← 本文件（Phase 1 落地时一起合）
 
 ## 仍开放（后续阶段）
 
-- **流式 SSE token 计数** — Phase 2 留的开放；等用得上再补
+- ~~**流式 SSE token 计数**~~ — 已落地：streamOpenAICompatible 自动加
+  `stream_options.include_usage=true`，解析最终 frame 的 `usage` 块，
+  通过 inner→wrapper 把 `*aiUsage` 串到 `recordLLMCall`。Anthropic /
+  Gemini / XAI 流式 schema 不同仍 0。
 - **mac-agent codesign / ASC 路径计数** — Phase 3 只盖 zsign
 - **agent_attached + bot_kind 维度** — Phase 3 只切 tool
 - **Loki 替换 `logs_entries`** — 跟本路线解耦，另一刀

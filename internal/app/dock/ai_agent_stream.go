@@ -48,28 +48,38 @@ type streamChunkCallback func(delta string)
 // the right provider based on the BaseURL and returns the assembled string
 // (also delivered piecewise via onDelta). Honors ctx cancellation.
 //
-// Records the same call+latency metrics as the non-streaming path. Tokens
-// stay at zero for streaming: the OpenAI SSE protocol *can* deliver a final
-// usage frame but we don't currently parse it; treating that as Phase 2.5.
+// Records timing + status on every call. Tokens are recorded when the
+// provider's stream emits a usage frame — today that's just the OpenAI-
+// compat path, which sets stream_options.include_usage=true on the
+// outgoing request and parses the final frame's `usage` block. Other
+// SSE protocols (Anthropic / Gemini / XAI) leave usage nil.
 func (a *aiAgent) requestStreamingChatCompletion(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
 	payload.Stream = true
 	provider := detectAIProvider(runtimeConfig.BaseURL)
 	start := time.Now()
-	out, err := a.requestStreamingChatCompletionInner(ctx, runtimeConfig, payload, onDelta)
+	out, usage, err := a.requestStreamingChatCompletionInner(ctx, runtimeConfig, payload, onDelta)
+	prompt, completion := 0, 0
+	if usage != nil {
+		prompt = usage.PromptTokens
+		completion = usage.CompletionTokens
+	}
 	if a.server != nil {
-		a.server.metricsRegistry.recordLLMCall(string(provider), runtimeConfig.Model, runtimeConfig.Endpoint, time.Since(start), err, 0, 0)
+		a.server.metricsRegistry.recordLLMCall(string(provider), runtimeConfig.Model, runtimeConfig.Endpoint, time.Since(start), err, prompt, completion)
 	}
 	return out, err
 }
 
-func (a *aiAgent) requestStreamingChatCompletionInner(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
+func (a *aiAgent) requestStreamingChatCompletionInner(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
 	switch detectAIProvider(runtimeConfig.BaseURL) {
 	case aiProviderAnthropic:
-		return a.streamAnthropic(ctx, runtimeConfig, payload, onDelta)
+		out, err := a.streamAnthropic(ctx, runtimeConfig, payload, onDelta)
+		return out, nil, err
 	case aiProviderGemini:
-		return a.streamGemini(ctx, runtimeConfig, payload, onDelta)
+		out, err := a.streamGemini(ctx, runtimeConfig, payload, onDelta)
+		return out, nil, err
 	case aiProviderXAIResponses:
-		return a.streamXAI(ctx, runtimeConfig, payload, onDelta)
+		out, err := a.streamXAI(ctx, runtimeConfig, payload, onDelta)
+		return out, nil, err
 	default:
 		return a.streamOpenAICompatible(ctx, runtimeConfig, payload, onDelta)
 	}
@@ -234,19 +244,33 @@ type openAIStreamChunk struct {
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
+	// Usage is non-nil only on the final frame, and only when the
+	// request was sent with stream_options.include_usage=true.
+	// Choices is empty in that frame; clients should accept either
+	// shape per OpenAI's spec.
+	Usage *aiUsage        `json:"usage,omitempty"`
 	Error json.RawMessage `json:"error,omitempty"`
 }
 
-func (a *aiAgent) streamOpenAICompatible(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
+func (a *aiAgent) streamOpenAICompatible(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
+	// Ask the upstream to emit a final `usage` frame so we can record
+	// streaming token counts. Setting it unconditionally is safe for
+	// OpenAI-compat providers (Kimi, DeepSeek, Volces non-Responses,
+	// OpenAI itself); ones that don't support the field tend to ignore
+	// unknown JSON keys, so the worst case is just no usage frame —
+	// callers already handle nil usage.
+	if payload.StreamOptions == nil {
+		payload.StreamOptions = &aiStreamOptions{IncludeUsage: true}
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	session, err := a.startStreamingRequest(ctx, "openai", runtimeConfig.BaseURL, "application/json", body, map[string]string{
 		"Authorization": "Bearer " + runtimeConfig.APIKey,
 	}, runtimeConfig.ProxyURL)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer session.close()
 
@@ -254,28 +278,29 @@ func (a *aiAgent) streamOpenAICompatible(ctx context.Context, runtimeConfig aiRu
 		assembled strings.Builder
 		seenFirst bool
 		gotDone   bool
+		usage     *aiUsage
 	)
 	for {
 		select {
 		case <-ctx.Done():
-			return assembled.String(), ctx.Err()
+			return assembled.String(), usage, ctx.Err()
 		case err := <-session.errs:
 			if err != nil {
-				return assembled.String(), err
+				return assembled.String(), usage, err
 			}
 		case frame, ok := <-session.frames:
 			if !ok {
 				if !gotDone {
-					return assembled.String(), errors.New("openai stream ended without [DONE]")
+					return assembled.String(), usage, errors.New("openai stream ended without [DONE]")
 				}
-				return assembled.String(), nil
+				return assembled.String(), usage, nil
 			}
 			if frame.data == "" {
 				continue
 			}
 			if frame.data == "[DONE]" {
 				gotDone = true
-				return assembled.String(), nil
+				return assembled.String(), usage, nil
 			}
 			var chunk openAIStreamChunk
 			if err := json.Unmarshal([]byte(frame.data), &chunk); err != nil {
@@ -283,7 +308,13 @@ func (a *aiAgent) streamOpenAICompatible(ctx context.Context, runtimeConfig aiRu
 				continue
 			}
 			if message := parseAIErrorMessage(chunk.Error); message != "" {
-				return assembled.String(), errors.New(message)
+				return assembled.String(), usage, errors.New(message)
+			}
+			// Capture usage on whatever frame carries it (typically the
+			// last one with empty Choices). Last writer wins if multiple
+			// frames somehow set it.
+			if chunk.Usage != nil {
+				usage = chunk.Usage
 			}
 			for _, choice := range chunk.Choices {
 				if choice.Delta.Content == nil {
