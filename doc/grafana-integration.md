@@ -226,15 +226,26 @@ doc/grafana-integration.md     ← 本文件（Phase 1 落地时一起合）
   processIOSSignTask 的 deferred terminal-outcome 闭包里 +1，复用现
   有的 final status 读取逻辑。今期只覆盖 `sign_method="zsign"`。
 
-## 仍开放（后续 phase 决）
+## Phase 4 已落地（2026-05-09）
 
-- **流式 SSE token 计数** — OpenAI SSE 协议尾部有 `usage` frame，目前
-  没解。等真有人盯流式 token 用量再补，否则 panel 显示 0 也行。
-- **mac-agent codesign 路径计数** — Phase 3 只盖 zsign；codesign / ASC
-  upload 那条线落地后加 `sign_method=codesign|asc`。
-- **agent_attached + bot_kind 维度** — 当前只切 tool；要加 bot_kind 需
-  要在 conn 上挂字段（agentHub 注册时塞）。等 dashboard 用起来发现需
-  要再补。
+- **Postgres datasource provisioning** — `deploy/grafana/datasources.yml`
+  自动配 Prometheus + Polar Postgres 两个 datasource（UID 分别是
+  `prometheus` / `polar-pg`）。手配也行，UID 必须对上。
+- **只读角色白名单** — `deploy/grafana/sql/grafana-readonly.sql` 给
+  `polar_grafana` 角色 SELECT 10 张白名单表。**故意不 SELECT ON ALL**
+  —— `users.password_hash` / `llm_configs.api_key` /
+  `iosdist_certificates.password_cipher` 这些列必须挡住。新增 panel
+  查新表时记得回去补 GRANT。
+- **业务 dashboard** — `polar-business.json` 6 个 SQL panel：研究漏斗
+  / 各 LLM 复盘量 / 工作区任务节奏 / 当前 open work（4 个数字总览） /
+  每日消息量 (human vs bot) / Markdown 按 visibility 切。
+
+## 仍开放（后续阶段）
+
+- **流式 SSE token 计数** — Phase 2 留的开放；等用得上再补
+- **mac-agent codesign / ASC 路径计数** — Phase 3 只盖 zsign
+- **agent_attached + bot_kind 维度** — Phase 3 只切 tool
+- **Loki 替换 `logs_entries`** — 跟本路线解耦，另一刀
 
 ## 验证（Phase 1 ship 时）
 
