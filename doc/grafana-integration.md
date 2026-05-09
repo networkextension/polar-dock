@@ -191,21 +191,25 @@ doc/grafana-integration.md     ← 本文件（Phase 1 落地时一起合）
 - **不替 `logs_entries`** — log 替换是另一刀（ES vs Loki 选型还没定）
 - **dashboard JSON 进 repo** — 不靠手画，让恢复 / 多 host 部署可重现
 
-## 开放问题（实施前需确认）
+## 已确认决策（2026-05-09）
 
-1. **`/metrics` 鉴权方式** — 选 localhost-bind（最严，单机部署友好）
-   还是 admin token header（多 host 部署友好但稍麻烦）？默认前者可
-   配后者？
-2. **Histogram bucket 边界** — Polar 的 LLM 调用通常 200ms-30s，
-   default Prometheus histogram bucket（毫秒级）会大量落到溢出桶。要
-   定制 `[0.1, 0.5, 1, 2, 5, 10, 20, 30, 60]` 秒级 bucket
-3. **Token usage 来源** — OpenAI / Volces / Moonshot 在 chat-completion
-   响应里都有 `usage.prompt_tokens / completion_tokens` 字段，但
-   passthrough（kimi-cli / claude-cli）走本地 CLI 没有这个 — 那条路
-   不计 token，文档里说明
-4. **Dashboard 命名 / scope** — 一个总览 dashboard 还是按面分开？我倾
-   向后者，4 个 dashboard 分别是 health / LLM / agents / business，
-   每个能独立链接 / 嵌入 wiki
+1. **`/metrics` 鉴权** — Bearer token，从 `METRICS_TOKEN` env 注入。
+   `Authorization: Bearer <token>` 必匹配；空 token = endpoint 关闭
+   （fail-closed）。Prometheus scrape config 里 `bearer_token` 配同值。
+2. **Dev 环境 Grafana** — `localhost:3100` admin/admin（已就绪）。
+   Phase 1 dashboard JSON 直接 import 进这个实例验收。
+3. **Dashboard scope** — 按面分 4 个 dashboard：health / LLM / agents
+   / business。每个能独立链接，操作员一次只盯一面。
+
+## 仍开放（后续 phase 决）
+
+- **Histogram bucket 边界（LLM）** — 默认 Prometheus bucket 是毫秒级，
+  对 LLM 调用（200ms-30s）会大量落溢出桶。Phase 2 落地 LLM metric 时
+  定制 `[0.1, 0.5, 1, 2, 5, 10, 20, 30, 60]` 秒级 bucket。
+- **Token usage 来源** — OpenAI / Volces / Moonshot 在 chat-completion
+  响应里都有 `usage.prompt_tokens / completion_tokens` 字段，但
+  passthrough（kimi-cli / claude-cli）走本地 CLI 拿不到 —— 那条路不计
+  token，文档里说明。Phase 2 处理。
 
 ## 验证（Phase 1 ship 时）
 

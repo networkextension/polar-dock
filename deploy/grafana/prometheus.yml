@@ -1,0 +1,29 @@
+# Prometheus scrape config for the Polar dock.
+#
+# Replace ${METRICS_TOKEN} with the same value you set on the dock's
+# environment, OR run prometheus with the env var visible and use
+# `bearer_token: ${METRICS_TOKEN}` in newer Prometheus versions that
+# support env interpolation in scrape configs.
+#
+# Drop this file at your prometheus install path (e.g. /etc/prometheus/
+# or alongside the prometheus binary) and reload.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: polar-dock
+    metrics_path: /metrics
+    scheme: http
+    # Bearer token must match METRICS_TOKEN on the dock side.
+    authorization:
+      type: Bearer
+      credentials: REPLACE_WITH_METRICS_TOKEN
+    static_configs:
+      - targets:
+          - host.docker.internal:8080   # dev: prometheus in docker, dock on host
+          # - 127.0.0.1:8080            # dev: prometheus + dock on same host
+          # - dock.internal:8080        # prod: replace with the dock's host
+        labels:
+          env: dev

@@ -91,6 +91,12 @@ type Server struct {
 	// instead of crashing the worker.
 	iosdistZsignPath  string
 	iosdistSignQueue  chan int64
+
+	// Observability. metricsRegistry is always non-nil (Phase 1 metrics
+	// register unconditionally so the middleware can record); the
+	// /metrics endpoint itself is gated by metricsToken being set.
+	metricsRegistry *metrics
+	metricsToken    string
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -323,11 +329,16 @@ func NewServer(cfg Config) (*Server, error) {
 	server.startVideoRenderWorker(server.backgroundCtx)
 	go server.runVideoPollWorker(server.backgroundCtx)
 
+	server.metricsRegistry = newMetrics()
+	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
+	server.startMetricsSampler()
+
 	server.router = gin.Default()
 	// Increase max upload size for video files (default gin limit is 32 MiB)
 	server.router.MaxMultipartMemory = 512 << 20 // 512 MiB
 	server.router.Use(corsMiddleware())
 	server.router.Use(server.LanguageMiddleware())
+	server.router.Use(server.metricsRegistry.httpMiddleware())
 	if server.uploadDir != "" {
 		server.router.Static("/uploads", server.uploadDir)
 	}
@@ -541,6 +552,12 @@ func (s *Server) registerRoutes() {
 	})
 	s.router.GET("/ws/chat", s.handleChatWS)
 	s.router.GET("/ws/agent", s.handleAgentWS)
+
+	// Prometheus exposition. Gated inside handleMetrics by METRICS_TOKEN —
+	// 404 if unset, 401 if mismatched. Lives outside /api so the scrape
+	// path can be granted in a reverse proxy without dragging in the rest
+	// of the API surface.
+	s.router.GET("/metrics", s.handleMetrics)
 
 	// iOS distribution OTA endpoints (no auth — gated by a short-lived,
 	// random install token bound to a single version). The manifest.plist

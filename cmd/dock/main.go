@@ -93,6 +93,9 @@ func main() {
 
 		// iOS distribution
 		IOSDistResourceKey: os.Getenv("IOSDIST_RESOURCE_KEY"),
+
+		// /metrics gate. Empty = endpoint disabled.
+		MetricsToken: os.Getenv("METRICS_TOKEN"),
 	}
 
 	server, err := dock.NewServer(cfg)
