@@ -154,6 +154,126 @@ func TestOpenAIStreamingHappyPath(t *testing.T) {
 	}
 }
 
+// runOpenAIDecodeWithUsage parallels streamOpenAICompatible but only the
+// usage-capturing slice of it: we need to assert that a final frame
+// carrying `usage` is parsed into an *aiUsage and surfaced. Mirrors
+// the production read loop's usage capture exactly so a regression in
+// the decode site fails this test.
+func runOpenAIDecodeWithUsage(t *testing.T, body string) (string, *aiUsage, error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	var (
+		assembled strings.Builder
+		usage     *aiUsage
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return assembled.String(), usage, ctx.Err()
+		case err := <-errs:
+			if err != nil {
+				return assembled.String(), usage, err
+			}
+		case frame, ok := <-frames:
+			if !ok {
+				return assembled.String(), usage, nil
+			}
+			if frame.data == "" {
+				continue
+			}
+			if frame.data == "[DONE]" {
+				return assembled.String(), usage, nil
+			}
+			var chunk openAIStreamChunk
+			if err := jsonUnmarshalString(frame.data, &chunk); err != nil {
+				continue
+			}
+			if chunk.Usage != nil {
+				usage = chunk.Usage
+			}
+			for _, choice := range chunk.Choices {
+				if choice.Delta.Content == nil {
+					continue
+				}
+				assembled.WriteString(*choice.Delta.Content)
+			}
+		}
+	}
+}
+
+func TestOpenAIStreamingCapturesFinalUsageFrame(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"choices":[{"delta":{"content":"Hi"}}]}`,
+		``,
+		`data: {"choices":[{"delta":{"content":" there"}}]}`,
+		``,
+		`data: {"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	content, usage, err := runOpenAIDecodeWithUsage(t, body)
+	if err != nil {
+		t.Fatalf("decode err: %v", err)
+	}
+	if content != "Hi there" {
+		t.Errorf("content: got %q want %q", content, "Hi there")
+	}
+	if usage == nil {
+		t.Fatalf("usage: nil — final frame's `usage` was not parsed")
+	}
+	if usage.PromptTokens != 42 || usage.CompletionTokens != 7 {
+		t.Errorf("usage: got prompt=%d completion=%d, want 42/7", usage.PromptTokens, usage.CompletionTokens)
+	}
+}
+
+func TestOpenAIStreamingNoUsageFrameStaysNil(t *testing.T) {
+	// Provider that doesn't honor stream_options.include_usage just
+	// won't send a usage frame. Caller must accept nil + record 0
+	// rather than crash.
+	body := strings.Join([]string{
+		`data: {"choices":[{"delta":{"content":"hello"}}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	content, usage, err := runOpenAIDecodeWithUsage(t, body)
+	if err != nil {
+		t.Fatalf("decode err: %v", err)
+	}
+	if content != "hello" {
+		t.Errorf("content: got %q want %q", content, "hello")
+	}
+	if usage != nil {
+		t.Errorf("usage: got %+v, want nil (provider didn't emit usage frame)", usage)
+	}
+}
+
+func TestStreamOptionsMarshalsAsExpected(t *testing.T) {
+	// Quick safety net — make sure the JSON tag wiring is right so
+	// upstream actually sees `stream_options.include_usage:true`.
+	req := aiChatCompletionRequest{
+		Model:         "x",
+		StreamOptions: &aiStreamOptions{IncludeUsage: true},
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(body), `"stream_options":{"include_usage":true}`) {
+		t.Errorf("unexpected payload shape: %s", body)
+	}
+	// And when StreamOptions is nil, the field must not be present at all
+	// (omitempty) — otherwise providers that reject the field for
+	// non-streaming calls would error.
+	body2, _ := json.Marshal(aiChatCompletionRequest{Model: "x"})
+	if strings.Contains(string(body2), "stream_options") {
+		t.Errorf("non-stream request leaked stream_options: %s", body2)
+	}
+}
+
 func TestOpenAIStreamingMissingDoneIsError(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"choices":[{"delta":{"content":"partial"}}]}`,

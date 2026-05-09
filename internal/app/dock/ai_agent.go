@@ -103,6 +103,15 @@ type aiChatCompletionRequest struct {
 	// supports the same shape via api.moonshot.cn.
 	Tools      []aiToolSpec `json:"tools,omitempty"`
 	ToolChoice string       `json:"tool_choice,omitempty"` // "auto" | "none" | "required"
+	// StreamOptions is OpenAI-compat: include_usage=true makes the
+	// stream emit a final frame carrying `usage`. Populated by
+	// streamOpenAICompatible right before marshalling so callers
+	// don't have to think about it.
+	StreamOptions *aiStreamOptions `json:"stream_options,omitempty"`
+}
+
+type aiStreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 type aiChatCompletionMessage struct {
