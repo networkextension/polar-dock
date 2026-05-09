@@ -2,7 +2,7 @@ import { byId } from "./lib/dom.js";
 import { base64URLToBuffer, credentialToJSON } from "./lib/passkey.js";
 import { buildClientHeaders } from "./lib/client.js";
 import { hydrateSiteBrand } from "./lib/site.js";
-import { t } from "./lib/i18n.js";
+import { injectLangToggle, t } from "./lib/i18n.js";
 
 const API_BASE = "";
 const form = byId<HTMLFormElement>("loginForm");
@@ -133,4 +133,10 @@ async function redirectIfLoggedIn(): Promise<void> {
 }
 
 void redirectIfLoggedIn();
-void hydrateSiteBrand();
+void (async () => {
+  await hydrateSiteBrand();
+  // injectLangToggle anchors next to [data-site-brand]; needs the
+  // brand banner already in the DOM (it is, statically) and the
+  // i18n applied. Calling after hydrateSiteBrand keeps that order.
+  injectLangToggle();
+})();

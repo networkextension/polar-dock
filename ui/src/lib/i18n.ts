@@ -1,3 +1,5 @@
+import { iconHTML } from "./icons.js";
+
 const LANG_KEY = "polar_lang";
 export type Lang = "en" | "zh-CN";
 
@@ -1586,12 +1588,15 @@ const zhCN: Record<string, string> = {
 
 const locales: Record<Lang, Record<string, string>> = { en, "zh-CN": zhCN };
 
+// Default language is zh-CN (primary user base writes Chinese).
+// Returns "en" only when localStorage explicitly has "en" stored, so
+// users who toggled keep their choice. Fresh visitors land on zh-CN.
 export function getLang(): Lang {
   try {
     const stored = localStorage.getItem(LANG_KEY);
-    return stored === "zh-CN" ? "zh-CN" : "en";
+    return stored === "en" ? "en" : "zh-CN";
   } catch {
-    return "en";
+    return "zh-CN";
   }
 }
 
@@ -1661,22 +1666,26 @@ export function applyI18n(): void {
   document.documentElement.lang = getLang();
 }
 
+// Inject a fixed top-right language toggle. Page-level utility,
+// not a form field — anchored to body, not the brand banner. The
+// previous "insert next to brand" placement made the toggle look
+// like a separator between the brand banner and the auth card on
+// login/register pages (per login—reg—language—switch.MD review).
 export function injectLangToggle(): void {
   if (document.getElementById("langToggleBtn")) {
-    return;
-  }
-  const brand = document.querySelector("[data-site-brand]");
-  if (!brand?.parentElement) {
     return;
   }
   const btn = document.createElement("button");
   btn.id = "langToggleBtn";
   btn.type = "button";
   btn.className = "lang-toggle-btn";
-  btn.textContent = getLang() === "en" ? "中文" : "EN";
+  // Globe icon + the alternate language label (so the user sees
+  // what they'll switch TO, not the current one). Lucide "globe"
+  // path comes from lib/icons.ts.
+  btn.innerHTML = `${iconHTML("globe", 14)}<span>${getLang() === "en" ? "中文" : "EN"}</span>`;
   btn.addEventListener("click", () => {
     setLang(getLang() === "en" ? "zh-CN" : "en");
     window.location.reload();
   });
-  brand.parentElement.insertBefore(btn, brand.nextSibling);
+  document.body.appendChild(btn);
 }
