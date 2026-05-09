@@ -813,21 +813,19 @@ func (s *Server) handleProjectTaskPickup(c *gin.Context) {
 		return
 	}
 
-	// Research projects run pure LLM + server-side tool loop,
-	// no local polar-agent needed. For code projects, guard
-	// against the most common foot-gun: pickup before polar-agent
-	// reconnected silently falls through to the bot's configured
-	// LLM, which usually isn't what users want (LLM may be unset,
-	// wrong base URL, or a reachable-but-paid model). Cheaper to
-	// refuse with a clear message than bill a confusing 400/500.
-	if !IsResearchProject(project) {
-		if s.agentHub == nil || s.agentHub.lookup(botUserID) == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error": "该 bot 的本地 polar-agent 还没连上。请先在终端 `polar-agent attach --bot=" + botUserID + " --kimi` 再点派单。",
-				"code":  "agent_not_attached",
-			})
-			return
-		}
+	// Guard against the most common foot-gun: pickup before
+	// polar-agent has reconnected. If no agent is attached, the
+	// platform falls through to the bot's configured LLM, which
+	// usually isn't what users want here (the LLM may be unset,
+	// have a wrong base URL, or be a reachable-but-paid model).
+	// Cheaper to refuse with a clear message than to bill a
+	// confusing 400/500 from the LLM API.
+	if s.agentHub == nil || s.agentHub.lookup(botUserID) == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "该 bot 的本地 polar-agent 还没连上。请先在终端 `polar-agent attach --bot=" + botUserID + " --kimi` 再点派单。",
+			"code":  "agent_not_attached",
+		})
+		return
 	}
 
 	now := time.Now()
