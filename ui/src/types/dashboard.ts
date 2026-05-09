@@ -194,6 +194,10 @@ export type BotUser = {
   // in UI when bot is passthrough, helping the user remember which
   // polar-agent --tool= flag pairs with it. Backend doesn't enforce.
   preferred_tool: string;
+  // is_auto_registered: created via POST /api/agent/auto-register
+  // by a polar-agent docker container at startup. Operator can't
+  // edit/delete from UI — managed by the agent token's lifecycle.
+  is_auto_registered?: boolean;
   created_at: string;
   updated_at: string;
 };

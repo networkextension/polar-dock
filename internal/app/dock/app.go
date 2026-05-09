@@ -761,6 +761,7 @@ func (s *Server) registerRoutes() {
 		api.GET("/agent/whoami", s.handleAgentWhoAmI)
 		api.GET("/agent/binary", s.handleAgentBinary)
 		api.GET("/agent/bots/:bot_id/config", s.PolarAgentAuthMiddleware(), s.handleAgentBotConfig)
+		api.POST("/agent/auto-register", s.PolarAgentAuthMiddleware(), s.handleAgentAutoRegister)
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
 		api.POST("/agent/bots/:bot_id/dispatch", s.AuthMiddleware(), s.handleAgentDispatch)
 		// projects (workspace-scoped product container with AI

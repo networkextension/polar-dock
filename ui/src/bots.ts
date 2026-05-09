@@ -205,18 +205,28 @@ function renderBotUserList(bots: BotUser[]): void {
       // vs the platform LLM.
       const kindChip = bot.bot_kind === "passthrough"
         ? `<span class="tag-chip tag-chip-accent">Passthrough${bot.preferred_tool ? " · " + bot.preferred_tool : ""}</span>`
-        : `<span class="tag-chip">${bot.config_name}</span>`;
+        : `<span class="tag-chip">${bot.config_name || ""}</span>`;
+      const autoChip = bot.is_auto_registered
+        ? `<span class="tag-chip" style="background:#e6f4ed; color:#3a7;">🤖 auto · agent</span>`
+        : "";
+      // Auto-registered bots are managed by the agent itself; the
+      // operator can't tweak system_prompt or LLM here. Keep the
+      // edit/delete actions disabled to make this obvious.
+      const actionsForRow = bot.is_auto_registered
+        ? `<span style="font-size:11px; color:var(--text-muted,#888); padding:4px 6px;">(by agent · 撤销 token 即清除)</span>`
+        : actions;
       return `
         <li class="tag-item${isPending ? " tag-item-pending-delete" : ""}${isExpanded ? " tag-item-expanded" : ""}" data-bot-user-id="${bot.id}">
           <div class="tag-item-main">
             <div class="tag-item-header">
               <strong>${bot.name}</strong>
               ${kindChip}
+              ${autoChip}
               <span class="bot-agent-badge" data-bot-agent-badge="${bot.bot_user_id}"></span>
             </div>
             <div class="tag-item-meta">${t("dashboard.botUserId", { id: bot.bot_user_id })}</div>
           </div>
-          <div class="tag-item-actions">${actions}</div>
+          <div class="tag-item-actions">${actionsForRow}</div>
           ${expandPanel}
         </li>
       `;

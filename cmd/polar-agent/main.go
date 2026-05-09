@@ -13,6 +13,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -58,6 +59,51 @@ func fetchBotPreferredTool(cfg AgentConfig, botID string) (string, error) {
 	return strings.TrimSpace(out.PreferredTool), nil
 }
 
+// autoRegisteredBot is one row returned by /api/agent/auto-register.
+type autoRegisteredBot struct {
+	BotUserID     string `json:"bot_user_id"`
+	Name          string `json:"name"`
+	PreferredTool string `json:"preferred_tool"`
+}
+
+// callAutoRegister POSTs to /api/agent/auto-register declaring
+// this agent's capabilities (coder list + research flag). Server
+// creates / reuses bot_users rows owned by the agent token's user.
+// Returns the bot ids paired with their preferred_tool so the
+// entrypoint can spawn one `polar-agent attach --tool=<coder>` per
+// coder bot, or tool-loop attach (no --tool) for the research bot.
+func callAutoRegister(cfg AgentConfig, coders []string, research bool, agentName string) ([]autoRegisteredBot, error) {
+	body, _ := json.Marshal(map[string]any{
+		"coders":     coders,
+		"research":   research,
+		"agent_name": agentName,
+	})
+	url := strings.TrimRight(cfg.Server, "/") + "/api/agent/auto-register"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("auto-register status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var out struct {
+		Bots []autoRegisteredBot `json:"bots"`
+	}
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return nil, err
+	}
+	return out.Bots, nil
+}
+
 const (
 	exitOK         = 0
 	exitUsage      = 2
@@ -81,6 +127,8 @@ func main() {
 		os.Exit(runStatus(args))
 	case "attach":
 		os.Exit(runAttach(args))
+	case "auto-register":
+		os.Exit(runAutoRegister(args))
 	case "submit-build":
 		os.Exit(runSubmitBuild(args))
 	case "help", "-h", "--help":
@@ -237,6 +285,62 @@ func runAttach(args []string) int {
 	if err := runAgentLoop(cfg, *bot, resolved, *verbose, spec); err != nil {
 		log.Printf("agent loop ended: %v", err)
 		return exitNet
+	}
+	return exitOK
+}
+
+// runAutoRegister implements `polar-agent auto-register`. Output
+// format: one line per bot, "bot_id<TAB>preferred_tool", with empty
+// preferred_tool meaning the row is a research bot (tool-loop mode,
+// no --tool= when attaching).
+//
+// Flags:
+//
+//	--coders=kimi,claude,codex  comma-separated coder names (default all 3)
+//	--research                  also register a research bot (default on)
+//	--no-research               skip research bot
+//	--agent-name=<str>          display name (default = hostname)
+func runAutoRegister(args []string) int {
+	fs := flag.NewFlagSet("auto-register", flag.ContinueOnError)
+	coders := fs.String("coders", "kimi,claude,codex", "comma-separated coder names")
+	research := fs.Bool("research", true, "also register a research bot (uses workspace default LLM + agent tools)")
+	noResearch := fs.Bool("no-research", false, "skip research bot (overrides --research)")
+	agentName := fs.String("agent-name", "", "display name (optional; from container hostname)")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	if *noResearch {
+		*research = false
+	}
+	cfg, err := LoadAgentConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "no config (run `polar-agent login` first): %v\n", err)
+		return exitConfig
+	}
+	list := []string{}
+	for _, c := range strings.Split(*coders, ",") {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		list = append(list, c)
+	}
+	if len(list) == 0 && !*research {
+		fmt.Fprintln(os.Stderr, "nothing to register: no coders + research disabled")
+		return exitUsage
+	}
+	if *agentName == "" {
+		if h, err := os.Hostname(); err == nil {
+			*agentName = h
+		}
+	}
+	bots, err := callAutoRegister(cfg, list, *research, *agentName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "auto-register failed: %v\n", err)
+		return exitNet
+	}
+	for _, b := range bots {
+		fmt.Printf("%s\t%s\n", b.BotUserID, b.PreferredTool)
 	}
 	return exitOK
 }
