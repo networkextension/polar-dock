@@ -689,6 +689,184 @@ func (s *Server) ascCreateTester(ctx context.Context, cfg *IOSASCConfig, email, 
 	return err
 }
 
+// ---- bundle ID + app creation (Phase 3 of iOS pipeline closed loop) ----
+
+type ascBundleID struct {
+	ID         string `json:"id"`
+	Identifier string `json:"identifier"`
+	Name       string `json:"name"`
+	Platform   string `json:"platform"`
+	SeedID     string `json:"seed_id,omitempty"`
+}
+
+// ascListBundleIDs queries /v1/bundleIds, optionally filtered by
+// identifier (exact match — Apple's API supports this filter).
+// Used both as a "does this identifier already exist?" probe and
+// as a picker for the project bind UI.
+func (s *Server) ascListBundleIDs(ctx context.Context, cfg *IOSASCConfig, identifierFilter string) ([]ascBundleID, error) {
+	q := url.Values{}
+	q.Set("limit", "200")
+	if identifierFilter != "" {
+		q.Set("filter[identifier]", identifierFilter)
+	}
+	body, err := s.ascDoGET(ctx, cfg, "/v1/bundleIds?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Data []struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				Identifier string `json:"identifier"`
+				Name       string `json:"name"`
+				Platform   string `json:"platform"`
+				SeedID     string `json:"seedId"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("asc list bundle ids decode: %w", err)
+	}
+	out := make([]ascBundleID, 0, len(resp.Data))
+	for _, d := range resp.Data {
+		out = append(out, ascBundleID{
+			ID:         d.ID,
+			Identifier: d.Attributes.Identifier,
+			Name:       d.Attributes.Name,
+			Platform:   d.Attributes.Platform,
+			SeedID:     d.Attributes.SeedID,
+		})
+	}
+	return out, nil
+}
+
+// ascCreateBundleID registers a new identifier with Apple. Platform
+// must be "IOS" / "MAC_OS" / "UNIVERSAL". Idempotent at the caller's
+// level: if the identifier already exists, Apple returns 409 — caller
+// should ascListBundleIDs(identifier) first and reuse if found.
+func (s *Server) ascCreateBundleID(ctx context.Context, cfg *IOSASCConfig, identifier, name, platform string) (*ascBundleID, error) {
+	type attrs struct {
+		Identifier string `json:"identifier"`
+		Name       string `json:"name"`
+		Platform   string `json:"platform"`
+		SeedID     string `json:"seedId,omitempty"`
+	}
+	type data struct {
+		Type       string `json:"type"`
+		Attributes attrs  `json:"attributes"`
+	}
+	payload := struct {
+		Data data `json:"data"`
+	}{
+		Data: data{
+			Type: "bundleIds",
+			Attributes: attrs{
+				Identifier: identifier,
+				Name:       name,
+				Platform:   platform,
+			},
+		},
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("asc bundle id payload: %w", err)
+	}
+	body, err := s.ascDo(ctx, cfg, http.MethodPost, "/v1/bundleIds", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Data struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				Identifier string `json:"identifier"`
+				Name       string `json:"name"`
+				Platform   string `json:"platform"`
+				SeedID     string `json:"seedId"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("asc bundle id decode: %w", err)
+	}
+	return &ascBundleID{
+		ID:         resp.Data.ID,
+		Identifier: resp.Data.Attributes.Identifier,
+		Name:       resp.Data.Attributes.Name,
+		Platform:   resp.Data.Attributes.Platform,
+		SeedID:     resp.Data.Attributes.SeedID,
+	}, nil
+}
+
+// ascCreateApp creates an App Store Connect app record. The bundle
+// id must already exist (call ascCreateBundleID first if needed).
+// SKU is Apple's internal app identifier — not shown to users; we
+// recommend using the bundle identifier itself for clarity.
+func (s *Server) ascCreateApp(ctx context.Context, cfg *IOSASCConfig, bundleIDResourceID, name, sku, primaryLocale string) (*ascAppSummary, error) {
+	type relRef struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	type relData struct {
+		Data relRef `json:"data"`
+	}
+	type rels struct {
+		BundleID relData `json:"bundleId"`
+	}
+	type attrs struct {
+		Name          string `json:"name"`
+		SKU           string `json:"sku"`
+		PrimaryLocale string `json:"primaryLocale,omitempty"`
+	}
+	type data struct {
+		Type          string `json:"type"`
+		Attributes    attrs  `json:"attributes"`
+		Relationships rels   `json:"relationships"`
+	}
+	payload := struct {
+		Data data `json:"data"`
+	}{
+		Data: data{
+			Type: "apps",
+			Attributes: attrs{
+				Name:          name,
+				SKU:           sku,
+				PrimaryLocale: primaryLocale,
+			},
+			Relationships: rels{
+				BundleID: relData{Data: relRef{Type: "bundleIds", ID: bundleIDResourceID}},
+			},
+		},
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("asc app payload: %w", err)
+	}
+	body, err := s.ascDo(ctx, cfg, http.MethodPost, "/v1/apps", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Data struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				BundleID string `json:"bundleId"`
+				Name     string `json:"name"`
+				SKU      string `json:"sku"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("asc app decode: %w", err)
+	}
+	return &ascAppSummary{
+		ID:       resp.Data.ID,
+		BundleID: resp.Data.Attributes.BundleID,
+		Name:     resp.Data.Attributes.Name,
+		SKU:      resp.Data.Attributes.SKU,
+	}, nil
+}
+
 // ---- low-level HTTP -----------------------------------------------------
 
 func (s *Server) ascDoGET(ctx context.Context, cfg *IOSASCConfig, pathQuery string) ([]byte, error) {

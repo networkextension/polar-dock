@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 const aiDecomposeTimeout = 90 * time.Second
@@ -28,6 +29,7 @@ type projectCreateRequest struct {
 	BusinessScenario string `json:"business_scenario"`
 	CodeProvider     string `json:"code_provider"`
 	GitRemoteURL     string `json:"git_remote_url"`
+	IOSDistAppID     *int64 `json:"iosdist_app_id"`
 }
 
 func (s *Server) handleProjectCreate(c *gin.Context) {
@@ -59,7 +61,17 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		BusinessScenario: strings.TrimSpace(req.BusinessScenario),
 		CodeProvider:     strings.TrimSpace(req.CodeProvider),
 		GitRemoteURL:     strings.TrimSpace(req.GitRemoteURL),
+		IOSDistAppID:     req.IOSDistAppID,
 		Status:           ProjectStatusDraft,
+	}
+	if p.IOSDistAppID != nil && *p.IOSDistAppID > 0 {
+		// Defend against cross-workspace binding — the bound app
+		// must live in the same workspace as the project.
+		app, aerr := s.getIOSAppByID(*p.IOSDistAppID)
+		if aerr != nil || app == nil || app.WorkspaceID != workspaceID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "iosdist_app_id 不属于当前工作区"})
+			return
+		}
 	}
 	if err := s.createProject(p); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -118,6 +130,13 @@ type projectUpdateRequest struct {
 	BusinessScenario *string `json:"business_scenario"`
 	CodeProvider     *string `json:"code_provider"`
 	GitRemoteURL     *string `json:"git_remote_url"`
+	// IOSDistAppID semantics:
+	//   field absent in JSON → no change (nil pointer)
+	//   field = null in JSON → unbind (sets DB column to NULL)
+	//   field = number in JSON → bind to that iosdist_apps row
+	// We detect "field present but null" via a separate flag set
+	// during JSON parsing — see handleProjectUpdate below.
+	IOSDistAppID *int64 `json:"iosdist_app_id"`
 }
 
 func (s *Server) handleProjectUpdate(c *gin.Context) {
@@ -132,7 +151,11 @@ func (s *Server) handleProjectUpdate(c *gin.Context) {
 		return
 	}
 	var req projectUpdateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// ShouldBindBodyWith caches the body so we can re-parse it
+	// further down to detect explicit-null fields (e.g.
+	// `{"iosdist_app_id": null}` for an unbind). ShouldBindJSON
+	// drains the body and the second parse below would see EOF.
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
 		return
 	}
@@ -172,6 +195,27 @@ func (s *Server) handleProjectUpdate(c *gin.Context) {
 	if req.GitRemoteURL != nil {
 		v := strings.TrimSpace(*req.GitRemoteURL)
 		u.GitRemoteURL = &v
+	}
+	// iosdist_app_id binding. Re-parse the cached body into a raw
+	// map so we can distinguish "field absent" from "field = null".
+	var raw map[string]json.RawMessage
+	_ = c.ShouldBindBodyWith(&raw, binding.JSON)
+	if rawVal, present := raw["iosdist_app_id"]; present {
+		// Present in payload — could be a number or null.
+		if string(rawVal) == "null" {
+			// Explicit unbind.
+			var zero *int64
+			u.IOSDistAppID = &zero
+		} else if req.IOSDistAppID != nil && *req.IOSDistAppID > 0 {
+			// Validate workspace match before persisting.
+			app, aerr := s.getIOSAppByID(*req.IOSDistAppID)
+			if aerr != nil || app == nil || app.WorkspaceID != workspaceID {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "iosdist_app_id 不属于当前工作区"})
+				return
+			}
+			val := req.IOSDistAppID
+			u.IOSDistAppID = &val
+		}
 	}
 	if err := s.updateProjectMetadata(id, workspaceID, u); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -298,6 +342,7 @@ type pickupBodyData struct {
 	ScenarioLabel string
 	CodeProvider  string
 	GitRemoteURL  string
+	BundleID      string // From bound iosdist app; empty when project isn't iOS-flavored.
 	Title         string
 	Description   string
 }
@@ -307,11 +352,21 @@ type pickupBodyData struct {
 // (prompt_templates.project.pickup_body); admins can edit without
 // a redeploy. The fallback in code defends against bad edits.
 func (s *Server) buildPickupBody(project *Project, title, description string) string {
+	bundleID := ""
+	if project.IOSDistAppID != nil && *project.IOSDistAppID > 0 {
+		// Best-effort lookup — if the iosdist app row was deleted
+		// out from under us the lookup returns nil + we just skip
+		// the bundle id chunk. Don't fail the pickup over it.
+		if app, err := s.getIOSAppByID(*project.IOSDistAppID); err == nil && app != nil {
+			bundleID = strings.TrimSpace(app.BundleID)
+		}
+	}
 	data := pickupBodyData{
 		EnvLabel:      runtimeEnvLabel(project.RuntimeEnv),
 		ScenarioLabel: businessScenarioLabel(project.BusinessScenario),
 		CodeProvider:  strings.TrimSpace(project.CodeProvider),
 		GitRemoteURL:  strings.TrimSpace(project.GitRemoteURL),
+		BundleID:      bundleID,
 		Title:         strings.TrimSpace(title),
 		Description:   strings.TrimSpace(description),
 	}
@@ -325,6 +380,7 @@ func (s *Server) buildPickupBody(project *Project, title, description string) st
 const defaultPickupBodyTemplate = `{{- $hasHeader := or .EnvLabel .ScenarioLabel -}}
 {{- $hasHeader = or $hasHeader .CodeProvider -}}
 {{- $hasHeader = or $hasHeader .GitRemoteURL -}}
+{{- $hasHeader = or $hasHeader .BundleID -}}
 {{- if $hasHeader -}}
 【任务约束】
 {{- if .EnvLabel }}
@@ -338,6 +394,12 @@ const defaultPickupBodyTemplate = `{{- $hasHeader := or .EnvLabel .ScenarioLabel
 {{- end -}}
 {{- if .GitRemoteURL }}
 Git 远端：{{.GitRemoteURL}}（polar-agent 已 chdir 到 cwd 并配好 origin；只在 cwd 操作，不要 cd 到兄弟目录）
+{{- end -}}
+{{- if .BundleID }}
+iOS Bundle ID：{{.BundleID}}
+构建工具：用 xcodegen 生成 .xcodeproj，不要手编。Project.swift / project.yml 放在 cwd 根。
+最终输出：unsigned IPA。xcodebuild archive 时用 CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO，再 xcodebuild -exportArchive 用一份 method=development 的 ExportOptions.plist。
+任务结束前调用：polar-agent submit-build <path-to-ipa>，由 agent 完成签名 + 上传 TestFlight。
 {{- end }}
 
 【任务】

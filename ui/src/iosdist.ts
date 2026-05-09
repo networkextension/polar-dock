@@ -9,6 +9,8 @@
 // signed Ad-hoc / Enterprise IPAs and stores them via AttachmentStorage.
 
 import {
+  createASCApp,
+  createASCBundleID,
   createIOSApp,
   createIOSInstallToken,
   deleteIOSApp,
@@ -192,6 +194,10 @@ const appForm = byId<HTMLFormElement>("iosAppForm");
 const appNameInput = byId<HTMLInputElement>("iosAppNameInput");
 const appBundleInput = byId<HTMLInputElement>("iosAppBundleInput");
 const appDescInput = byId<HTMLTextAreaElement>("iosAppDescInput");
+const appCreateInASCInput = byId<HTMLInputElement>("iosAppCreateInASC");
+const appASCFieldsEl = byId<HTMLElement>("iosAppASCFields");
+const appASCNameInput = byId<HTMLInputElement>("iosAppASCName");
+const appASCSkuInput = byId<HTMLInputElement>("iosAppASCSku");
 const appFormStatus = byId<HTMLElement>("iosAppFormStatus");
 
 let apps: IOSApp[] = [];
@@ -657,6 +663,10 @@ newAppBtn.addEventListener("click", openAppModal);
 appModalCloseBtn.addEventListener("click", closeAppModal);
 appModal.querySelector(".modal-backdrop")?.addEventListener("click", closeAppModal);
 
+appCreateInASCInput.addEventListener("change", () => {
+  appASCFieldsEl.hidden = !appCreateInASCInput.checked;
+});
+
 appForm.addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const name = appNameInput.value.trim();
@@ -665,7 +675,45 @@ appForm.addEventListener("submit", async (ev) => {
     appFormStatus.textContent = "请填写应用名和 Bundle ID";
     return;
   }
-  appFormStatus.textContent = "创建中...";
+
+  // Optional ASC creation: do this FIRST so a failure doesn't leave
+  // a dangling local iosdist row. On success we get back the ASC app
+  // id and stash it on the local app via update later (Phase 1 of
+  // this PR doesn't auto-link asc_app_id; user can use existing
+  // ASC binding UI on the app row to do it). Wiring auto-link is a
+  // ~5 minute follow-up — keeping it manual for v1 to avoid scope.
+  let ascAppCreated: { id: string; bundle_id: string } | null = null;
+  if (appCreateInASCInput.checked) {
+    appFormStatus.textContent = "ASC 创建中：bundle id...";
+    const ascName = (appASCNameInput.value.trim() || name).slice(0, 30);
+    const sku = appASCSkuInput.value.trim() || bundleID;
+    try {
+      const { response: r1, data: d1 } = await createASCBundleID({
+        identifier: bundleID,
+        name: ascName,
+        platform: "IOS",
+      });
+      if (!r1.ok || !d1.bundle_id) {
+        throw new Error("create bundle id");
+      }
+      appFormStatus.textContent = d1.reused ? "ASC bundle id 已存在，复用…" : "ASC bundle id ok，建 app...";
+      const { response: r2, data: d2 } = await createASCApp({
+        bundle_id_resource_id: d1.bundle_id.id,
+        name: ascName,
+        sku,
+        primary_locale: "en-US",
+      });
+      if (!r2.ok || !d2.app) {
+        throw new Error("create asc app");
+      }
+      ascAppCreated = d2.app;
+    } catch (err) {
+      appFormStatus.textContent = "ASC 创建失败（本地 app 未创建）：" + describeError(err);
+      return;
+    }
+  }
+
+  appFormStatus.textContent = "本地 app 创建中...";
   try {
     const { response, data } = await createIOSApp({
       name,
@@ -676,11 +724,14 @@ appForm.addEventListener("submit", async (ev) => {
     apps = [data.app, ...apps];
     activeAppID = data.app.id;
     activeVersions = [];
+    if (ascAppCreated) {
+      appFormStatus.textContent = `已创建本地 app + ASC app=${ascAppCreated.id}（在 app 详情页绑定 ASC 完成关联）`;
+    }
     closeAppModal();
     renderAppList();
     renderAppDetail();
   } catch (err) {
-    appFormStatus.textContent = "创建失败：" + describeError(err);
+    appFormStatus.textContent = "本地创建失败：" + describeError(err) + (ascAppCreated ? "（ASC app 已建，但本地未关联——手动绑定）" : "");
   }
 });
 

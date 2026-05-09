@@ -205,6 +205,37 @@ func (s *Server) GuestMiddleware() gin.HandlerFunc {
 	}
 }
 
+// PolarAgentAuthMiddleware authenticates polar-agent CLI HTTP
+// callers via an `Authorization: Bearer <agent_token>` header.
+// Distinct from AgentAuthMiddleware (which auths Latch service-node
+// agents). On success, sets agent_token_id + agent_user_id on the
+// gin context so handlers can derive ownership / workspace scope.
+func (s *Server) PolarAgentAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth := c.GetHeader("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
+			c.Abort()
+			return
+		}
+		raw := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+		tokenID, userID, err := s.resolveAgentToken(raw)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
+			c.Abort()
+			return
+		}
+		if tokenID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "agent token invalid or revoked"})
+			c.Abort()
+			return
+		}
+		c.Set("agent_token_id", tokenID)
+		c.Set("agent_user_id", userID)
+		c.Next()
+	}
+}
+
 func (s *Server) AgentAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := extractBearerToken(c)

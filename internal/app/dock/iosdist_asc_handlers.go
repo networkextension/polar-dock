@@ -205,6 +205,104 @@ func (s *Server) handleIOSASCBetaGroupList(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"beta_groups": groups})
 }
 
+// ---- Bundle ID + App creation (Phase 3 of iOS pipeline closed loop) -----
+
+type iosASCCreateBundleIDRequest struct {
+	Identifier string `json:"identifier"`
+	Name       string `json:"name"`
+	Platform   string `json:"platform"` // IOS / MAC_OS / UNIVERSAL — defaults to IOS
+}
+
+// handleIOSASCBundleIDCreate registers a new bundle id with ASC.
+// Idempotent at this layer: if the identifier already exists,
+// re-fetches it and returns the existing record (no 409 to UI).
+func (s *Server) handleIOSASCBundleIDCreate(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	cfg, _ := s.requireASCConfig(c, workspaceID)
+	if cfg == nil {
+		return
+	}
+	var req iosASCCreateBundleIDRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input"})
+		return
+	}
+	identifier := strings.TrimSpace(req.Identifier)
+	name := strings.TrimSpace(req.Name)
+	platform := strings.TrimSpace(req.Platform)
+	if identifier == "" || name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "identifier and name are required"})
+		return
+	}
+	if platform == "" {
+		platform = "IOS"
+	}
+	// Idempotency probe.
+	existing, err := s.ascListBundleIDs(c.Request.Context(), cfg, identifier)
+	if err != nil {
+		s.respondASCError(c, err)
+		return
+	}
+	for _, b := range existing {
+		if b.Identifier == identifier {
+			c.JSON(http.StatusOK, gin.H{"bundle_id": b, "reused": true})
+			return
+		}
+	}
+	created, err := s.ascCreateBundleID(c.Request.Context(), cfg, identifier, name, platform)
+	if err != nil {
+		s.respondASCError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"bundle_id": created, "reused": false})
+}
+
+type iosASCCreateAppRequest struct {
+	BundleIDResourceID string `json:"bundle_id_resource_id"`
+	Name               string `json:"name"`
+	SKU                string `json:"sku"`
+	PrimaryLocale      string `json:"primary_locale"`
+}
+
+// handleIOSASCAppCreate creates an ASC app record. Idempotent at
+// this layer: if an app with the same bundle id already exists,
+// returns it without trying to recreate (Apple would 409).
+func (s *Server) handleIOSASCAppCreate(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	cfg, _ := s.requireASCConfig(c, workspaceID)
+	if cfg == nil {
+		return
+	}
+	var req iosASCCreateAppRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input"})
+		return
+	}
+	bidResource := strings.TrimSpace(req.BundleIDResourceID)
+	name := strings.TrimSpace(req.Name)
+	sku := strings.TrimSpace(req.SKU)
+	primary := strings.TrimSpace(req.PrimaryLocale)
+	if bidResource == "" || name == "" || sku == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bundle_id_resource_id, name, sku are required"})
+		return
+	}
+	if primary == "" {
+		primary = "en-US"
+	}
+	created, err := s.ascCreateApp(c.Request.Context(), cfg, bidResource, name, sku, primary)
+	if err != nil {
+		s.respondASCError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"app": created})
+}
+
 // ---- Per-app binding + invite -------------------------------------------
 
 type iosASCBindingRequest struct {

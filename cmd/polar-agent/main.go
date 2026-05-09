@@ -42,6 +42,8 @@ func main() {
 		os.Exit(runStatus(args))
 	case "attach":
 		os.Exit(runAttach(args))
+	case "submit-build":
+		os.Exit(runSubmitBuild(args))
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -61,6 +63,8 @@ Usage:
   polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=kimi  # passthrough to local kimi-cli
   polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=claude
   polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=codex
+  polar-agent submit-build <ipa> [--project=<id>] [--sign-method=auto|zsign|codesign]
+                                                  # iOS: sign + upload IPA to TestFlight
 
 Tool whitelist (executed in workdir, default tool-call mode):
   read_file   — args: { path }

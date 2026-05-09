@@ -323,6 +323,21 @@
           <label class="form-label">说明 (可选)
             <textarea id="iosAppDescInput" class="input textarea" rows="3"></textarea>
           </label>
+          <label class="form-checkbox" for="iosAppCreateInASC">
+            <input id="iosAppCreateInASC" type="checkbox" />
+            <span>同时在 App Store Connect 上创建（需要先配 ASC .p8）</span>
+          </label>
+          <div id="iosAppASCFields" hidden style="display:flex; flex-direction:column; gap:8px; padding:8px; border:1px dashed var(--border,#ccc); border-radius:4px; background:#fafafa;">
+            <label class="form-label" style="font-size:12px;">ASC 显示名（默认同应用名）
+              <input id="iosAppASCName" class="input" type="text" placeholder="留空 = 同上" />
+            </label>
+            <label class="form-label" style="font-size:12px;">ASC SKU（默认同 Bundle ID）
+              <input id="iosAppASCSku" class="input" type="text" placeholder="留空 = 同 Bundle ID" />
+            </label>
+            <div style="font-size:11px; color:var(--text-muted,#888);">
+              ⓘ 如果 Bundle ID 已经在 ASC 注册过，会复用；否则先 ascCreateBundleID 再 ascCreateApp。失败会回滚（DB 不写本地 app 行）。
+            </div>
+          </div>
           <div id="iosAppFormStatus" class="status-text"></div>
           <div class="modal-actions">
             <button class="btn-secondary" type="submit">创建</button>

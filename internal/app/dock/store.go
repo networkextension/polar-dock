@@ -1088,6 +1088,50 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS current_sprint INT NOT NULL DEFAUL
 -- relies on the host having git auth configured (SSH key or HTTPS
 -- credential helper); per-project deploy keys land in Phase 2.
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS git_remote_url TEXT NOT NULL DEFAULT '';
+-- iosdist_app_id: optional binding to an iosdist_apps row in the
+-- same workspace. When set, the iOS build pipeline kicks in:
+-- pickup body tells coder the bundle id + xcodegen flow; agent's
+-- submit-build subcommand uses this app's cert/profile/ASC config
+-- to sign + upload to TestFlight. NULL = project isn't iOS-tied
+-- (web project, CLI tool, etc.).
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS iosdist_app_id BIGINT REFERENCES iosdist_apps(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_projects_iosdist_app ON projects(iosdist_app_id) WHERE iosdist_app_id IS NOT NULL;
+
+-- iosdist_agent_builds: tracks the lifecycle of an agent-driven
+-- build (coder produces unsigned IPA → polar-agent uploads to dock
+-- → fetches credentials → signs locally → uploads to TestFlight).
+-- Distinct from iosdist_sign_tasks which is the server-side zsign
+-- worker (still used for manual re-signs on dock-on-Mac deploys).
+--
+-- status state machine:
+--   init       — row created, awaiting agent IPA upload
+--   uploaded   — agent finished PUT to source_ipa_url
+--   signing    — agent fetched creds + working locally
+--   uploading  — sign succeeded, agent calling altool
+--   succeeded  — TF accepted; asc_build_id non-empty
+--   failed     — terminal failure; error_message + log_text capped
+CREATE TABLE IF NOT EXISTS iosdist_agent_builds (
+	id BIGSERIAL PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+	iosdist_app_id BIGINT REFERENCES iosdist_apps(id) ON DELETE SET NULL,
+	agent_user_id TEXT,
+	status TEXT NOT NULL DEFAULT 'init',
+	sign_method TEXT NOT NULL DEFAULT '',
+	source_filename TEXT NOT NULL DEFAULT '',
+	source_size BIGINT NOT NULL DEFAULT 0,
+	source_ipa_url TEXT NOT NULL DEFAULT '',
+	signed_ipa_url TEXT NOT NULL DEFAULT '',
+	asc_build_id TEXT NOT NULL DEFAULT '',
+	error_message TEXT NOT NULL DEFAULT '',
+	log_text TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_iosdist_agent_builds_workspace ON iosdist_agent_builds(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_iosdist_agent_builds_project ON iosdist_agent_builds(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_iosdist_agent_builds_app ON iosdist_agent_builds(iosdist_app_id, updated_at DESC);
 
 -- attachments: workspace-scoped file uploads with content-addressed
 -- storage. Backs posts + chat_messages today via junction tables;
