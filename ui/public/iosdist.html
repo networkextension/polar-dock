@@ -103,7 +103,7 @@
                     <div id="iosAppIconPlaceholder" style="width:72px; height:72px; border-radius:16px; background:linear-gradient(135deg,#e9e9ef,#cfd0d6); display:flex; align-items:center; justify-content:center; font-size:28px; color:#666;">📱</div>
                     <img id="iosAppIcon" alt="" style="width:72px; height:72px; border-radius:16px; object-fit:cover; display:none;" />
                     <input id="iosAppIconFile" type="file" accept="image/*" hidden />
-                    <button id="iosAppIconChangeBtn" type="button" style="position:absolute; right:-6px; bottom:-6px; width:24px; height:24px; border-radius:50%; border:1px solid var(--border,#ccc); background:#fff; cursor:pointer;" title="更换图标">✎</button>
+                    <button id="iosAppIconChangeBtn" type="button" style="position:absolute; right:-6px; bottom:-6px; width:24px; height:24px; border-radius:50%; border:1px solid var(--border,#ccc); background:var(--card,#fff); color:var(--text); cursor:pointer;" title="更换图标">✎</button>
                   </div>
                   <div style="flex:1; min-width:0;">
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -327,7 +327,7 @@
             <input id="iosAppCreateInASC" type="checkbox" />
             <span>同时在 App Store Connect 上创建（需要先配 ASC .p8）</span>
           </label>
-          <div id="iosAppASCFields" hidden style="display:flex; flex-direction:column; gap:8px; padding:8px; border:1px dashed var(--border,#ccc); border-radius:4px; background:#fafafa;">
+          <div id="iosAppASCFields" hidden style="display:flex; flex-direction:column; gap:8px; padding:8px; border:1px dashed var(--border,#ccc); border-radius:4px; background:var(--surface,#fafafa);">
             <label class="form-label" style="font-size:12px;">ASC 显示名（默认同应用名）
               <input id="iosAppASCName" class="input" type="text" placeholder="留空 = 同上" />
             </label>

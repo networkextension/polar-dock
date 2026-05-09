@@ -1,8 +1,8 @@
 {
   "name": "gin-auth-ui",
   "version": "0.1.0",
-  "builtAt": "2026-05-09T11:33:09.845Z",
-  "buildHash": "moy9m89v",
+  "builtAt": "2026-05-09T12:05:10.497Z",
+  "buildHash": "moyare9d",
   "output": "dist",
   "deployHint": "Copy the contents of ui/dist into your web server ui directory."
 }

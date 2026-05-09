@@ -443,7 +443,7 @@ function renderTasks(): void {
             ? `<button type="button" class="btn-inline btn-secondary" data-task-cancel="${escapeHTML(t.id)}" title="标记为阻塞 / 取消" style="font-size:11px; padding:3px 6px;">✗</button>`
             : "";
           return `
-            <div style="padding:10px; background:#fff; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:10px; align-items:flex-start;">
+            <div style="padding:10px; background:var(--card,#fff); border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:10px; align-items:flex-start;">
               <div style="flex:1; min-width:0;">
                 <div style="font-weight:500; font-size:14px;">${escapeHTML(t.title)}</div>
                 <div style="font-size:12px; color:var(--text-muted,#888); margin-top:3px;">${escapeHTML(t.description)}</div>
@@ -1434,7 +1434,7 @@ function renderCoderRows(): void {
   agentTokenCoderRowsEl.innerHTML = CODER_ROWS.map((r) => {
     const checked = r.name === "kimi" ? "checked" : "";
     return `
-      <div data-coder-row="${r.name}" style="display:flex; flex-direction:column; gap:6px; padding:6px; background:#fafafa; border-radius:4px;">
+      <div data-coder-row="${r.name}" style="display:flex; flex-direction:column; gap:6px; padding:6px; background:var(--surface,#fafafa); border-radius:4px;">
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <label style="display:flex; gap:6px; align-items:center; cursor:pointer; min-width:130px;">
             <input type="checkbox" data-coder-toggle="${r.name}" ${checked} style="margin:0; padding:0; width:auto; flex-shrink:0;" />

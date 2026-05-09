@@ -60,7 +60,7 @@ function renderList(): void {
         : `<span style="color:var(--text-muted,#888); font-size:11px;">默认</span>`;
       const updated = p.updated_at ? new Date(p.updated_at).toLocaleString() : "";
       return `
-        <div style="border:1px solid var(--border,#ececf0); border-radius:6px; padding:10px; background:#fff;">
+        <div style="border:1px solid var(--border,#ececf0); border-radius:6px; padding:10px; background:var(--card,#fff);">
           <div style="display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; margin-bottom:6px;">
             <strong style="font-size:14px;">${escapeHTML(p.name || p.slug)}</strong>
             <code style="font-size:11px; color:var(--text-muted,#888);">${escapeHTML(p.slug)}</code>
