@@ -73,7 +73,7 @@ func (s *Server) handlePostAssistWithBot(c *gin.Context) {
 	}
 
 	var req struct {
-		BotID       int64  `json:"bot_id" binding:"required"`
+		BotID       int64  `json:"bot_id"`
 		LLMConfigID int64  `json:"llm_config_id"`
 		Content     string `json:"content"`
 		Topic       string `json:"topic"`
@@ -81,10 +81,6 @@ func (s *Server) handlePostAssistWithBot(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
-		return
-	}
-	if req.BotID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 Bot"})
 		return
 	}
 	draft := strings.TrimSpace(req.Content)
@@ -99,7 +95,11 @@ func (s *Server) handlePostAssistWithBot(c *gin.Context) {
 		writeAssistError(c, err)
 		return
 	}
-	runtimeConfig.SystemPrompt = s.buildPostAssistSystemPrompt(bot.SystemPrompt, req.Instruction)
+	botPersona := ""
+	if bot != nil {
+		botPersona = bot.SystemPrompt
+	}
+	runtimeConfig.SystemPrompt = s.buildPostAssistSystemPrompt(botPersona, req.Instruction)
 
 	promptLines := []string{"请基于以下信息写一条帖子正文："}
 	if topic != "" {
@@ -135,18 +135,18 @@ func (s *Server) handlePostAssistWithBot(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"message": "草稿已生成",
 		"content": refined,
-		"bot": gin.H{
-			"id":   bot.ID,
-			"name": bot.Name,
-		},
 		"llm": gin.H{
 			"config_id": llmConfig.ID,
 			"model":     llmConfig.Model,
 		},
-	})
+	}
+	if bot != nil {
+		resp["bot"] = gin.H{"id": bot.ID, "name": bot.Name}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // handleReplyAssistWithBot drafts a reply to the given post using an LLM bot.
@@ -178,7 +178,7 @@ func (s *Server) handleReplyAssistWithBot(c *gin.Context) {
 	}
 
 	var req struct {
-		BotID       int64  `json:"bot_id" binding:"required"`
+		BotID       int64  `json:"bot_id"`
 		LLMConfigID int64  `json:"llm_config_id"`
 		Content     string `json:"content"`
 		Instruction string `json:"instruction"`
@@ -187,17 +187,17 @@ func (s *Server) handleReplyAssistWithBot(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
 		return
 	}
-	if req.BotID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 Bot"})
-		return
-	}
 
 	runtimeConfig, bot, llmConfig, err := s.resolveAssistBot(userIDStr, c.GetString("workspace_id"), req.BotID, req.LLMConfigID)
 	if err != nil {
 		writeAssistError(c, err)
 		return
 	}
-	runtimeConfig.SystemPrompt = s.buildReplyAssistSystemPrompt(bot.SystemPrompt, req.Instruction)
+	botPersona := ""
+	if bot != nil {
+		botPersona = bot.SystemPrompt
+	}
+	runtimeConfig.SystemPrompt = s.buildReplyAssistSystemPrompt(botPersona, req.Instruction)
 
 	userPrompt := strings.Join([]string{
 		"原帖作者：@" + post.Username,
@@ -231,19 +231,19 @@ func (s *Server) handleReplyAssistWithBot(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"message": "评论草稿已生成",
 		"content": refined,
 		"post_id": post.ID,
-		"bot": gin.H{
-			"id":   bot.ID,
-			"name": bot.Name,
-		},
 		"llm": gin.H{
 			"config_id": llmConfig.ID,
 			"model":     llmConfig.Model,
 		},
-	})
+	}
+	if bot != nil {
+		resp["bot"] = gin.H{"id": bot.ID, "name": bot.Name}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 type assistError struct {
@@ -253,40 +253,73 @@ type assistError struct {
 
 func (e *assistError) Error() string { return e.message }
 
-// resolveAssistBot loads the bot and its LLM config. Both bot
-// ownership and LLM config visibility are now workspace-scoped post
-// the misc-migrate sweep. ownerUserID stays in the signature for
-// audit logging callers may want; the lookup itself uses workspaceID.
+// resolveAssistBot loads the optional bot persona + the LLM config
+// to call. Resolution order, in priority:
+//
+//   1. llmConfigID > 0     → call that LLM (whether or not a bot is
+//                            also picked; bot only contributes the
+//                            persona prefix)
+//   2. botID > 0 + bot has LLM → use bot's bound LLM
+//   3. workspace default LLM (teams.default_llm_config_id, falling
+//      back to first usable workspace LLM)
+//
+// botID == 0 is allowed — assist features called without a bot
+// pick fall straight to the workspace default. This is the
+// post-classic-bot-deprecation path: assist works even when the
+// operator hasn't manually built a classic bot.
 func (s *Server) resolveAssistBot(ownerUserID, workspaceID string, botID, llmConfigID int64) (aiRuntimeConfig, *BotUser, *LLMConfig, error) {
 	_ = ownerUserID
-	bot, err := s.getBotUserForOwner(workspaceID, botID)
-	if err != nil {
-		return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
-	}
-	if bot == nil {
-		return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusNotFound, "Bot 不存在"}
+
+	var bot *BotUser
+	if botID > 0 {
+		var err error
+		bot, err = s.getBotUserForOwner(workspaceID, botID)
+		if err != nil {
+			return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
+		}
+		if bot == nil {
+			return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusNotFound, "Bot 不存在"}
+		}
 	}
 
 	var (
 		llmConfig *LLMConfig
 		apiKey    string
+		err       error
 	)
-	if llmConfigID > 0 {
+	switch {
+	case llmConfigID > 0:
 		llmConfig, apiKey, err = s.getAvailableLLMConfigWithAPIKey(workspaceID, llmConfigID)
 		if err != nil {
-			return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
+			return aiRuntimeConfig{}, bot, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
 		}
 		if llmConfig == nil {
-			return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusBadRequest, "所选 LLM 配置不可用"}
+			return aiRuntimeConfig{}, bot, nil, &assistError{http.StatusBadRequest, "所选 LLM 配置不可用"}
 		}
-	} else {
+	case bot != nil && bot.LLMConfigID > 0:
 		llmConfig, apiKey, err = s.getLLMConfigForBot(bot.BotUserID)
 		if err != nil {
-			return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
+			return aiRuntimeConfig{}, bot, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
+		}
+	}
+
+	// Workspace default fallback: kicks in when bot has no LLM
+	// (auto-registered passthrough, classic without binding) or no
+	// bot was supplied at all.
+	if llmConfig == nil || strings.TrimSpace(apiKey) == "" {
+		fallbackID, ferr := s.getWorkspaceDefaultLLMConfigID(workspaceID)
+		if ferr != nil {
+			return aiRuntimeConfig{}, bot, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
+		}
+		if fallbackID > 0 {
+			llmConfig, apiKey, err = s.getAvailableLLMConfigWithAPIKey(workspaceID, fallbackID)
+			if err != nil {
+				return aiRuntimeConfig{}, bot, nil, &assistError{http.StatusInternalServerError, "服务器错误"}
+			}
 		}
 	}
 	if llmConfig == nil || strings.TrimSpace(apiKey) == "" {
-		return aiRuntimeConfig{}, nil, nil, &assistError{http.StatusBadRequest, "这个 Bot 的模型配置不可用，请先检查 API Key 和模型配置"}
+		return aiRuntimeConfig{}, bot, nil, &assistError{http.StatusBadRequest, "工作区没有可用的 LLM 配置（设个默认 LLM 或在 bot 上绑一个）"}
 	}
 
 	return aiRuntimeConfig{

@@ -57,7 +57,7 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 	}
 
 	var req struct {
-		BotID       int64  `json:"bot_id" binding:"required"`
+		BotID       int64  `json:"bot_id"`
 		LLMConfigID int64  `json:"llm_config_id"`
 		Title       string `json:"title"`
 		Content     string `json:"content" binding:"required"`
@@ -68,59 +68,30 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 		return
 	}
 
-	if req.BotID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 Bot"})
-		return
-	}
 	sourceContent := strings.TrimSpace(req.Content)
 	if sourceContent == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "内容不能为空"})
 		return
 	}
 
-	bot, err := s.getBotUserForOwner(c.GetString("workspace_id"), req.BotID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
-		return
-	}
-	if bot == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Bot 不存在"})
+	// Bot is now optional. resolveAssistBot returns runtimeConfig
+	// from (in priority): explicit llm_config_id, bot's bound LLM,
+	// or workspace default — so assist still works without a bot.
+	runtimeConfig, bot, llmConfig, rerr := s.resolveAssistBot(userIDStr, c.GetString("workspace_id"), req.BotID, req.LLMConfigID)
+	if rerr != nil {
+		if ae, ok := rerr.(*assistError); ok {
+			c.JSON(ae.status, gin.H{"error": ae.message})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		}
 		return
 	}
 
-	var (
-		llmConfig *LLMConfig
-		apiKey    string
-	)
-	if req.LLMConfigID > 0 {
-		llmConfig, apiKey, err = s.getAvailableLLMConfigWithAPIKey(c.GetString("workspace_id"), req.LLMConfigID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
-			return
-		}
-		if llmConfig == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "所选 LLM 配置不可用"})
-			return
-		}
-	} else {
-		llmConfig, apiKey, err = s.getLLMConfigForBot(bot.BotUserID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
-			return
-		}
+	botPersona := ""
+	if bot != nil {
+		botPersona = bot.SystemPrompt
 	}
-	if llmConfig == nil || strings.TrimSpace(apiKey) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "这个 Bot 的模型配置不可用，请先检查 API Key 和模型配置"})
-		return
-	}
-
-	runtimeConfig := aiRuntimeConfig{
-		APIKey:       strings.TrimSpace(apiKey),
-		BaseURL:      strings.TrimSpace(llmConfig.BaseURL),
-		Model:        strings.TrimSpace(llmConfig.Model),
-		SystemPrompt: s.buildMarkdownAssistSystemPrompt(bot.SystemPrompt, req.Instruction),
-		ProxyURL:     strings.TrimSpace(llmConfig.ProxyURL),
-	}
+	runtimeConfig.SystemPrompt = s.buildMarkdownAssistSystemPrompt(botPersona, req.Instruction)
 
 	userPrompt := strings.TrimSpace(strings.Join([]string{
 		"请润色以下正文，保持核心内容不变：",
@@ -154,18 +125,18 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"message": "润色完成",
 		"content": refined,
-		"bot": gin.H{
-			"id":   bot.ID,
-			"name": bot.Name,
-		},
 		"llm": gin.H{
 			"config_id": llmConfig.ID,
 			"model":     llmConfig.Model,
 		},
-	})
+	}
+	if bot != nil {
+		resp["bot"] = gin.H{"id": bot.ID, "name": bot.Name}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (s *Server) handleMarkdownSubmit(c *gin.Context) {
