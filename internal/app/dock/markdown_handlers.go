@@ -344,7 +344,11 @@ func (s *Server) handleMarkdownUpdate(c *gin.Context) {
 	}
 	editorMode = normalizeEditorMode(editorMode)
 	summary, coverURL := extractMarkdownMeta(content)
-	if err := s.updateMarkdownEntry(userIDStr, entryID, req.Title, entry.FilePath, summary, coverURL, editorMode, req.IsPublic); err != nil {
+	visibility := MarkdownVisibilityPrivate
+	if req.IsPublic {
+		visibility = MarkdownVisibilityPublic
+	}
+	if err := s.updateMarkdownEntry(userIDStr, entryID, req.Title, entry.FilePath, summary, coverURL, editorMode, visibility, nil); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}

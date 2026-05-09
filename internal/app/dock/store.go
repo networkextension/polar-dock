@@ -146,15 +146,33 @@ var builtinBotPresets = []builtinBotPreset{
 	},
 }
 
+// Visibility constants for markdown_entries.visibility:
+//
+//   private    — owner-only access. Default for fresh entries.
+//   workspace  — accessible to any member of workspace_id. Acts like
+//                team-shared knowledge: visible across the team but
+//                not on the public web.
+//   public     — anyone (including unauthenticated visitors) can read
+//                via /api/public/markdown/:id and the browse list.
+const (
+	MarkdownVisibilityPrivate   = "private"
+	MarkdownVisibilityWorkspace = "workspace"
+	MarkdownVisibilityPublic    = "public"
+)
+
 type MarkdownEntry struct {
-	ID         int64     `json:"id"`
-	UserID     string    `json:"user_id"`
-	Username   string    `json:"username"`
-	UserIcon   string    `json:"user_icon"`
-	Title      string    `json:"title"`
-	Summary    string    `json:"summary"`
-	CoverURL   string    `json:"cover_url"`
-	FilePath   string    `json:"file_path"`
+	ID          int64     `json:"id"`
+	UserID      string    `json:"user_id"`
+	Username    string    `json:"username"`
+	UserIcon    string    `json:"user_icon"`
+	WorkspaceID *string   `json:"workspace_id,omitempty"`
+	Visibility  string    `json:"visibility"`
+	Title       string    `json:"title"`
+	Summary     string    `json:"summary"`
+	CoverURL    string    `json:"cover_url"`
+	FilePath    string    `json:"file_path"`
+	// IsPublic kept on the type for legacy clients reading
+	// `entry.is_public`; mirror of `Visibility == "public"`.
 	IsPublic   bool      `json:"is_public"`
 	EditorMode string    `json:"editor_mode"`
 	UploadedAt time.Time `json:"uploaded_at"`
@@ -800,6 +818,23 @@ ALTER TABLE markdown_entries
 	ADD COLUMN IF NOT EXISTS cover_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE markdown_entries
 	ADD COLUMN IF NOT EXISTS editor_mode TEXT NOT NULL DEFAULT 'markdown';
+
+-- Three-tier visibility (private / workspace / public). workspace_id
+-- is nullable: legacy entries before the migration are personal-only.
+-- visibility backfilled from is_public so the boolean stays a usable
+-- mirror until UI fully switches over.
+ALTER TABLE markdown_entries
+	ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id) ON DELETE SET NULL;
+ALTER TABLE markdown_entries
+	ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
+UPDATE markdown_entries
+	SET visibility = 'public'
+	WHERE is_public = TRUE AND visibility = 'private';
+CREATE INDEX IF NOT EXISTS idx_markdown_entries_workspace
+	ON markdown_entries(workspace_id, uploaded_at DESC)
+	WHERE workspace_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_markdown_entries_visibility
+	ON markdown_entries(visibility, uploaded_at DESC);
 
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
 	credential_id TEXT PRIMARY KEY,
@@ -3890,26 +3925,48 @@ func (s *Server) listPushableUserDevices(userID string) ([]UserDevice, error) {
 }
 
 func (s *Server) createMarkdownEntry(userID, title, filePath string, isPublic bool, uploadedAt time.Time) error {
+	visibility := MarkdownVisibilityPrivate
+	if isPublic {
+		visibility = MarkdownVisibilityPublic
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO markdown_entries (user_id, title, file_path, is_public, uploaded_at) VALUES ($1, $2, $3, $4, $5)`,
+		`INSERT INTO markdown_entries (user_id, title, file_path, is_public, visibility, uploaded_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		userID,
 		title,
 		filePath,
 		isPublic,
+		visibility,
 		uploadedAt,
 	)
 	return err
 }
 
-func (s *Server) createMarkdownEntryReturningID(userID, title, filePath, summary, coverURL, editorMode string, isPublic bool, uploadedAt time.Time) (int64, error) {
+// createMarkdownEntryReturningID inserts a new markdown row with the
+// full three-tier visibility model. Pass workspaceID as nil for
+// private/public entries; only "workspace" visibility uses the FK.
+// is_public stays as a mirror of (visibility == "public") so legacy
+// readers still work.
+func (s *Server) createMarkdownEntryReturningID(userID, title, filePath, summary, coverURL, editorMode, visibility string, workspaceID *string, uploadedAt time.Time) (int64, error) {
+	if visibility == "" {
+		visibility = MarkdownVisibilityPrivate
+	}
+	isPublic := visibility == MarkdownVisibilityPublic
+	if visibility != MarkdownVisibilityWorkspace {
+		// Sanity: never store a workspace_id on a private/public
+		// entry — keeps querying clean (workspace tier filter is
+		// `WHERE visibility='workspace' AND workspace_id=$1`).
+		workspaceID = nil
+	}
 	var id int64
 	err := s.db.QueryRow(
-		`INSERT INTO markdown_entries (user_id, title, file_path, is_public, summary, cover_url, editor_mode, uploaded_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+		`INSERT INTO markdown_entries (user_id, title, file_path, is_public, visibility, workspace_id, summary, cover_url, editor_mode, uploaded_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
 		userID,
 		title,
 		filePath,
 		isPublic,
+		visibility,
+		workspaceID,
 		summary,
 		coverURL,
 		editorMode,
@@ -3923,19 +3980,25 @@ func (s *Server) createMarkdownEntryReturningID(userID, title, filePath, summary
 
 func (s *Server) getMarkdownEntryByID(id int64) (*MarkdownEntry, error) {
 	var entry MarkdownEntry
+	var workspaceID sql.NullString
 	err := s.db.QueryRow(
 		`SELECT m.id, m.user_id, COALESCE(u.username, ''), COALESCE(u.icon_url, ''),
-		        m.title, m.summary, m.cover_url, m.file_path, m.is_public, m.editor_mode, m.uploaded_at
+		        m.title, m.summary, m.cover_url, m.file_path, m.is_public, m.visibility,
+		        m.workspace_id, m.editor_mode, m.uploaded_at
 		   FROM markdown_entries m
 		   LEFT JOIN users u ON u.id = m.user_id
 		  WHERE m.id = $1`,
 		id,
-	).Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.UserIcon, &entry.Title, &entry.Summary, &entry.CoverURL, &entry.FilePath, &entry.IsPublic, &entry.EditorMode, &entry.UploadedAt)
+	).Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.UserIcon, &entry.Title, &entry.Summary, &entry.CoverURL, &entry.FilePath, &entry.IsPublic, &entry.Visibility, &workspaceID, &entry.EditorMode, &entry.UploadedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
+	}
+	if workspaceID.Valid {
+		v := workspaceID.String
+		entry.WorkspaceID = &v
 	}
 	return &entry, nil
 }
@@ -4439,7 +4502,8 @@ func (s *Server) listMarkdownEntries(userID string, limit, offset int) ([]Markdo
 		offset = 0
 	}
 	rows, err := s.db.Query(
-		`SELECT m.id, m.user_id, u.username, u.icon_url, m.title, m.summary, m.cover_url, m.file_path, m.is_public, m.editor_mode, m.uploaded_at
+		`SELECT m.id, m.user_id, u.username, u.icon_url, m.title, m.summary, m.cover_url, m.file_path,
+		        m.is_public, m.visibility, m.workspace_id, m.editor_mode, m.uploaded_at
 		   FROM markdown_entries m
 		   JOIN users u ON u.id = m.user_id
 		  WHERE m.user_id = $1
@@ -4457,8 +4521,65 @@ func (s *Server) listMarkdownEntries(userID string, limit, offset int) ([]Markdo
 	entries := make([]MarkdownEntry, 0, limit+1)
 	for rows.Next() {
 		var entry MarkdownEntry
-		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.UserIcon, &entry.Title, &entry.Summary, &entry.CoverURL, &entry.FilePath, &entry.IsPublic, &entry.EditorMode, &entry.UploadedAt); err != nil {
+		var workspaceID sql.NullString
+		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.UserIcon, &entry.Title, &entry.Summary, &entry.CoverURL, &entry.FilePath, &entry.IsPublic, &entry.Visibility, &workspaceID, &entry.EditorMode, &entry.UploadedAt); err != nil {
 			return nil, false, err
+		}
+		if workspaceID.Valid {
+			v := workspaceID.String
+			entry.WorkspaceID = &v
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := false
+	if len(entries) > limit {
+		hasMore = true
+		entries = entries[:limit]
+	}
+	return entries, hasMore, nil
+}
+
+// listWorkspaceMarkdownEntries returns entries with visibility='workspace'
+// AND workspace_id matching the supplied ID. Caller must verify the
+// viewer is a member of that workspace before exposing the result.
+func (s *Server) listWorkspaceMarkdownEntries(workspaceID string, limit, offset int) ([]MarkdownEntry, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.db.Query(
+		`SELECT m.id, m.user_id, u.username, u.icon_url, m.title, m.summary, m.cover_url, m.file_path,
+		        m.is_public, m.visibility, m.workspace_id, m.editor_mode, m.uploaded_at
+		   FROM markdown_entries m
+		   JOIN users u ON u.id = m.user_id
+		  WHERE m.workspace_id = $1 AND m.visibility = $2
+		  ORDER BY m.uploaded_at DESC
+		  LIMIT $3 OFFSET $4`,
+		workspaceID,
+		MarkdownVisibilityWorkspace,
+		limit+1,
+		offset,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+
+	entries := make([]MarkdownEntry, 0, limit+1)
+	for rows.Next() {
+		var entry MarkdownEntry
+		var ws sql.NullString
+		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.UserIcon, &entry.Title, &entry.Summary, &entry.CoverURL, &entry.FilePath, &entry.IsPublic, &entry.Visibility, &ws, &entry.EditorMode, &entry.UploadedAt); err != nil {
+			return nil, false, err
+		}
+		if ws.Valid {
+			v := ws.String
+			entry.WorkspaceID = &v
 		}
 		entries = append(entries, entry)
 	}
@@ -4873,54 +4994,99 @@ func (s *Server) bindInviteCodeToUser(code, pendingMarker, userID string) error 
 	return err
 }
 
+// getMarkdownEntryForUser returns the entry if any of:
+//   - viewer is the owner
+//   - visibility = public (anyone)
+//   - visibility = workspace AND viewer is a member of workspace_id
+//
+// Permission check baked into the SQL so callers can't accidentally
+// leak workspace entries by forgetting the membership join.
 func (s *Server) getMarkdownEntryForUser(viewerUserID string, id int64) (*MarkdownEntry, bool, error) {
 	var entry MarkdownEntry
+	var workspaceID sql.NullString
 	err := s.db.QueryRow(
 		`SELECT m.id, m.user_id, COALESCE(u.username, ''), COALESCE(u.icon_url, ''),
-		        m.title, m.summary, m.cover_url, m.file_path, m.is_public, m.editor_mode, m.uploaded_at
+		        m.title, m.summary, m.cover_url, m.file_path, m.is_public, m.visibility,
+		        m.workspace_id, m.editor_mode, m.uploaded_at
 		   FROM markdown_entries m
 		   LEFT JOIN users u ON u.id = m.user_id
-		  WHERE m.id = $1 AND (m.user_id = $2 OR m.is_public = TRUE)`,
+		  WHERE m.id = $1
+		    AND (
+		      m.user_id = $2
+		      OR m.visibility = 'public' OR m.is_public = TRUE
+		      OR (
+		        m.visibility = 'workspace'
+		        AND EXISTS (
+		          SELECT 1 FROM team_members tm
+		           WHERE tm.team_id = m.workspace_id AND tm.user_id = $2
+		        )
+		      )
+		    )`,
 		id,
 		viewerUserID,
-	).Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.UserIcon, &entry.Title, &entry.Summary, &entry.CoverURL, &entry.FilePath, &entry.IsPublic, &entry.EditorMode, &entry.UploadedAt)
+	).Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.UserIcon, &entry.Title, &entry.Summary, &entry.CoverURL, &entry.FilePath, &entry.IsPublic, &entry.Visibility, &workspaceID, &entry.EditorMode, &entry.UploadedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, err
 	}
+	if workspaceID.Valid {
+		v := workspaceID.String
+		entry.WorkspaceID = &v
+	}
 	return &entry, entry.UserID == viewerUserID, nil
 }
 
 func (s *Server) getOwnedMarkdownEntry(userID string, id int64) (*MarkdownEntry, error) {
 	var entry MarkdownEntry
+	var workspaceID sql.NullString
 	err := s.db.QueryRow(
 		`SELECT m.id, m.user_id, COALESCE(u.username, ''), COALESCE(u.icon_url, ''),
-		        m.title, m.summary, m.cover_url, m.file_path, m.is_public, m.editor_mode, m.uploaded_at
+		        m.title, m.summary, m.cover_url, m.file_path, m.is_public, m.visibility,
+		        m.workspace_id, m.editor_mode, m.uploaded_at
 		   FROM markdown_entries m
 		   LEFT JOIN users u ON u.id = m.user_id
 		  WHERE m.user_id = $1 AND m.id = $2`,
 		userID,
 		id,
-	).Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.UserIcon, &entry.Title, &entry.Summary, &entry.CoverURL, &entry.FilePath, &entry.IsPublic, &entry.EditorMode, &entry.UploadedAt)
+	).Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.UserIcon, &entry.Title, &entry.Summary, &entry.CoverURL, &entry.FilePath, &entry.IsPublic, &entry.Visibility, &workspaceID, &entry.EditorMode, &entry.UploadedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
+	if workspaceID.Valid {
+		v := workspaceID.String
+		entry.WorkspaceID = &v
+	}
 	return &entry, nil
 }
 
-func (s *Server) updateMarkdownEntry(userID string, id int64, title, filePath, summary, coverURL, editorMode string, isPublic bool) error {
+// updateMarkdownEntry writes the editable fields. visibility is the
+// new three-tier value; workspaceID is required only for workspace
+// tier (nil otherwise — the function nulls the FK on private/public
+// to keep the index clean). is_public stays mirrored to
+// visibility==public.
+func (s *Server) updateMarkdownEntry(userID string, id int64, title, filePath, summary, coverURL, editorMode, visibility string, workspaceID *string) error {
+	if visibility == "" {
+		visibility = MarkdownVisibilityPrivate
+	}
+	isPublic := visibility == MarkdownVisibilityPublic
+	if visibility != MarkdownVisibilityWorkspace {
+		workspaceID = nil
+	}
 	_, err := s.db.Exec(
 		`UPDATE markdown_entries
-		    SET title = $1, file_path = $2, is_public = $3, summary = $4, cover_url = $5, editor_mode = $6
-		  WHERE user_id = $7 AND id = $8`,
+		    SET title = $1, file_path = $2, is_public = $3, visibility = $4, workspace_id = $5,
+		        summary = $6, cover_url = $7, editor_mode = $8
+		  WHERE user_id = $9 AND id = $10`,
 		title,
 		filePath,
 		isPublic,
+		visibility,
+		workspaceID,
 		summary,
 		coverURL,
 		editorMode,

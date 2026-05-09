@@ -29,7 +29,11 @@ func (s *Server) saveMarkdownDocument(userID, title, content, editorMode string,
 
 	mode := normalizeEditorMode(editorMode)
 	summary, coverURL := extractMarkdownMeta(content)
-	entryID, err := s.createMarkdownEntryReturningID(userID, title, path, summary, coverURL, mode, isPublic, now)
+	visibility := MarkdownVisibilityPrivate
+	if isPublic {
+		visibility = MarkdownVisibilityPublic
+	}
+	entryID, err := s.createMarkdownEntryReturningID(userID, title, path, summary, coverURL, mode, visibility, nil, now)
 	if err != nil {
 		_ = os.Remove(path)
 		return nil, "", err
