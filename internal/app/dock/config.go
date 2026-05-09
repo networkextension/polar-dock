@@ -100,4 +100,11 @@ type Config struct {
 	// in plaintext and flags it on the API response so the operator
 	// knows to set the key before going to production.
 	IOSDistResourceKey string
+
+	// MetricsToken gates GET /metrics. When unset the endpoint returns
+	// 404 (fail-closed); when set, the request must carry
+	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's
+	// scrape job with the same value via `bearer_token`. See
+	// doc/grafana-integration.md.
+	MetricsToken string
 }
