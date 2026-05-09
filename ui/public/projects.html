@@ -274,17 +274,34 @@
             polar-agent 是本地 Go 二进制，跑在你的 Mac 上，接收来自 bot 的 tool call 在指定工作目录执行（read_file / write_file / list_dir / run_cmd）。下面发的 token 给 <code>polar-agent login --token</code> 用。
           </div>
 
-          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <input id="agentTokenName" class="input" type="text" placeholder="token 名字 (例: my-mac)" maxlength="60" style="flex:1; min-width:200px;" />
-            <button id="agentTokenCreateBtn" class="btn-inline btn-secondary" type="button">＋ 新建 token</button>
-          </div>
+          <fieldset style="border:1px solid var(--border,#ececf0); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px;">
+            <legend style="font-size:12px; padding:0 6px;">＋ 新建 agent</legend>
+            <input id="agentTokenName" class="input" type="text" placeholder="名字 (例: my-mac / linux-runner-1)" maxlength="60" style="font-size:12px;" />
+            <div style="font-size:11px; color:var(--text-muted,#888);">勾选要装的 coder + 选 auth 模式。提交后弹出 token + 一键安装脚本（仅本次可见）。</div>
+            <div id="agentTokenCoderRows" style="display:flex; flex-direction:column; gap:6px;">
+              <!-- rendered by projects.ts; one row per coder (kimi/claude/codex) -->
+            </div>
+            <button id="agentTokenCreateBtn" class="btn-inline btn-secondary" type="button" style="align-self:flex-start;">＋ 新建 agent</button>
+          </fieldset>
 
-          <div id="agentTokenJustCreated" hidden style="padding:12px; background:#fff7e6; border:1px solid #f5d28a; border-radius:6px;">
-            <div style="font-weight:600; font-size:13px; color:#8a5a00;">⚠ 这是 raw token，只显示一次：</div>
-            <div style="margin-top:6px; padding:8px; background:#fff; border:1px solid #f5d28a; border-radius:4px; font-family:monospace; font-size:12px; word-break:break-all;" id="agentTokenJustCreatedRaw"></div>
-            <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
-              <button id="agentTokenCopyBtn" class="btn-inline btn-secondary" type="button" style="font-size:12px;">复制</button>
-              <code style="font-size:11px;">polar-agent login --server=&lt;url&gt; --token=&lt;raw&gt;</code>
+          <div id="agentTokenJustCreated" hidden style="padding:12px; background:#fff7e6; border:1px solid #f5d28a; border-radius:6px; display:flex; flex-direction:column; gap:10px;">
+            <div style="font-weight:600; font-size:13px; color:#8a5a00;">⚠ 以下内容只在这一次窗口里可见：</div>
+
+            <div>
+              <div style="font-size:11px; color:var(--text-muted,#888); margin-bottom:4px;">Raw token（粘到 polar-agent login）：</div>
+              <div style="padding:8px; background:#fff; border:1px solid #f5d28a; border-radius:4px; font-family:monospace; font-size:12px; word-break:break-all;" id="agentTokenJustCreatedRaw"></div>
+              <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+                <button id="agentTokenCopyBtn" class="btn-inline btn-secondary" type="button" style="font-size:12px;">复制 token</button>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-size:11px; color:var(--text-muted,#888); margin-bottom:4px;">一键安装脚本（在 agent host 上跑，含 token + coder 安装 + auth 提示）：</div>
+              <textarea id="agentTokenInstallScript" readonly spellcheck="false" rows="10" style="font-family:ui-monospace,SFMono-Regular,monospace; font-size:11px; width:100%; box-sizing:border-box; background:#fff; border:1px solid #f5d28a; border-radius:4px; padding:8px;"></textarea>
+              <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+                <button id="agentTokenScriptCopyBtn" class="btn-inline btn-secondary" type="button" style="font-size:12px;">复制脚本</button>
+                <button id="agentTokenScriptDownloadBtn" class="btn-inline btn-secondary" type="button" style="font-size:12px;">下载 install.sh</button>
+              </div>
             </div>
           </div>
 

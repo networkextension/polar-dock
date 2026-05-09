@@ -32,7 +32,10 @@ import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import type {
+  AgentCoderEntry,
   AgentToken,
+  CoderAuthMode,
+  CoderName,
   FeatureComplexity,
   Project,
   ProjectFeature,
@@ -97,6 +100,10 @@ const agentTokenJustCreatedEl = byId<HTMLElement>("agentTokenJustCreated");
 const agentTokenJustCreatedRawEl = byId<HTMLElement>("agentTokenJustCreatedRaw");
 const agentTokenCopyBtn = byId<HTMLButtonElement>("agentTokenCopyBtn");
 const agentTokensListEl = byId<HTMLElement>("agentTokensList");
+const agentTokenCoderRowsEl = byId<HTMLElement>("agentTokenCoderRows");
+const agentTokenInstallScriptEl = byId<HTMLTextAreaElement>("agentTokenInstallScript");
+const agentTokenScriptCopyBtn = byId<HTMLButtonElement>("agentTokenScriptCopyBtn");
+const agentTokenScriptDownloadBtn = byId<HTMLButtonElement>("agentTokenScriptDownloadBtn");
 const createModal = byId<HTMLElement>("projectsCreateModal");
 const createModalCloseBtn = byId<HTMLButtonElement>("projectsCreateModalCloseBtn");
 const createForm = byId<HTMLFormElement>("projectsCreateForm");
@@ -1043,10 +1050,36 @@ agentTokenCopyBtn.addEventListener("click", () => {
     });
   }
 });
+agentTokenScriptCopyBtn.addEventListener("click", () => {
+  const script = agentTokenInstallScriptEl.value;
+  if (!script) return;
+  void navigator.clipboard.writeText(script).then(() => {
+    const orig = agentTokenScriptCopyBtn.textContent;
+    agentTokenScriptCopyBtn.textContent = "已复制";
+    setTimeout(() => {
+      agentTokenScriptCopyBtn.textContent = orig;
+    }, 1200);
+  });
+});
+agentTokenScriptDownloadBtn.addEventListener("click", () => {
+  const script = agentTokenInstallScriptEl.value;
+  if (!script) return;
+  const blob = new Blob([script], { type: "text/x-shellscript" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "install-polar-agent.sh";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
 
 async function openAgentTokensModal(): Promise<void> {
   agentTokenJustCreatedEl.hidden = true;
   agentTokenNameInput.value = "";
+  agentTokenInstallScriptEl.value = "";
+  renderCoderRows();
   setModalOpen(agentTokensModal, true);
   await loadAgentTokens();
 }
@@ -1063,19 +1096,44 @@ async function loadAgentTokens(): Promise<void> {
 
 function renderAgentTokens(tokens: AgentToken[]): void {
   if (tokens.length === 0) {
-    agentTokensListEl.innerHTML = `<div class="chat-empty">还没有 token，上面输个名字然后「＋ 新建 token」</div>`;
+    agentTokensListEl.innerHTML = `<div class="chat-empty">还没有 agent，上面输个名字 + 选 coder 然后「＋ 新建 agent」</div>`;
     return;
   }
   agentTokensListEl.innerHTML = tokens
     .map((t) => {
       const created = new Date(t.created_at).toLocaleString();
-      const lastUsed = t.last_used_at ? new Date(t.last_used_at).toLocaleString() : "—";
+      const lastSeen = t.last_attached_at
+        ? new Date(t.last_attached_at).toLocaleString()
+        : t.last_used_at
+        ? new Date(t.last_used_at).toLocaleString()
+        : "—";
       const revoked = t.revoked_at ? `<span style="color:#c33; font-size:11px;">已撤销</span>` : "";
+      // Host info pill: "darwin/arm64 · macbook · 192.168.1.5"
+      const hostBits: string[] = [];
+      if (t.host_os && t.host_arch) hostBits.push(`${t.host_os}/${t.host_arch}`);
+      else if (t.host_os) hostBits.push(t.host_os);
+      if (t.host_name) hostBits.push(t.host_name);
+      if (t.host_ip) hostBits.push(t.host_ip);
+      const hostPill = hostBits.length
+        ? `<span class="tag-chip" style="font-size:10px;">${escapeHTML(hostBits.join(" · "))}</span>`
+        : `<span style="font-size:10px; color:var(--text-muted,#888);">未上线过</span>`;
+      // Coder summary: list enabled coders + auth mode
+      const coderBits: string[] = [];
+      const cc = t.coder_config || {};
+      for (const k of ["kimi", "claude", "codex"] as CoderName[]) {
+        const e = cc[k];
+        if (e && e.enabled) coderBits.push(`${k}:${e.auth_mode}`);
+      }
+      const coderPill = coderBits.length
+        ? `<span class="tag-chip tag-chip-accent" style="font-size:10px;">${escapeHTML(coderBits.join(" + "))}</span>`
+        : "";
       return `
-        <div style="padding:8px 10px; background:${t.revoked_at ? "#f7f7f9" : "#fff"}; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:8px; align-items:center;">
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:500; font-size:13px;">${escapeHTML(t.name || "(no name)")} ${revoked}</div>
-            <div style="font-size:11px; color:var(--text-muted,#888);">创建 ${escapeHTML(created)} · 最后使用 ${escapeHTML(lastUsed)}</div>
+        <div style="padding:8px 10px; background:${t.revoked_at ? "#f7f7f9" : "#fff"}; border:1px solid var(--border,#ececf0); border-radius:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <div style="flex:1; min-width:200px;">
+            <div style="font-weight:500; font-size:13px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              ${escapeHTML(t.name || "(no name)")} ${revoked} ${hostPill} ${coderPill}
+            </div>
+            <div style="font-size:11px; color:var(--text-muted,#888);">创建 ${escapeHTML(created)} · 最后上线 ${escapeHTML(lastSeen)}</div>
           </div>
           ${
             t.revoked_at
@@ -1093,16 +1151,63 @@ function renderAgentTokens(tokens: AgentToken[]): void {
   });
 }
 
+// Coder wizard rows. Each row = enable checkbox + auth_mode radio.
+// Default state: kimi enabled with api_key auth (lowest-friction
+// happy-path). Operator can toggle.
+type CoderUIRow = { name: CoderName; label: string; install: string };
+const CODER_ROWS: CoderUIRow[] = [
+  { name: "kimi", label: "kimi-cli", install: "uv tool install kimi-cli" },
+  { name: "claude", label: "claude-code", install: "npm i -g @anthropic-ai/claude-code" },
+  { name: "codex", label: "codex", install: "npm i -g @openai/codex-cli" },
+];
+
+function renderCoderRows(): void {
+  agentTokenCoderRowsEl.innerHTML = CODER_ROWS.map((r, idx) => {
+    const checked = r.name === "kimi" ? "checked" : "";
+    return `
+      <div style="display:flex; gap:10px; align-items:center; padding:6px; background:#fafafa; border-radius:4px;">
+        <label style="display:flex; gap:6px; align-items:center; cursor:pointer; min-width:130px;">
+          <input type="checkbox" data-coder-toggle="${r.name}" ${checked} style="margin:0; padding:0; width:auto; flex-shrink:0;" />
+          <span style="font-size:13px; font-weight:500;">${r.label}</span>
+        </label>
+        <code style="font-size:10px; color:var(--text-muted,#888); flex:1; overflow:hidden; text-overflow:ellipsis;">${r.install}</code>
+        <label style="display:flex; gap:4px; align-items:center; cursor:pointer; font-size:12px;">
+          <input type="radio" name="coderAuth_${r.name}" value="api_key" ${idx === 0 ? "checked" : "checked"} style="margin:0; padding:0; width:auto; flex-shrink:0;" />
+          <span>api_key</span>
+        </label>
+        <label style="display:flex; gap:4px; align-items:center; cursor:pointer; font-size:12px;">
+          <input type="radio" name="coderAuth_${r.name}" value="login" style="margin:0; padding:0; width:auto; flex-shrink:0;" />
+          <span>login</span>
+        </label>
+      </div>
+    `;
+  }).join("");
+}
+
+function readCoderSelections(): { [k in CoderName]?: AgentCoderEntry } {
+  const out: { [k in CoderName]?: AgentCoderEntry } = {};
+  for (const r of CODER_ROWS) {
+    const cb = agentTokenCoderRowsEl.querySelector<HTMLInputElement>(`input[data-coder-toggle="${r.name}"]`);
+    if (!cb || !cb.checked) continue;
+    const radio = agentTokenCoderRowsEl.querySelector<HTMLInputElement>(`input[name="coderAuth_${r.name}"]:checked`);
+    const auth: CoderAuthMode = (radio?.value === "login" ? "login" : "api_key") as CoderAuthMode;
+    out[r.name] = { enabled: true, auth_mode: auth };
+  }
+  return out;
+}
+
 async function doCreateAgentToken(): Promise<void> {
   const name = agentTokenNameInput.value.trim() || "polar-agent";
+  const coders = readCoderSelections();
   agentTokenCreateBtn.disabled = true;
-  const { response, data } = await createAgentToken(name);
+  const { response, data } = await createAgentToken({ name, coders });
   agentTokenCreateBtn.disabled = false;
   if (!response.ok) {
     window.alert("创建失败");
     return;
   }
   agentTokenJustCreatedRawEl.textContent = data.raw;
+  agentTokenInstallScriptEl.value = data.install_script || "";
   agentTokenJustCreatedEl.hidden = false;
   agentTokenNameInput.value = "";
   await loadAgentTokens();

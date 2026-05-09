@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -16,15 +17,45 @@ import (
 
 const agentTokenPrefix = "polar_agent_"
 
+// AgentCoderConfig describes per-coder install/auth choices made
+// at agent-create time. Used by the install script renderer to
+// know which CLIs to brew/uv/install and which auth flow to ask
+// the user to complete.
+//
+// AuthMode values:
+//
+//	"api_key" — operator will set <TOOL>_API_KEY env (or write to
+//	            tool's config file); install script doesn't OAuth
+//	"login"   — install script reminds the operator to run the
+//	            tool's own browser-OAuth login command after install
+type AgentCoderEntry struct {
+	Enabled  bool   `json:"enabled"`
+	AuthMode string `json:"auth_mode"`
+}
+
+type AgentCoderConfig struct {
+	Kimi   AgentCoderEntry `json:"kimi"`
+	Claude AgentCoderEntry `json:"claude"`
+	Codex  AgentCoderEntry `json:"codex"`
+}
+
 // AgentToken is the public-facing row. Raw token is only returned
-// at creation; subsequent reads only see the hash.
+// at creation; subsequent reads only see the hash. host_* columns
+// are filled on the agent's first WS attach so the UI can show the
+// machine that's holding this token.
 type AgentToken struct {
-	ID         string     `json:"id"`
-	UserID     string     `json:"user_id"`
-	Name       string     `json:"name"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID             string           `json:"id"`
+	UserID         string           `json:"user_id"`
+	Name           string           `json:"name"`
+	CoderConfig    AgentCoderConfig `json:"coder_config"`
+	HostOS         string           `json:"host_os"`
+	HostArch       string           `json:"host_arch"`
+	HostName       string           `json:"host_name"`
+	HostIP         string           `json:"host_ip"`
+	LastAttachedAt *time.Time       `json:"last_attached_at,omitempty"`
+	LastUsedAt     *time.Time       `json:"last_used_at,omitempty"`
+	RevokedAt      *time.Time       `json:"revoked_at,omitempty"`
+	CreatedAt      time.Time        `json:"created_at"`
 }
 
 func generateAgentToken() (raw, hashHex string, err error) {
@@ -45,7 +76,7 @@ func hashAgentToken(raw string) string {
 // createAgentToken inserts a new token row and returns the raw
 // token string (caller shows it to the user once). Hash is what's
 // persisted; raw can never be retrieved again.
-func (s *Server) createAgentToken(userID, name string) (string, *AgentToken, error) {
+func (s *Server) createAgentToken(userID, name string, coders AgentCoderConfig) (string, *AgentToken, error) {
 	if userID == "" {
 		return "", nil, errors.New("userID is empty")
 	}
@@ -54,15 +85,20 @@ func (s *Server) createAgentToken(userID, name string) (string, *AgentToken, err
 		return "", nil, err
 	}
 	tok := &AgentToken{
-		ID:        generateResourceID(),
-		UserID:    userID,
-		Name:      strings.TrimSpace(name),
-		CreatedAt: time.Now().UTC(),
+		ID:          generateResourceID(),
+		UserID:      userID,
+		Name:        strings.TrimSpace(name),
+		CoderConfig: coders,
+		CreatedAt:   time.Now().UTC(),
+	}
+	codersJSON, err := json.Marshal(coders)
+	if err != nil {
+		return "", nil, err
 	}
 	if _, err := s.db.Exec(
-		`INSERT INTO agent_tokens (id, user_id, name, token_hash, created_at)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		tok.ID, tok.UserID, tok.Name, hashHex, tok.CreatedAt,
+		`INSERT INTO agent_tokens (id, user_id, name, token_hash, coder_config, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		tok.ID, tok.UserID, tok.Name, hashHex, string(codersJSON), tok.CreatedAt,
 	); err != nil {
 		return "", nil, err
 	}
@@ -71,7 +107,11 @@ func (s *Server) createAgentToken(userID, name string) (string, *AgentToken, err
 
 func (s *Server) listAgentTokensForUser(userID string) ([]AgentToken, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, name, last_used_at, revoked_at, created_at
+		`SELECT id, user_id, name,
+		        COALESCE(coder_config::text, '{}'),
+		        COALESCE(host_os, ''), COALESCE(host_arch, ''),
+		        COALESCE(host_name, ''), COALESCE(host_ip, ''),
+		        last_attached_at, last_used_at, revoked_at, created_at
 		 FROM agent_tokens WHERE user_id = $1 ORDER BY created_at DESC`,
 		userID,
 	)
@@ -82,9 +122,22 @@ func (s *Server) listAgentTokensForUser(userID string) ([]AgentToken, error) {
 	out := []AgentToken{}
 	for rows.Next() {
 		var t AgentToken
-		var lastUsedAt, revokedAt sql.NullTime
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &lastUsedAt, &revokedAt, &t.CreatedAt); err != nil {
+		var coderJSON string
+		var lastAttachedAt, lastUsedAt, revokedAt sql.NullTime
+		if err := rows.Scan(
+			&t.ID, &t.UserID, &t.Name,
+			&coderJSON,
+			&t.HostOS, &t.HostArch, &t.HostName, &t.HostIP,
+			&lastAttachedAt, &lastUsedAt, &revokedAt, &t.CreatedAt,
+		); err != nil {
 			return nil, err
+		}
+		if coderJSON != "" {
+			_ = json.Unmarshal([]byte(coderJSON), &t.CoderConfig)
+		}
+		if lastAttachedAt.Valid {
+			v := lastAttachedAt.Time
+			t.LastAttachedAt = &v
 		}
 		if lastUsedAt.Valid {
 			v := lastUsedAt.Time
@@ -97,6 +150,23 @@ func (s *Server) listAgentTokensForUser(userID string) ([]AgentToken, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// updateAgentTokenHostInfo records the host details from the
+// agent's WS hello frame on first attach. Call once per attach;
+// repeated attaches just bump last_attached_at.
+func (s *Server) updateAgentTokenHostInfo(tokenID, hostOS, hostArch, hostName, hostIP string) error {
+	_, err := s.db.Exec(
+		`UPDATE agent_tokens
+		 SET host_os = COALESCE(NULLIF($2, ''), host_os),
+		     host_arch = COALESCE(NULLIF($3, ''), host_arch),
+		     host_name = COALESCE(NULLIF($4, ''), host_name),
+		     host_ip = COALESCE(NULLIF($5, ''), host_ip),
+		     last_attached_at = NOW()
+		 WHERE id = $1`,
+		tokenID, hostOS, hostArch, hostName, hostIP,
+	)
+	return err
 }
 
 // resolveAgentToken returns the (id, user_id) of the live token

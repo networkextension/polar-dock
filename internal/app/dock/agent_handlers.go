@@ -16,6 +16,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -27,14 +28,21 @@ import (
 
 // ---- token CRUD ---------------------------------------------------
 
+// agentTokenCreateRequest is the typed payload for the create
+// wizard. coders is a map of {kimi|claude|codex: {enabled, auth_mode}}
+// captured at the wizard's coder-pick step. Sane defaults apply
+// when fields are missing (legacy clients calling without coder
+// config still get a working token).
 type agentTokenCreateRequest struct {
-	Name string `json:"name"`
+	Name   string                     `json:"name"`
+	Coders map[string]AgentCoderEntry `json:"coders"`
 }
 
 type agentTokenCreateResponse struct {
-	Token AgentToken `json:"token"`
-	Raw   string     `json:"raw"`
-	Hint  string     `json:"hint"`
+	Token         AgentToken `json:"token"`
+	Raw           string     `json:"raw"`
+	InstallScript string     `json:"install_script"`
+	Hint          string     `json:"hint"`
 }
 
 func (s *Server) handleAgentTokenCreate(c *gin.Context) {
@@ -48,16 +56,76 @@ func (s *Server) handleAgentTokenCreate(c *gin.Context) {
 	if name == "" {
 		name = "polar-agent"
 	}
-	raw, tok, err := s.createAgentToken(userID, name)
+	coders := AgentCoderConfig{}
+	if entry, present := req.Coders["kimi"]; present {
+		coders.Kimi = normalizeCoderEntry(entry)
+	}
+	if entry, present := req.Coders["claude"]; present {
+		coders.Claude = normalizeCoderEntry(entry)
+	}
+	if entry, present := req.Coders["codex"]; present {
+		coders.Codex = normalizeCoderEntry(entry)
+	}
+	raw, tok, err := s.createAgentToken(userID, name, coders)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	c.JSON(http.StatusCreated, agentTokenCreateResponse{
-		Token: *tok,
-		Raw:   raw,
-		Hint:  "复制 raw 后立即保存到本地；服务端只保留哈希，事后无法重新展示",
+	script, scriptErr := renderAgentInstallScript(installScriptInput{
+		ServerURL:   serverPublicURL(c),
+		Token:       raw,
+		Coders:      coders,
+		AgentName:   tok.Name,
 	})
+	if scriptErr != nil {
+		// Fall back to a minimal script — never fail the token create
+		// over a template glitch.
+		log.Printf("[agent install] render script failed: %v", scriptErr)
+		script = fmt.Sprintf("# install script render failed: %v\n# raw token: %s\n", scriptErr, raw)
+	}
+	c.JSON(http.StatusCreated, agentTokenCreateResponse{
+		Token:         *tok,
+		Raw:           raw,
+		InstallScript: script,
+		Hint:          "复制 raw token 和安装脚本后立即保存到本地；服务端只保留哈希，事后无法重新展示",
+	})
+}
+
+// normalizeCoderEntry coerces user input into a known auth_mode set.
+// Unknown auth_mode strings degrade to "api_key" so the install
+// script always knows what to do.
+func normalizeCoderEntry(e AgentCoderEntry) AgentCoderEntry {
+	if !e.Enabled {
+		return AgentCoderEntry{}
+	}
+	mode := strings.TrimSpace(e.AuthMode)
+	switch mode {
+	case "api_key", "login":
+		// ok
+	default:
+		mode = "api_key"
+	}
+	return AgentCoderEntry{Enabled: true, AuthMode: mode}
+}
+
+// serverPublicURL derives the absolute base URL the install script
+// should embed (so curl-pipe-sh works regardless of where the user
+// runs it). Prefers X-Forwarded-Proto/Host (when behind a proxy);
+// falls back to the gin request's Host + scheme.
+func serverPublicURL(c *gin.Context) string {
+	scheme := c.GetHeader("X-Forwarded-Proto")
+	if scheme == "" {
+		if c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := c.GetHeader("X-Forwarded-Host")
+	if host == "" {
+		host = c.Request.Host
+	}
+	return scheme + "://" + host
 }
 
 func (s *Server) handleAgentTokenList(c *gin.Context) {
@@ -153,11 +221,12 @@ func (s *Server) handleAgentWS(c *gin.Context) {
 	_ = s.touchAgentTokenUsed(tokenID)
 
 	ac := &agentConn{
-		tokenID:     tokenID,
-		userID:      userID,
-		botUserID:   botUserID,
-		workspaceID: strings.TrimSpace(c.Query("workspace_id")),
-		workdir:     strings.TrimSpace(c.Query("workdir")),
+		tokenID:           tokenID,
+		requestRemoteAddr: c.Request.RemoteAddr,
+		userID:            userID,
+		botUserID:         botUserID,
+		workspaceID:       strings.TrimSpace(c.Query("workspace_id")),
+		workdir:           strings.TrimSpace(c.Query("workdir")),
 		send:        make(chan []byte, 64),
 		close:       make(chan struct{}),
 		pending:     map[string]chan agentToolResult{},
@@ -250,10 +319,22 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 				Version      string   `json:"version"`
 				Capabilities []string `json:"capabilities"`
 				Tool         string   `json:"tool"`
+				HostOS       string   `json:"host_os"`
+				HostArch     string   `json:"host_arch"`
+				HostName     string   `json:"host_name"`
 			}
 			if err := json.Unmarshal(raw, &h); err == nil {
 				ac.capabilities = h.Capabilities
 				ac.tool = strings.TrimSpace(h.Tool)
+				// Persist host info to the agent_tokens row so the
+				// admin UI can show "this token is on machine X".
+				// Best-effort — don't fail the hello over a DB blip.
+				if ac.tokenID != "" && (h.HostOS != "" || h.HostArch != "" || h.HostName != "") {
+					hostIP := remoteIPForRequest(ac.requestRemoteAddr)
+					if err := s.updateAgentTokenHostInfo(ac.tokenID, h.HostOS, h.HostArch, h.HostName, hostIP); err != nil {
+						log.Printf("[agent ws] update host info token=%s: %v", ac.tokenID, err)
+					}
+				}
 			}
 			log.Printf("[agent ws] hello bot=%s caps=%v tool=%q payload=%s",
 				ac.botUserID, ac.capabilities, ac.tool, truncateForLog(string(raw), 200))
@@ -354,6 +435,23 @@ func (s *Server) handleAgentWhoAmI(c *gin.Context) {
 		"token_id": tokenID,
 		"user_id":  userID,
 	})
+}
+
+// remoteIPForRequest extracts a clean ip-only string from a
+// gin RemoteAddr value (`host:port` or just `host`). Returns the
+// raw input on parse failure — caller treats it as opaque.
+func remoteIPForRequest(remoteAddr string) string {
+	if remoteAddr == "" {
+		return ""
+	}
+	// Strip trailing :port if present. IPv6 has multiple colons; the
+	// last one separates port. Use a simple split on last colon.
+	for i := len(remoteAddr) - 1; i >= 0; i-- {
+		if remoteAddr[i] == ':' {
+			return strings.TrimPrefix(strings.TrimSuffix(remoteAddr[:i], "]"), "[")
+		}
+	}
+	return remoteAddr
 }
 
 // handleAgentStatus tells the UI whether a bot has an agent attached
