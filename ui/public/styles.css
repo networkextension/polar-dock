@@ -2700,7 +2700,14 @@ textarea {
   position: fixed;
   top: 14px;
   right: 16px;
+  left: auto;
   z-index: 50;
+  /* Resets vs the global `button {}` defaults (width:100%, accent
+     background, transform-on-hover, box-shadow). Without `width:auto`
+     the button takes 100% of the viewport with `right:16px` as its
+     right anchor — the content slides off the left, exactly the bug
+     we hit on first ship. */
+  width: auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -2717,12 +2724,16 @@ textarea {
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
   white-space: nowrap;
+  transform: none;
+  box-shadow: none;
 }
 .lang-toggle-btn svg { opacity: 0.75; flex-shrink: 0; }
 .lang-toggle-btn:hover {
   background: var(--card);
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  transform: none;
+  box-shadow: none;
 }
 .lang-toggle-btn:hover svg { opacity: 1; }
 
