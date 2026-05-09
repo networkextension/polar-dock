@@ -963,6 +963,13 @@ CREATE TABLE IF NOT EXISTS teams (
 	created_at TIMESTAMPTZ NOT NULL,
 	updated_at TIMESTAMPTZ NOT NULL
 );
+-- default_llm_config_id: workspace-level fallback LLM, used by
+-- features that don't have their own per-resource LLM picker
+-- (markdown / post assist, agent auto-register research bot).
+-- Nullable; consumers fall back to "first available llm_configs row
+-- in this workspace" when unset.
+ALTER TABLE teams
+	ADD COLUMN IF NOT EXISTS default_llm_config_id BIGINT REFERENCES llm_configs(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_teams_owner ON teams(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_teams_kind ON teams(kind);
 
@@ -3151,26 +3158,45 @@ func (s *Server) ensureAutoRegisteredCoderBot(tokenID, ownerUserID, workspaceID,
 }
 
 // getWorkspaceDefaultLLMConfigID returns the workspace's
-// default_llm_config_id, or 0 + nil error if not set. Used by
-// auto-register's research bot creation path: when the operator
-// asks for a research bot, we need an LLM config to power it,
-// and the workspace default is the natural choice.
+// default_llm_config_id when set; otherwise falls back to the
+// first available LLM config the workspace can use (own row /
+// shared / platform). Used by auto-register's research bot
+// creation path + assist features that don't have a per-resource
+// LLM picker.
+//
+// Returns 0 + nil error when the workspace has no default AND no
+// usable LLM config at all — caller logs "skip" hint.
 func (s *Server) getWorkspaceDefaultLLMConfigID(workspaceID string) (int64, error) {
+	// First: explicit workspace default.
 	var id sql.NullInt64
 	err := s.db.QueryRow(
 		`SELECT default_llm_config_id FROM teams WHERE id = $1`,
 		workspaceID,
 	).Scan(&id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if id.Valid && id.Int64 > 0 {
+		return id.Int64, nil
+	}
+	// Fallback: any LLM config the workspace can see.
+	// Prefer own > shared > platform; tiebreak by most-recently-updated.
+	var fallbackID int64
+	err = s.db.QueryRow(
+		`SELECT id FROM llm_configs
+		 WHERE workspace_id = $1 OR shared = TRUE OR is_platform = TRUE
+		 ORDER BY (CASE WHEN workspace_id = $1 THEN 0 WHEN shared THEN 1 ELSE 2 END),
+		          updated_at DESC
+		 LIMIT 1`,
+		workspaceID,
+	).Scan(&fallbackID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
 		return 0, err
 	}
-	if !id.Valid {
-		return 0, nil
-	}
-	return id.Int64, nil
+	return fallbackID, nil
 }
 
 // ensureAutoRegisteredResearchBot upserts a classic-kind bot row
