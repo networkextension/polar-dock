@@ -43,6 +43,10 @@ type agentTokenCreateRequest struct {
 	Name    string                     `json:"name"`
 	Coders  map[string]AgentCoderEntry `json:"coders"`
 	APIKeys map[string]string          `json:"api_keys"`
+	// TargetOS picks the install-output flavor: "darwin" (default)
+	// returns a curl-bash install.sh; "linux" returns a docker run
+	// quick-start script for the polar-agent image.
+	TargetOS string `json:"target_os"`
 }
 
 type agentTokenCreateResponse struct {
@@ -100,12 +104,20 @@ func (s *Server) handleAgentTokenCreate(c *gin.Context) {
 			apiKeys[name] = k
 		}
 	}
+	targetOS := strings.ToLower(strings.TrimSpace(req.TargetOS))
+	switch targetOS {
+	case "linux", "darwin":
+		// ok
+	default:
+		targetOS = "darwin"
+	}
 	script, scriptErr := renderAgentInstallScript(installScriptInput{
 		ServerURL: serverPublicURL(c),
 		Token:     raw,
 		Coders:    coders,
 		APIKeys:   apiKeys,
 		AgentName: tok.Name,
+		TargetOS:  targetOS,
 	})
 	if scriptErr != nil {
 		// Fall back to a minimal script — never fail the token create

@@ -41,6 +41,12 @@ type installScriptInput struct {
 	// Never persisted to DB — flow is wizard-input → render → drop.
 	APIKeys   map[string]string
 	AgentName string
+	// TargetOS picks the output flavor:
+	//   "darwin" → install.sh (curl-bash style, native binary)
+	//   "linux"  → docker run command (containerized; coders baked
+	//              into the polar-agent image, no per-tool install)
+	// Empty defaults to darwin (legacy behavior).
+	TargetOS string
 }
 
 // envVarFor returns the env var name a given coder reads its API
@@ -51,6 +57,24 @@ func (i installScriptInput) ClaudeKey() string { return strings.TrimSpace(i.APIK
 func (i installScriptInput) CodexKey() string  { return strings.TrimSpace(i.APIKeys["codex"]) }
 func (i installScriptInput) HasAnyKey() bool {
 	return i.KimiKey() != "" || i.ClaudeKey() != "" || i.CodexKey() != ""
+}
+
+// EnabledTools returns the comma-separated list of enabled coder
+// names in fixed order (kimi, claude, codex). Used by the linux
+// docker template to set POLAR_BOT_TOOLS so each attached bot
+// runs the right passthrough binary.
+func (i installScriptInput) EnabledTools() string {
+	out := []string{}
+	if i.Coders.Kimi.Enabled {
+		out = append(out, "kimi")
+	}
+	if i.Coders.Claude.Enabled {
+		out = append(out, "claude")
+	}
+	if i.Coders.Codex.Enabled {
+		out = append(out, "codex")
+	}
+	return strings.Join(out, ",")
 }
 
 const installScriptTemplate = `#!/bin/sh
@@ -295,7 +319,11 @@ echo "  3. Start: $INSTALL_PREFIX/polar-agent attach --bot=<bot_id> --workdir=<p
 `
 
 func renderAgentInstallScript(in installScriptInput) (string, error) {
-	tpl, err := template.New("install").Parse(installScriptTemplate)
+	body := installScriptTemplate
+	if strings.ToLower(strings.TrimSpace(in.TargetOS)) == "linux" {
+		body = dockerRunTemplate
+	}
+	tpl, err := template.New("install").Parse(body)
 	if err != nil {
 		return "", fmt.Errorf("parse install template: %w", err)
 	}
@@ -306,3 +334,64 @@ func renderAgentInstallScript(in installScriptInput) (string, error) {
 	out := strings.TrimRight(buf.String(), "\n") + "\n"
 	return out, nil
 }
+
+// dockerRunTemplate produces a minimal docker quick-start script
+// for Linux operators. The polar-agent image (built from
+// Dockerfile.agent) carries everything the install.sh path would
+// have to bootstrap — uv, kimi-cli, Node + claude-code + codex —
+// so this script just pulls + runs.
+//
+// API keys go in via -e env, NOT into ~/.polar/tools.json on the
+// host (we don't touch the host filesystem). polar-agent inside
+// the container picks them up via the same per-tool merge logic.
+const dockerRunTemplate = `#!/bin/sh
+# polar-agent docker quick-start. Generated for: {{.AgentName}}
+# Server: {{.ServerURL}}
+# Image carries: polar-agent + git + uv + kimi-cli + Node 22 +
+# claude-code + codex-cli (no per-tool install needed).
+#
+# Edit POLAR_BOT_IDS below with the bot user ids you want this
+# host to attach to (find them in the bots page; comma-separated).
+
+set -eu
+
+IMAGE="ghcr.io/networkextension/polar-agent:latest"
+NAME="polar-agent-{{.AgentName}}"
+
+echo "→ pulling $IMAGE..."
+docker pull "$IMAGE"
+
+# Replace any prior instance with the same name.
+docker rm -f "$NAME" 2>/dev/null || true
+
+echo "→ starting container..."
+docker run -d \
+  --name "$NAME" \
+  --restart=unless-stopped \
+  -e POLAR_DOCK_URL='{{.ServerURL}}' \
+  -e POLAR_AGENT_TOKEN='{{.Token}}' \
+  -e POLAR_BOT_IDS='REPLACE_ME_bot_id1,bot_id2' \
+{{- if .EnabledTools }}
+  -e POLAR_BOT_TOOLS='{{.EnabledTools}}' \
+{{- end }}
+{{- if .KimiKey }}
+  -e KIMI_API_KEY='{{.KimiKey}}' \
+{{- end }}
+{{- if .ClaudeKey }}
+  -e ANTHROPIC_API_KEY='{{.ClaudeKey}}' \
+{{- end }}
+{{- if .CodexKey }}
+  -e OPENAI_API_KEY='{{.CodexKey}}' \
+{{- end }}
+  -v "$HOME/work:/work" \
+  "$IMAGE"
+
+echo ""
+echo "✅ polar-agent container started: $NAME"
+echo "   logs:    docker logs -f $NAME"
+echo "   stop:    docker stop $NAME"
+echo "   restart: docker restart $NAME"
+echo ""
+echo "⚠️  Edit POLAR_BOT_IDS in this script with your real bot user ids,"
+echo "    then re-run. The current value is a placeholder."
+`

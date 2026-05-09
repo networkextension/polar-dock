@@ -164,6 +164,8 @@ export type AgentTokenCreatePayload = {
   // mode for. Server filters and renders into install script's
   // ~/.polar/tools.json env block; never persisted to DB.
   api_keys?: { [k in CoderName]?: string };
+  // target_os: "darwin" → install.sh, "linux" → docker run snippet
+  target_os?: "darwin" | "linux";
 };
 
 export type AgentTokenCreateResponse = {
