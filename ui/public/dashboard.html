@@ -70,10 +70,12 @@
             <button id="addTagBtn" class="lp-manage-btn" type="button" hidden data-i18n="dashboard.newTag">New Tag</button>
           </div>
           <div class="lp-sidebar-entries-body">
+            <div class="lp-sidebar-entries-group-label">Quick</div>
             <div class="lp-sidebar-entries-quick">
               <a href="/chat.html" data-i18n="dashboard.privateChat">Chat</a>
               <a href="/chat.html?user_id=system&username=system" data-i18n="dashboard.aiAssistant">AI Assistant</a>
             </div>
+            <div class="lp-sidebar-entries-divider"></div>
             <ul id="entryList" class="list"></ul>
             <button id="loadMoreBtn" class="lp-manage-btn" type="button" style="width:100%;justify-content:center;margin-top:6px;" data-i18n="dashboard.loadMore">Load more</button>
           </div>
@@ -116,7 +118,7 @@
 
         <!-- Main: widget grid on top, markdown preview below -->
         <div class="lp-content" style="padding:0; overflow-y:auto; flex:1; display:flex; flex-direction:column;">
-          <div id="dashboardWidgets" class="dashboard-widgets" style="padding:16px; display:flex; flex-direction:column; gap:14px; border-bottom:1px solid var(--border);"></div>
+          <div id="dashboardWidgets" class="dashboard-widgets" style="padding:14px; display:flex; flex-direction:column; gap:12px; border-bottom:1px solid var(--border);"></div>
           <div class="lp-preview-main" style="border-radius:0; border:none; border-top:none;">
             <div class="lp-preview-head">
               <span class="badge" data-i18n="dashboard.contentPreview">Content preview</span>

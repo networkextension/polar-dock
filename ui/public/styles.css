@@ -2917,6 +2917,13 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
   transition: background .12s, color .12s;
 }
 .lp-sidebar-entries-quick a:hover { background: var(--surface-strong); color: var(--text); }
+.lp-sidebar-entries-group-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); padding: 8px 10px 4px; opacity: 0.85;
+}
+.lp-sidebar-entries-divider {
+  height: 1px; background: var(--border); margin: 8px 4px 0;
+}
 
 /* Sidebar foot with action icons */
 .lp-sidebar-foot-actions {
@@ -4185,14 +4192,14 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
   background: var(--card, #fff);
   border: 1px solid var(--border, #ececf0);
   border-radius: 8px;
-  padding: 14px 16px;
+  padding: 12px 14px;
 }
 
 .dashboard-widget-header {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .dashboard-widget-header > strong {
@@ -4345,15 +4352,15 @@ body.lp-page { background: var(--page-bg); padding: 0; display: block; }
    before but moved out of inline styles so hover gets a class hook. */
 .dashboard-quickstart-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
 }
 
 .dashboard-quickstart-tile {
   display: flex;
-  gap: 10px;
+  gap: 9px;
   align-items: center;
-  padding: 11px;
+  padding: 8px 10px;
   border: 1px solid var(--border, #ececf0);
   border-radius: 6px;
   text-decoration: none;
