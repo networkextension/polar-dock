@@ -1586,12 +1586,15 @@ const zhCN: Record<string, string> = {
 
 const locales: Record<Lang, Record<string, string>> = { en, "zh-CN": zhCN };
 
+// Default language is zh-CN (primary user base writes Chinese).
+// Returns "en" only when localStorage explicitly has "en" stored, so
+// users who toggled keep their choice. Fresh visitors land on zh-CN.
 export function getLang(): Lang {
   try {
     const stored = localStorage.getItem(LANG_KEY);
-    return stored === "zh-CN" ? "zh-CN" : "en";
+    return stored === "en" ? "en" : "zh-CN";
   } catch {
-    return "en";
+    return "zh-CN";
   }
 }
 

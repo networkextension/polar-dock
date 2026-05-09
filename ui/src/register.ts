@@ -1,7 +1,7 @@
 import { byId } from "./lib/dom.js";
 import { buildClientHeaders } from "./lib/client.js";
 import { hydrateSiteBrand } from "./lib/site.js";
-import { t } from "./lib/i18n.js";
+import { injectLangToggle, t } from "./lib/i18n.js";
 
 const API_BASE = "";
 const form = byId<HTMLFormElement>("registerForm");
@@ -86,5 +86,8 @@ async function loadInviteRequirement(): Promise<void> {
   }
 }
 
-void hydrateSiteBrand();
+void (async () => {
+  await hydrateSiteBrand();
+  injectLangToggle();
+})();
 void loadInviteRequirement();
