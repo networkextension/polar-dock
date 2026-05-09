@@ -141,34 +141,7 @@ func runResearchTask(ctx context.Context, cfg AgentConfig, baseWorkdir string, e
 	}
 	tools := researchToolSpecs()
 
-	iterations := 0
-	var loopErr error
-	for i := 0; i < researchMaxIterations; i++ {
-		iterations = i + 1
-		resp, err := llm.chatCompletions(ctx, llmChatRequest{
-			Model:      env.LLM.Model,
-			Messages:   messages,
-			Tools:      tools,
-			ToolChoice: "auto",
-			MaxTokens:  16384,
-		})
-		if err != nil {
-			loopErr = fmt.Errorf("llm call iter=%d: %w", iterations, err)
-			break
-		}
-		assistant := resp.Choices[0].Message
-		messages = append(messages, assistant)
-
-		if len(assistant.ToolCalls) == 0 {
-			logger.printf("[research] iter=%d done (no tool_calls)", iterations)
-			break
-		}
-		logger.printf("[research] iter=%d dispatching %d tool_call(s)", iterations, len(assistant.ToolCalls))
-		for _, tc := range assistant.ToolCalls {
-			toolMsg := dispatchResearchToolCall(ctx, exec, tc)
-			messages = append(messages, toolMsg)
-		}
-	}
+	iterations, _, loopErr := runResearchToolLoop(ctx, llm, exec, env.LLM.Model, &messages, tools, logger)
 
 	// Walk back through messages to find the last assistant text — use
 	// it as the LLM's "final summary" for both the commit message body
@@ -290,6 +263,56 @@ func buildResearchSystemPrompt(env researchTaskEnvelope, workdir string) string 
 // dispatchResearchToolCall translates an LLM tool_call into the
 // existing executor's toolCall shape, runs it, and produces the
 // "role: tool" message that goes back into the LLM context.
+// runResearchToolLoop drives one user-prompt's worth of LLM calls
+// + tool dispatches. Returns the iteration count, last finish_reason
+// (or "" when truncated), and any error. messages is mutated in place
+// — the caller can keep it across multiple turns (REPL) or read the
+// last assistant message for a summary (one-shot).
+//
+// Shared between the dock-driven path (runResearchTask) and the
+// stdin REPL path so both behave identically: same tool semantics,
+// same iteration cap, same logger.
+func runResearchToolLoop(
+	ctx context.Context,
+	llm *llmClient,
+	exec *executor,
+	model string,
+	messages *[]llmChatMessage,
+	tools []llmToolSpec,
+	logger *researchLogger,
+) (iterations int, finishReason string, err error) {
+	for i := 0; i < researchMaxIterations; i++ {
+		iterations = i + 1
+		resp, callErr := llm.chatCompletions(ctx, llmChatRequest{
+			Model:      model,
+			Messages:   *messages,
+			Tools:      tools,
+			ToolChoice: "auto",
+			MaxTokens:  16384,
+		})
+		if callErr != nil {
+			err = fmt.Errorf("llm call iter=%d: %w", iterations, callErr)
+			return
+		}
+		choice := resp.Choices[0]
+		assistant := choice.Message
+		*messages = append(*messages, assistant)
+		finishReason = choice.FinishReason
+
+		if len(assistant.ToolCalls) == 0 {
+			logger.printf("[research] iter=%d done (no tool_calls)", iterations)
+			return
+		}
+		logger.printf("[research] iter=%d dispatching %d tool_call(s)", iterations, len(assistant.ToolCalls))
+		for _, tc := range assistant.ToolCalls {
+			toolMsg := dispatchResearchToolCall(ctx, exec, tc)
+			*messages = append(*messages, toolMsg)
+		}
+	}
+	err = fmt.Errorf("tool loop exceeded %d iterations", researchMaxIterations)
+	return
+}
+
 func dispatchResearchToolCall(ctx context.Context, exec *executor, tc llmToolCall) llmChatMessage {
 	out := llmChatMessage{
 		Role:       "tool",
