@@ -1,0 +1,38 @@
+# Don't ship dev junk into the build context. Keep this small —
+# `docker build` sends the whole context to the daemon.
+
+.git
+.github
+.idea
+.vscode
+
+# UI build outputs (we rebuild inside the image)
+ui/node_modules
+ui/dist
+ui/public/scripts
+ui/public/build-meta.json
+
+# Local dev state
+data/
+*.log
+*.swp
+.DS_Store
+
+# Distribution outputs (we rebuild)
+dist/
+
+# Test / cache
+**/testdata-tmp/
+**/__pycache__/
+.pytest_cache/
+
+# Memory / docs not needed in image
+doc/
+*.md
+!README.md
+!ui/public/**/*.md
+
+# tarballs, archives
+*.tar.gz
+*.tar
+*.zip
