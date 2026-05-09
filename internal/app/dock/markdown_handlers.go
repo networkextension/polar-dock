@@ -1,6 +1,7 @@
 package dock
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -141,10 +142,12 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 
 func (s *Server) handleMarkdownSubmit(c *gin.Context) {
 	var req struct {
-		Title      string `json:"title" binding:"required"`
-		Content    string `json:"content" binding:"required"`
-		IsPublic   bool   `json:"is_public"`
-		EditorMode string `json:"editor_mode"`
+		Title       string  `json:"title" binding:"required"`
+		Content     string  `json:"content" binding:"required"`
+		IsPublic    bool    `json:"is_public"`    // legacy; mapped via resolveMarkdownVisibility
+		Visibility  string  `json:"visibility"`   // private | workspace | public
+		WorkspaceID *string `json:"workspace_id"` // required when visibility=workspace
+		EditorMode  string  `json:"editor_mode"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -162,20 +165,61 @@ func (s *Server) handleMarkdownSubmit(c *gin.Context) {
 		return
 	}
 
-	entry, _, err := s.saveMarkdownDocument(userIDStr, req.Title, req.Content, req.EditorMode, req.IsPublic, now)
+	visibility, workspaceID, vErr := s.resolveMarkdownVisibility(userIDStr, req.Visibility, req.IsPublic, req.WorkspaceID)
+	if vErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": vErr.Error()})
+		return
+	}
+
+	entry, _, err := s.saveMarkdownDocument(userIDStr, req.Title, req.Content, req.EditorMode, visibility, workspaceID, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message":     "保存成功",
-		"id":          entry.ID,
-		"file":        entry.FilePath,
-		"username":    username,
-		"is_public":   req.IsPublic,
-		"editor_mode": entry.EditorMode,
+		"message":      "保存成功",
+		"id":           entry.ID,
+		"file":         entry.FilePath,
+		"username":     username,
+		"is_public":    visibility == MarkdownVisibilityPublic,
+		"visibility":   visibility,
+		"workspace_id": workspaceID,
+		"editor_mode":  entry.EditorMode,
 	})
+}
+
+// resolveMarkdownVisibility takes the request fields and produces a
+// canonical (visibility, workspace_id) tuple. Backward compat: when
+// only `is_public` is sent, true→public / false→private. Workspace
+// tier validates the user is a member of the supplied workspace_id.
+func (s *Server) resolveMarkdownVisibility(userID, requestedVis string, isPublic bool, workspaceID *string) (string, *string, error) {
+	visibility := strings.TrimSpace(requestedVis)
+	if visibility == "" {
+		if isPublic {
+			visibility = MarkdownVisibilityPublic
+		} else {
+			visibility = MarkdownVisibilityPrivate
+		}
+	}
+	switch visibility {
+	case MarkdownVisibilityPrivate, MarkdownVisibilityPublic:
+		return visibility, nil, nil
+	case MarkdownVisibilityWorkspace:
+		if workspaceID == nil || strings.TrimSpace(*workspaceID) == "" {
+			return "", nil, fmt.Errorf("visibility=workspace 需要 workspace_id")
+		}
+		member, err := s.getTeamMember(*workspaceID, userID)
+		if err != nil {
+			return "", nil, fmt.Errorf("workspace 验证失败")
+		}
+		if member == nil {
+			return "", nil, fmt.Errorf("不是该 workspace 的成员")
+		}
+		return visibility, workspaceID, nil
+	default:
+		return "", nil, fmt.Errorf("无效 visibility: %s", visibility)
+	}
 }
 
 func (s *Server) handleMarkdownList(c *gin.Context) {
@@ -307,10 +351,12 @@ func (s *Server) handleMarkdownUpdate(c *gin.Context) {
 	}
 
 	var req struct {
-		Title      string `json:"title" binding:"required"`
-		Content    string `json:"content" binding:"required"`
-		IsPublic   bool   `json:"is_public"`
-		EditorMode string `json:"editor_mode"`
+		Title       string  `json:"title" binding:"required"`
+		Content     string  `json:"content" binding:"required"`
+		IsPublic    bool    `json:"is_public"`
+		Visibility  string  `json:"visibility"`
+		WorkspaceID *string `json:"workspace_id"`
+		EditorMode  string  `json:"editor_mode"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -344,16 +390,62 @@ func (s *Server) handleMarkdownUpdate(c *gin.Context) {
 	}
 	editorMode = normalizeEditorMode(editorMode)
 	summary, coverURL := extractMarkdownMeta(content)
-	if err := s.updateMarkdownEntry(userIDStr, entryID, req.Title, entry.FilePath, summary, coverURL, editorMode, req.IsPublic); err != nil {
+	visibility, workspaceID, vErr := s.resolveMarkdownVisibility(userIDStr, req.Visibility, req.IsPublic, req.WorkspaceID)
+	if vErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": vErr.Error()})
+		return
+	}
+	if err := s.updateMarkdownEntry(userIDStr, entryID, req.Title, entry.FilePath, summary, coverURL, editorMode, visibility, workspaceID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":     "更新成功",
-		"id":          entryID,
-		"is_public":   req.IsPublic,
-		"editor_mode": editorMode,
+		"message":      "更新成功",
+		"id":           entryID,
+		"is_public":    visibility == MarkdownVisibilityPublic,
+		"visibility":   visibility,
+		"workspace_id": workspaceID,
+		"editor_mode":  editorMode,
+	})
+}
+
+// handleWorkspaceMarkdownList lists entries with visibility=workspace
+// for a workspace the caller is a member of. workspace_id comes from
+// the X-Workspace-Id header (set by AuthMiddleware) so the URL is
+// stable and the membership is enforced upstream.
+func (s *Server) handleWorkspaceMarkdownList(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	limit := 0
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+			return
+		}
+	}
+	offset := 0
+	if v := c.Query("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+			return
+		}
+	}
+	entries, hasMore, err := s.listWorkspaceMarkdownEntries(workspaceID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"entries":     entries,
+		"has_more":    hasMore,
+		"next_offset": offset + len(entries),
 	})
 }
 

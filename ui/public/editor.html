@@ -83,11 +83,23 @@
               <input id="titleInput" type="text" data-i18n-placeholder="editor.titlePlaceholder" placeholder="Title" />
             </div>
             <div class="editor-options">
-              <label class="checkbox-label" for="publicToggle">
-                <input id="publicToggle" type="checkbox" />
-                <span data-i18n="editor.publicLabel">Public (others can view but not edit)</span>
+              <label class="visibility-row">
+                <span data-i18n="editor.visibilityLabel">可见范围</span>
+                <select id="visibilitySelect" class="input" style="width:auto; padding:4px 8px;">
+                  <option value="private" data-i18n="editor.visPrivate">仅自己</option>
+                  <option value="workspace" data-i18n="editor.visWorkspace">工作区可见</option>
+                  <option value="public" data-i18n="editor.visPublic">公开（任何人可看）</option>
+                </select>
               </label>
-              <div id="publicHint" class="status-text" data-i18n="editor.publicByDefault">Visible only to you by default.</div>
+              <label id="workspaceSelectLabel" class="visibility-row" hidden>
+                <span data-i18n="editor.workspaceLabel">工作区</span>
+                <select id="workspaceSelect" class="input" style="width:auto; padding:4px 8px;"></select>
+              </label>
+              <!-- Legacy hidden checkbox kept for any code that still binds
+                   to it (publicToggle is referenced from editor.ts during
+                   the migration); visibility-select is the source of truth. -->
+              <input id="publicToggle" type="checkbox" hidden />
+              <div id="publicHint" class="status-text" data-i18n="editor.publicByDefault">默认仅自己可见。</div>
             </div>
             <div class="editor-main">
               <textarea id="contentInput" data-i18n-placeholder="editor.contentPlaceholder" placeholder="Enter Markdown content here..."></textarea>
