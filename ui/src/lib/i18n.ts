@@ -650,6 +650,8 @@ const en: Record<string, string> = {
 
   // Nav
   "nav.dashboard": "Dashboard",
+  "nav.teams": "Workspaces",
+  "nav.projects": "Projects",
   "nav.posts": "Posts",
   "nav.markdowns": "Markdowns",
   "nav.chat": "Chat",
@@ -659,6 +661,7 @@ const en: Record<string, string> = {
   "nav.userAdmin": "User Admin",
   "nav.creation": "Creation",
   "nav.videoStudio": "Video Studio",
+  "nav.iosDist": "iOS Distribution",
   "video.title": "Video Studio",
   "video.projects": "Projects",
   "video.newProject": "New project",
@@ -1426,6 +1429,8 @@ const zhCN: Record<string, string> = {
 
   // Nav
   "nav.dashboard": "Dashboard",
+  "nav.teams": "工作区",
+  "nav.projects": "项目",
   "nav.posts": "Posts",
   "nav.markdowns": "Markdowns",
   "nav.chat": "Chat",
@@ -1435,6 +1440,7 @@ const zhCN: Record<string, string> = {
   "nav.userAdmin": "用户管理",
   "nav.creation": "创作",
   "nav.videoStudio": "视频工作室",
+  "nav.iosDist": "iOS 分发",
   "video.title": "视频工作室",
   "video.projects": "项目",
   "video.newProject": "新建项目",
