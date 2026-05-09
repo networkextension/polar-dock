@@ -28,24 +28,45 @@ const BUILD_HASH = getBuildHash();
 // Serve HTML pages with no-cache headers and inject ?v= into asset URLs.
 const HTML_PAGES = ["login", "register", "dashboard", "editor", "chat", "posts", "markdowns", "latch", "admin", "video-studio", "iosdist", "teams", "invite", "projects", "prompts"];
 
-function serveHtml(name) {
+function serveHtml(name, opts) {
+  const status = (opts && opts.status) || 200;
   return (req, res) => {
     const filePath = path.join(__dirname, UI_STATIC_DIR, `${name}.html`);
     let html;
     try {
       html = fs.readFileSync(filePath, "utf8");
     } catch {
-      res.status(404).send("Not found");
-      return;
+      // Fallback to a static 404.html if the requested page is missing.
+      // serve404 handles its own status code so we don't recurse.
+      return serve404(req, res);
     }
     // Inject cache-busting version into .js and .css references.
     html = html
       .replace(/(src="\/scripts\/[^"]+\.js)(")/g, `$1?v=${BUILD_HASH}$2`)
       .replace(/(href="\/[^"]+\.css)(")/g, `$1?v=${BUILD_HASH}$2`);
+    res.status(status);
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(html);
   };
+}
+
+// serve404 reads /404.html from the static dir and emits it with a
+// 404 status. Used both by serveHtml (when a known route maps to a
+// missing template) and by the catch-all at the bottom of the
+// pipeline (any unmatched path).
+function serve404(req, res) {
+  const filePath = path.join(__dirname, UI_STATIC_DIR, "404.html");
+  try {
+    let html = fs.readFileSync(filePath, "utf8");
+    html = html.replace(/(href="\/[^"]+\.css)(")/g, `$1?v=${BUILD_HASH}$2`);
+    res.status(404);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch {
+    res.status(404).type("text/plain").send("404 — page not found");
+  }
 }
 
 app.get("/login", (req, res) => res.redirect("/login.html"));
@@ -91,6 +112,14 @@ app.use("/uploads", proxyRequest);
 // (plaza, public share page, OTA manifest + install). Without this the
 // dev server returns Express's default 404.
 app.use("/iosdist", proxyRequest);
+
+// Catch-all 404 handler. Anything not matched by an HTML route, the
+// /api proxy, the /uploads proxy, the /iosdist proxy, or static
+// assets falls through here. We serve the themed /404.html (which
+// also reapplies the user's theme preference) instead of the bare
+// "Cannot GET ..." Express default. Out-of-scope: production
+// nginx — that's configured separately.
+app.use((req, res) => serve404(req, res));
 
 const server = app.listen(PORT, () => {
   console.log(`UI running on http://localhost:${PORT}`);
