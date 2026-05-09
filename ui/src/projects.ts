@@ -124,6 +124,7 @@ const RUNTIME_ENV_LABELS: Record<string, string> = {
   web_nextjs: "Web Next.js",
   cli_tool: "CLI 工具",
   chrome_ext: "Chrome 扩展",
+  research: "🔍 研究",
 };
 
 const BUSINESS_SCENARIO_LABELS: Record<string, string> = {
