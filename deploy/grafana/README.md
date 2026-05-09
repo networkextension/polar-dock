@@ -85,6 +85,50 @@ token panel 显示为 0 是预期。
 - research 成功率公式 `succeeded / (succeeded+failed)`，`clamp_min` 防分
   母为 0
 
+### 4d. Postgres datasource + Business dashboard（Phase 4）
+
+业务面板从 Postgres 直接拉，不经 Prometheus —— 这些事实
+（research run / 任务派单 / 复盘 / 工作区活跃度）已经在 dock 数据库里
+了，不再镜像一份到指标。
+
+**一次性配置：建只读角色**
+
+```bash
+# 编辑 sql/grafana-readonly.sql 把 'CHANGE_ME_BEFORE_RUNNING' 改成实际密码，
+# 然后以 superuser 身份执行：
+psql -d ideamesh -f deploy/grafana/sql/grafana-readonly.sql
+```
+
+故意用**白名单授权**而不是 `GRANT SELECT ON ALL TABLES`。dock 里有
+`users.password_hash`、`llm_configs.api_key`、`iosdist_certificates.password_cipher`
+这些敏感列，全开会泄。当前白名单见 SQL 文件第 32 行起。**新增 panel
+查新表时记得回去补 GRANT**。
+
+**配 datasource**
+
+两条路：
+
+A. **provisioning（推荐）**：把 `datasources.yml` 里 password 字段改成
+真值，复制到 Grafana 的 `provisioning/datasources/` 目录，重启 Grafana
+即可。datasource UID 自动 = `polar-pg`。
+
+B. **UI 手配**：Connections → Data sources → Add → PostgreSQL → 填
+host/port/db/user/password；UID 字段填 `polar-pg`（必须，否则 dashboard
+JSON 找不到）。
+
+**导入 dashboard**
+
+`dashboards/polar-business.json`，6 个 panel：
+
+- **Research run funnel — 24h by hour**（time series，按 status 切）
+- **Retrospect generations this week (by LLM)**（table，看哪个模型用得多）
+- **Task throughput by workspace (24h)**（table，按工作区切 done/in_progress/todo）
+- **Open work right now**（stat，4 个数字 — research running / tasks
+  in progress / iOS sign queued / threads active 1h）
+- **Daily message volume (chat)**（time series，human vs bot）
+- **Markdown entries — daily new docs**（time series，按 visibility
+  切 private/workspace/public）
+
 ## 验证
 
 dock 启动后跑：

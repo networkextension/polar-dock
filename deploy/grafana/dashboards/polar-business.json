@@ -1,0 +1,108 @@
+{
+  "title": "Polar — Business Depth (Postgres)",
+  "uid": "polar-business",
+  "tags": ["polar", "phase4", "business", "sql"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {"from": "now-7d", "to": "now"},
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Research run funnel — 24h by hour",
+      "datasource": {"type": "postgres", "uid": "polar-pg"},
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, status AS metric, count(*) AS value FROM project_research_runs WHERE created_at > now() - interval '24 hours' GROUP BY time, status ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}}
+    },
+    {
+      "type": "table",
+      "title": "Retrospect generations this week (by LLM)",
+      "datasource": {"type": "postgres", "uid": "polar-pg"},
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT COALESCE(NULLIF(llm_name,''), '(unset)') AS \"LLM\", COALESCE(NULLIF(llm_model,''), '-') AS \"Model\", count(*) AS \"Calls\" FROM project_task_retrospects WHERE generated_at > now() - interval '7 days' GROUP BY llm_name, llm_model ORDER BY \"Calls\" DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true}
+    },
+    {
+      "type": "table",
+      "title": "Task throughput by workspace (24h)",
+      "datasource": {"type": "postgres", "uid": "polar-pg"},
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT t.name AS \"Workspace\", count(*) FILTER (WHERE pt.status = 'done' AND pt.completed_at > now() - interval '24 hours') AS \"Done 24h\", count(*) FILTER (WHERE pt.status = 'in_progress') AS \"In Progress\", count(*) FILTER (WHERE pt.status = 'todo') AS \"Todo\" FROM project_tasks pt JOIN projects p ON p.id = pt.project_id JOIN teams t ON t.id = p.workspace_id GROUP BY t.id, t.name ORDER BY \"Done 24h\" DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true}
+    },
+    {
+      "type": "stat",
+      "title": "Open work right now",
+      "datasource": {"type": "postgres", "uid": "polar-pg"},
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT count(*) FILTER (WHERE status IN ('queued','running')) AS \"Research running\", (SELECT count(*) FROM project_tasks WHERE status = 'in_progress') AS \"Tasks in progress\", (SELECT count(*) FROM iosdist_sign_tasks WHERE status IN ('pending','running')) AS \"iOS sign queued\", (SELECT count(*) FROM chat_threads WHERE last_message_at > now() - interval '1 hour') AS \"Threads active 1h\" FROM project_research_runs",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true},
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Daily message volume (chat)",
+      "datasource": {"type": "postgres", "uid": "polar-pg"},
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, CASE WHEN llm_config_name = '' OR llm_config_name IS NULL THEN 'human' ELSE 'bot' END AS metric, count(*) AS value FROM chat_messages WHERE created_at > now() - interval '7 days' AND deleted_at IS NULL GROUP BY time, metric ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Markdown entries — daily new docs",
+      "datasource": {"type": "postgres", "uid": "polar-pg"},
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', uploaded_at) AS time, COALESCE(visibility, 'private') AS metric, count(*) AS value FROM markdown_entries WHERE uploaded_at > now() - interval '14 days' GROUP BY time, visibility ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}}
+    }
+  ]
+}

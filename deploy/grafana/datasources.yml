@@ -1,0 +1,39 @@
+# Grafana datasource provisioning — drop into Grafana's provisioning dir
+# (typically /etc/grafana/provisioning/datasources/) and restart Grafana.
+# Skip this file if you'd rather click through Connections → Data sources
+# in the UI; the dashboard JSON works either way as long as the datasource
+# UID is "prometheus" / "polar-pg".
+#
+# Phase 4 adds the Postgres datasource so dashboards can run SQL panels
+# against the dock DB (read-only role from sql/grafana-readonly.sql).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://localhost:9090
+    editable: true
+
+  - name: Polar Postgres (read-only)
+    uid: polar-pg
+    type: postgres
+    access: proxy
+    # Adjust host/port to your dock DB. localhost works when Grafana runs
+    # on the same machine as Postgres; for docker, use host.docker.internal
+    # or a docker network alias.
+    url: localhost:5432
+    user: polar_grafana
+    secureJsonData:
+      # Set this to the password you used in sql/grafana-readonly.sql.
+      # On a real install put the actual password here, in env, or use
+      # Grafana's secret management — not in repo.
+      password: CHANGE_ME_BEFORE_RUNNING
+    jsonData:
+      database: ideamesh
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false
+    editable: true
