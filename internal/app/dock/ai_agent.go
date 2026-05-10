@@ -1188,6 +1188,20 @@ func (a *aiAgent) runtimeConfig(threadID int64, llmThreadID *int64, responderUse
 			return aiRuntimeConfig{}, fmt.Errorf("thread llm config not found for thread %d responder %s", *llmThreadID, responderUserID)
 		}
 	}
+	// If the thread is bound to a project task, the project's
+	// default LLM (set at AI 拆解 time) wins over the bot's bound
+	// LLM. This keeps sub-task chats on the same model the user
+	// chose when decomposing the project, instead of silently
+	// flipping back to the workspace default. Pure chat threads
+	// (not bound to any task) skip this path and fall through to
+	// the bot's LLM as before.
+	if item == nil {
+		pi, pk, perr := a.server.getProjectDefaultLLMForChatThread(threadID)
+		if perr == nil && pi != nil && strings.TrimSpace(pk) != "" {
+			item = pi
+			apiKey = pk
+		}
+	}
 	if item == nil {
 		item, apiKey, err = a.server.getLLMConfigForBot(responderUserID)
 	}

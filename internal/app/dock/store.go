@@ -2049,6 +2049,14 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 
+-- default_llm_config_id: the LLM picked at AI 拆解 time. Sub-task
+-- chats inherit this so a project planned with xAI doesn't suddenly
+-- start replying via the workspace default (typically a different
+-- model). Nullable until first decompose runs; ON DELETE SET NULL so
+-- removing the LLM config doesn't block the project.
+ALTER TABLE projects
+	ADD COLUMN IF NOT EXISTS default_llm_config_id BIGINT REFERENCES llm_configs(id) ON DELETE SET NULL;
+
 -- project_features: AI-decomposed feature list. selected drives
 -- which ones make it into tasks when the user clicks "生成计划".
 -- Re-decomposing replaces the list (DELETE + re-INSERT inside a tx)
@@ -2523,6 +2531,42 @@ func (s *Server) getLLMConfigForBot(botUserID string) (*LLMConfig, string, error
 		   JOIN llm_configs c ON c.id = b.llm_config_id
 		  WHERE b.bot_user_id = $1`,
 		botUserID,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, "", nil
+		}
+		return nil, "", err
+	}
+	return &item, apiKey, nil
+}
+
+// getProjectDefaultLLMForChatThread resolves the LLM config a chat
+// thread should fall back to when it's bound to a project task.
+// Returns (nil, "", nil) when:
+//   - the thread isn't bound to any project_task row, OR
+//   - the linked project hasn't run AI 拆解 yet (default_llm_config_id IS NULL),
+//     OR
+//   - the referenced llm_config row has been deleted (FK ON DELETE
+//     SET NULL fired) and the project hasn't been re-decomposed.
+//
+// This lets task-level chat reuse the model picked at decompose time
+// instead of falling through to the workspace default. Bot-bound LLM
+// still wins when explicitly set on the bot row.
+func (s *Server) getProjectDefaultLLMForChatThread(chatThreadID int64) (*LLMConfig, string, error) {
+	if chatThreadID <= 0 {
+		return nil, "", nil
+	}
+	var item LLMConfig
+	var apiKey string
+	err := s.db.QueryRow(
+		`SELECT c.id, c.owner_user_id, COALESCE(c.workspace_id, ''), c.share_id, c.shared, c.name, c.base_url, c.model, c.api_key, c.system_prompt, c.streaming, (c.api_key <> '') AS has_api_key, COALESCE(c.proxy_url, ''), c.created_at, c.updated_at
+		   FROM project_tasks pt
+		   JOIN projects p   ON p.id = pt.project_id
+		   JOIN llm_configs c ON c.id = p.default_llm_config_id
+		  WHERE pt.chat_thread_id = $1
+		  LIMIT 1`,
+		chatThreadID,
 	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
