@@ -274,7 +274,17 @@ func newAIAgent(server *Server, cfg Config) *aiAgent {
 		stopCh:       make(chan struct{}),
 		streams:      make(map[int64]context.CancelFunc),
 		httpClient: &http.Client{
-			Timeout: 180 * time.Second,
+			// 300s wall-clock timeout. Was 180s — too tight for
+			// reasoning models (grok-4-fast / o1-class) on long
+			// prompts where the upstream sits silent for minutes
+			// before emitting the first token. The non-streaming
+			// path here returns a single completed body, so any
+			// idle-gap observation has to be a hard ceiling. 5
+			// minutes covers most real cases; genuine hangs still
+			// surface within human time. Streaming path (separate
+			// streamClient) has no overall timeout — uses an
+			// idle-gap watchdog instead.
+			Timeout: 300 * time.Second,
 		},
 		// streamClient has no overall timeout; the per-stream idle-gap
 		// watchdog cancels the request context instead. A 180s wall-clock
