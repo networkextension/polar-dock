@@ -195,6 +195,11 @@ type ProjectMetaUpdate struct {
 	// non-nil with inner nil = unbind (set NULL); outer non-nil
 	// with inner non-nil = set the FK value.
 	IOSDistAppID **int64
+	// DefaultLLMConfigID is the AI 拆解-time pick. Sub-task chats
+	// fall back to this so a project planned with a specific model
+	// keeps replying with the same one. nil = no change; non-nil
+	// pointing to 0 = clear; non-nil >0 = set the FK.
+	DefaultLLMConfigID *int64
 }
 
 func (s *Server) updateProjectMetadata(id, workspaceID string, u ProjectMetaUpdate) error {
@@ -244,6 +249,16 @@ func (s *Server) updateProjectMetadata(id, workspaceID string, u ProjectMetaUpda
 		}
 		args = append(args, v)
 		sets = append(sets, "iosdist_app_id = $"+itoa(len(args)))
+	}
+	if u.DefaultLLMConfigID != nil {
+		var v any
+		if *u.DefaultLLMConfigID > 0 {
+			v = *u.DefaultLLMConfigID
+		} else {
+			v = nil
+		}
+		args = append(args, v)
+		sets = append(sets, "default_llm_config_id = $"+itoa(len(args)))
 	}
 	if len(args) == 0 {
 		return nil

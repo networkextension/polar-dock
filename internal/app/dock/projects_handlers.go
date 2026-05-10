@@ -631,6 +631,16 @@ func (s *Server) handleProjectDecompose(c *gin.Context) {
 		st := ProjectStatusPlanning
 		_ = s.updateProjectMetadata(project.ID, workspaceID, ProjectMetaUpdate{Status: &st})
 	}
+	// Pin the LLM the user just decomposed with onto the project.
+	// Sub-task chats inherit this so they don't silently fall back
+	// to the workspace default. Always overwrite — the most recent
+	// decompose's pick is the project's "current model". Best-effort:
+	// don't fail the response if the UPDATE hiccups, the features
+	// already landed.
+	{
+		pickID := chosen.ID
+		_ = s.updateProjectMetadata(project.ID, workspaceID, ProjectMetaUpdate{DefaultLLMConfigID: &pickID})
+	}
 	// Re-read the just-inserted features so SprintNumber is set
 	// on each (appendProjectFeatures mutates the slice but the
 	// initial loop only set Title/Description/Complexity/Selected).
