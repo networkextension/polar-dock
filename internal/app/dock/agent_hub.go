@@ -340,6 +340,13 @@ type agentResearchLLMSnapshot struct {
 	Provider string `json:"provider,omitempty"`
 	BaseURL  string `json:"base_url"`
 	APIKey   string `json:"api_key"`
+	// ProxyURL: optional HTTP(S) proxy the agent should route the
+	// upstream LLM call through. Empty = direct. Plumbed from the
+	// LLMConfig.ProxyURL column. The agent must NOT route its dock
+	// callback / WS traffic through this proxy — it's only for the
+	// LLM endpoint. polar-agent's llm_client builds a per-request
+	// Proxy func that bypasses the dock host explicitly.
+	ProxyURL string `json:"proxy_url,omitempty"`
 }
 
 // dispatchResearchTask hands the task envelope to the agent over WS

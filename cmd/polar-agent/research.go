@@ -69,6 +69,10 @@ type researchLLMSnapshot struct {
 	Provider string `json:"provider"`
 	BaseURL  string `json:"base_url"`
 	APIKey   string `json:"api_key"`
+	// ProxyURL: optional HTTP(S) proxy for the upstream LLM call.
+	// Empty = direct. Dock plumbs this from llm_configs.proxy_url
+	// so operators don't have to touch agent-side env vars.
+	ProxyURL string `json:"proxy_url"`
 }
 
 type researchResult struct {
@@ -131,7 +135,7 @@ func runResearchTask(ctx context.Context, cfg AgentConfig, baseWorkdir string, e
 		}
 	}
 
-	llm := newLLMClient(env.LLM.BaseURL, env.LLM.APIKey)
+	llm := newLLMClient(env.LLM.BaseURL, env.LLM.APIKey, env.LLM.ProxyURL, cfg.Server)
 	exec := newExecutor(workdir, verbose)
 
 	systemPrompt := buildResearchSystemPrompt(env, workdir)

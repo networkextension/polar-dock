@@ -210,6 +210,7 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 			Provider: strings.TrimSpace(llmConfig.ProviderKind),
 			BaseURL:  llmConfig.BaseURL,
 			APIKey:   rt.APIKey,
+			ProxyURL: strings.TrimSpace(llmConfig.ProxyURL),
 		},
 	}
 	if err := s.agentHub.dispatchResearchTask(botUserID, envelope); err != nil {

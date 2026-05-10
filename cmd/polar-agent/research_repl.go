@@ -78,7 +78,11 @@ func runResearchREPL(args []string) error {
 	fmt.Println(strings.Repeat("─", 60))
 
 	ctx := context.Background()
-	llm := newLLMClient(*llmBaseURL, *llmAPIKey)
+	// REPL is a manual standalone tool — operator can set HTTPS_PROXY
+	// via env if they need a proxy; we don't take it as a flag here to
+	// keep the CLI surface tight. dockBypassURL stays empty since this
+	// path isn't dock-driven.
+	llm := newLLMClient(*llmBaseURL, *llmAPIKey, "", "")
 	exec := newExecutor(wd, *verbose)
 	logger := newResearchLogger()
 
