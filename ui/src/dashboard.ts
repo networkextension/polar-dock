@@ -885,6 +885,15 @@ async function loadEntries(reset = false): Promise<void> {
       ? `<span>${entry.title}</span><span class="tag-chip">Public</span>`
       : `<span>${entry.title}</span>`;
     li.addEventListener("click", () => {
+      // Private entries jump to the dedicated /markdown.html render
+      // page instead of the dashboard's inline preview pane —
+      // gives full-width reading + the copy-md/copy-html toolbar.
+      // Public + workspace entries keep the old inline preview so
+      // browsing-while-on-dashboard stays a one-click affair.
+      if ((entry.visibility ?? (entry.is_public ? "public" : "private")) === "private") {
+        window.location.href = `/markdown.html?id=${entry.id}`;
+        return;
+      }
       void loadEntry(entry.id);
     });
     entryList.appendChild(li);

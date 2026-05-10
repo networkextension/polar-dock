@@ -16,6 +16,10 @@ export type EntrySummary = {
   id: number;
   title: string;
   is_public?: boolean;
+  // visibility is the canonical tier (private / workspace / public).
+  // is_public above stays for legacy callers but is just `visibility === "public"`.
+  visibility?: "private" | "workspace" | "public";
+  workspace_id?: string | null;
 };
 
 export type EntryDetailResponse = {
