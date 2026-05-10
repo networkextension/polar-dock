@@ -270,13 +270,17 @@ func (s *Server) handleResearchRunStart(c *gin.Context) {
 	// Transparency: write a system-side chat message into the thread
 	// announcing the LLM in use. The operator sees this whenever they
 	// open the bot chat — independent of whether the dispatch UI was
-	// visible at the time.
+	// visible at the time. Pin the LLM snapshot onto the message row
+	// so the per-message footer keeps showing the dispatch-time LLM
+	// even after the project default is later changed (otherwise the
+	// footer falls back to thread.config_model and drifts).
 	if run.ChatThreadID != nil {
 		body := "🔬 研究任务启动 · LLM: " + strings.TrimSpace(run.LLMName)
 		if run.LLMModel != "" {
 			body += " (" + strings.TrimSpace(run.LLMModel) + ")"
 		}
-		if _, sendErr := s.sendChatMessage(*run.ChatThreadID, run.LLMThreadID, run.BotUserID, run.LLMName, body, time.Now()); sendErr != nil {
+		snap := researchRunLLMSnapshot(run)
+		if _, sendErr := s.sendBotChatMessageWithLLM(*run.ChatThreadID, run.LLMThreadID, run.BotUserID, run.LLMName, body, nil, snap, time.Now()); sendErr != nil {
 			log.Printf("research start: post system message run=%d: %v", runID, sendErr)
 		}
 	}
@@ -358,7 +362,8 @@ func (s *Server) handleResearchRunResult(c *gin.Context) {
 				body += "：" + strings.TrimSpace(req.ErrorMessage)
 			}
 		}
-		if _, sendErr := s.sendChatMessage(*run.ChatThreadID, run.LLMThreadID, run.BotUserID, run.LLMName, body, time.Now()); sendErr != nil {
+		snap := researchRunLLMSnapshot(run)
+		if _, sendErr := s.sendBotChatMessageWithLLM(*run.ChatThreadID, run.LLMThreadID, run.BotUserID, run.LLMName, body, nil, snap, time.Now()); sendErr != nil {
 			log.Printf("research result: post terminal message run=%d: %v", runID, sendErr)
 		}
 	}
@@ -397,6 +402,29 @@ func shortSHA(s string) string {
 		return s[:8]
 	}
 	return s
+}
+
+// researchRunLLMSnapshot lifts the run's LLM identity into a
+// chatLLMSnapshot so the system messages we write into the thread
+// (🔬 启动 / ✅ 完成 / ❌ 失败) carry the dispatch-time LLM on the
+// message row itself. Without this, those messages have no per-row
+// llm_model and the UI footer falls back to the thread's *current*
+// llm_threads.config_model — which silently drifts when the operator
+// later changes the project's default LLM. nil when the run was
+// dispatched without a non-system LLM (defensive — every research run
+// today has one).
+func researchRunLLMSnapshot(run *ResearchRun) *chatLLMSnapshot {
+	if run == nil {
+		return nil
+	}
+	if run.LLMConfigID == nil && strings.TrimSpace(run.LLMName) == "" && strings.TrimSpace(run.LLMModel) == "" {
+		return nil
+	}
+	return &chatLLMSnapshot{
+		ConfigID:   run.LLMConfigID,
+		ConfigName: strings.TrimSpace(run.LLMName),
+		Model:      strings.TrimSpace(run.LLMModel),
+	}
 }
 
 // errResearchAlreadyTerminal helps avoid the "magic string" anti-pattern
