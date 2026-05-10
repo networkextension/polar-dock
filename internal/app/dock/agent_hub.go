@@ -51,6 +51,10 @@ type agentToolResult struct {
 type agentConn struct {
 	tokenID           string
 	requestRemoteAddr string
+	// attachedAt is set when the conn is registered with the hub.
+	// Surfaces as `attached_at` on /api/agent/bots/:bot_id/status so
+	// the UI can show "online for 2h 15m" / IP next to a connected bot.
+	attachedAt time.Time
 	userID     string
 	botUserID  string
 	workspaceID string

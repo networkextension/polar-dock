@@ -265,6 +265,7 @@ func (s *Server) handleAgentWS(c *gin.Context) {
 	ac := &agentConn{
 		tokenID:           tokenID,
 		requestRemoteAddr: c.Request.RemoteAddr,
+		attachedAt:        time.Now(),
 		userID:            userID,
 		botUserID:         botUserID,
 		workspaceID:       strings.TrimSpace(c.Query("workspace_id")),
@@ -670,10 +671,20 @@ func (s *Server) handleAgentStatus(c *gin.Context) {
 	if caps == nil {
 		caps = []string{}
 	}
+	// remote_addr is the Go-formatted "host:port" from r.RemoteAddr;
+	// strip the port before exposing — UI just wants the IP. nginx
+	// puts the proxy's address here unless we wire a forwarded-for
+	// header through, so this is "where dock saw the connection
+	// originate" — exactly the right answer for an operator.
+	remoteIP := remoteIPForRequest(conn.requestRemoteAddr)
+	uptimeSec := int(time.Since(conn.attachedAt).Seconds())
 	c.JSON(http.StatusOK, gin.H{
 		"attached":     true,
 		"workdir":      conn.workdir,
 		"capabilities": caps,
 		"tool":         conn.tool,
+		"remote_ip":    remoteIP,
+		"attached_at":  conn.attachedAt.UTC().Format(time.RFC3339),
+		"uptime_sec":   uptimeSec,
 	})
 }
