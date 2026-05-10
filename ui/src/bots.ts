@@ -257,12 +257,17 @@ async function hydrateBotAgentBadges(bots: BotUser[]): Promise<void> {
       const caps = data.capabilities || [];
       const workdir = data.workdir || "";
       const tool = (data.tool || "").trim();
+      const remoteIP = (data.remote_ip || "").trim();
+      const uptime = formatUptime(data.uptime_sec || 0);
       const isPassthrough = caps.includes("passthrough") || caps.includes("kimi");
+      const detail = `workdir=${workdir}${remoteIP ? ` · ip=${remoteIP}` : ""}${uptime ? ` · uptime=${uptime}` : ""}`;
+      const ipChip = remoteIP ? `<span class="tag-chip" title="${escapeAttr(detail)}">${escapeAttr(remoteIP)}</span>` : "";
+      const uptimeChip = uptime ? `<span class="tag-chip" title="${escapeAttr(detail)}">⏱ ${escapeAttr(uptime)}</span>` : "";
       if (isPassthrough) {
         const label = tool ? `🤖 ${tool} 接管` : "🤖 本地 agent 接管";
-        slot.innerHTML = `<span class="tag-chip tag-chip-accent" title="本地 polar-agent 用 ${escapeAttr(tool || "本地工具")} 接管，bot 的模型配置被旁路。workdir=${escapeAttr(workdir)}">${label}</span>`;
+        slot.innerHTML = `<span class="tag-chip tag-chip-accent" title="${escapeAttr(detail)}">${label}</span>${ipChip}${uptimeChip}`;
       } else {
-        slot.innerHTML = `<span class="tag-chip" title="polar-agent 已附着，走平台 tool loop。workdir=${escapeAttr(workdir)}">⚙️ agent 已连接</span>`;
+        slot.innerHTML = `<span class="tag-chip" title="${escapeAttr(detail)}">⚙️ agent 已连接</span>${ipChip}${uptimeChip}`;
       }
     } catch {
       // network / 4xx — leave badge slot empty rather than render a
@@ -273,6 +278,21 @@ async function hydrateBotAgentBadges(bots: BotUser[]): Promise<void> {
 
 function escapeAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// formatUptime renders a server-supplied second count as "Nd Nh Nm" /
+// "Nh Nm" / "Nm Ns" / "Ns" — coarsest two units to keep the chip short.
+// Empty string if zero so callers can render conditionally.
+function formatUptime(sec: number): string {
+  if (!sec || sec < 0) return "";
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  return `${s}s`;
 }
 
 async function loadData(): Promise<void> {

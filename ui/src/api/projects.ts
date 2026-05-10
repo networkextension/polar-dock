@@ -201,6 +201,13 @@ export type AgentBotStatus = {
   // is in tool-call loop mode (capability list contains "tools"
   // but not "passthrough"/"kimi").
   tool?: string;
+  // remote_ip + attached_at + uptime_sec are populated only when
+  // attached=true. remote_ip is the address dock saw the WebSocket
+  // come in on (after any reverse proxy strips its own hop). Empty
+  // string when not attached.
+  remote_ip?: string;
+  attached_at?: string;   // RFC3339 UTC
+  uptime_sec?: number;
 };
 
 // Agent attach status for a single bot. Used by bots.ts to show a
