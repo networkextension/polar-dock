@@ -288,3 +288,7 @@ If the file is missing, login still works — geolocation simply becomes unavail
 Polar- is best understood as a living prototype.
 
 It is a place where product thinking, engineering pragmatism, interface experimentation, and AI-assisted development meet in one repository. The codebase is intentionally compact enough to move quickly, but complete enough to surface real architectural and UX decisions.
+
+## License
+
+[BSD 3-Clause](LICENSE) — copy, fork, and ship freely; just keep the copyright notice and don't use the project's name to endorse derivative work without permission.
