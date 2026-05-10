@@ -118,11 +118,14 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 		return
 	}
 
-	// LLM resolution (mirrors resolveAssistBot priority): explicit
-	// picker > bot's bound LLM > workspace default. We don't reuse
-	// resolveAssistBot directly because we need the raw LLMConfig +
-	// apiKey to pass through to the agent, plus we want to keep the
-	// "must have LLM" failure mode bound to the dispatch endpoint.
+	// LLM resolution: explicit picker > project default > bot's
+	// bound LLM > workspace default. The project default is the
+	// LLM the user picked at AI 拆解 time, persisted on the project
+	// row. Skipping it would let the agent silently hop to the
+	// workspace default which is rarely what the operator wants.
+	if req.LLMConfigID <= 0 && project.DefaultLLMConfigID != nil && *project.DefaultLLMConfigID > 0 {
+		req.LLMConfigID = *project.DefaultLLMConfigID
+	}
 	rt, _, llmConfig, rerr := s.resolveAssistBot(userIDStr, workspaceID, bot.ID, req.LLMConfigID)
 	if rerr != nil {
 		writeAssistError(c, rerr)

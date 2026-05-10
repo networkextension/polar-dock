@@ -61,9 +61,14 @@ type Project struct {
 	// bundle_id + xcodegen guidance, polar-agent submit-build uses
 	// the bound app's cert / profile / ASC config to sign + upload
 	// to TestFlight. nil = project isn't iOS-tied.
-	IOSDistAppID *int64    `json:"iosdist_app_id,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	IOSDistAppID *int64 `json:"iosdist_app_id,omitempty"`
+	// DefaultLLMConfigID is the LLM the project was last decomposed
+	// with. Sub-task chats and research dispatches use this ahead of
+	// the workspace default. nil = project hasn't been decomposed yet
+	// (or the referenced config was deleted).
+	DefaultLLMConfigID *int64    `json:"default_llm_config_id,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type ProjectFeature struct {
@@ -128,17 +133,22 @@ func (s *Server) createProject(p *Project) error {
 
 // projectSelectColumns is the canonical SELECT list for projects.
 // Centralized so adding a column means touching one place.
-const projectSelectColumns = `id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, COALESCE(current_sprint, 0), COALESCE(git_remote_url, ''), iosdist_app_id, created_at, updated_at`
+const projectSelectColumns = `id, workspace_id, creator_user_id, name, description, status, template, runtime_env, business_scenario, code_provider, COALESCE(current_sprint, 0), COALESCE(git_remote_url, ''), iosdist_app_id, default_llm_config_id, created_at, updated_at`
 
 func scanProject(scanFn func(...any) error) (*Project, error) {
 	var p Project
 	var iosAppID sql.NullInt64
-	if err := scanFn(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CurrentSprint, &p.GitRemoteURL, &iosAppID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	var defaultLLMID sql.NullInt64
+	if err := scanFn(&p.ID, &p.WorkspaceID, &p.CreatorUserID, &p.Name, &p.Description, &p.Status, &p.Template, &p.RuntimeEnv, &p.BusinessScenario, &p.CodeProvider, &p.CurrentSprint, &p.GitRemoteURL, &iosAppID, &defaultLLMID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if iosAppID.Valid {
 		v := iosAppID.Int64
 		p.IOSDistAppID = &v
+	}
+	if defaultLLMID.Valid {
+		v := defaultLLMID.Int64
+		p.DefaultLLMConfigID = &v
 	}
 	return &p, nil
 }
