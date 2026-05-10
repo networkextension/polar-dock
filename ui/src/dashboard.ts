@@ -4,11 +4,8 @@ import {
   beginPasskeyRegistration,
   createTag,
   deleteApplePushCertificate,
-  deleteEntry,
   fetchAvailableLLMConfigs,
   fetchBotUsers,
-  fetchEntries,
-  fetchEntry,
   fetchLLMConfigs,
   fetchLoginHistory,
   fetchInviteCodes,
@@ -34,7 +31,6 @@ import { fetchCurrentUser, logout, sendEmailVerification } from "./api/session.j
 import { formatDeviceType } from "./lib/client.js";
 import { makeDefaultAvatar } from "./lib/avatar.js";
 import { byId, query } from "./lib/dom.js";
-import { renderMarkdown } from "./lib/marked.js";
 import { base64URLToBuffer, credentialToJSON } from "./lib/passkey.js";
 import { LLM_PROVIDER_PRESETS, getPresetByID, matchPresetByBaseURL, matchPresetForConfig, resolvePresetEndpoint, resolvePresetExtras, resolvePresetProviderKind } from "./lib/llm_presets.js";
 import { hydrateSiteBrand, renderSiteBrand, renderSidebarFoot } from "./lib/site.js";
@@ -50,7 +46,6 @@ import type {
   ApplePushCertificate,
   BotPayload,
   BotUser,
-  EntrySummary,
   InviteCode,
   LLMConfig,
   LLMConfigPayload,
@@ -63,13 +58,8 @@ import type {
 } from "./types/dashboard.js";
 
 const welcomeText = byId<HTMLElement>("welcomeText");
-const entryList = byId<HTMLUListElement>("entryList");
-const entryContent = byId<HTMLElement>("entryContent");
 const logoutBtn = byId<HTMLButtonElement>("logoutBtn");
 const newEntryBtn = byId<HTMLButtonElement>("newEntryBtn");
-const loadMoreBtn = byId<HTMLButtonElement>("loadMoreBtn");
-const editBtn = byId<HTMLButtonElement>("editBtn");
-const deleteBtn = byId<HTMLButtonElement>("deleteBtn");
 const drawerToggleBtn = byId<HTMLButtonElement>("drawerToggleBtn");
 const drawerCloseBtn = byId<HTMLButtonElement>("drawerCloseBtn");
 const drawerBackdrop = byId<HTMLElement>("drawerBackdrop");
@@ -101,7 +91,6 @@ const settingsCardRoleBadge = byId<HTMLElement>("settingsCardRoleBadge");
 const settingsProfileName = byId<HTMLElement>("settingsProfileName");
 const settingsProfileMeta = byId<HTMLElement>("settingsProfileMeta");
 const settingsProfileRoleBadge = byId<HTMLElement>("settingsProfileRoleBadge");
-const addTagBtn = byId<HTMLButtonElement>("addTagBtn");
 const tagModal = byId<HTMLElement>("tagModal");
 const tagModalTitle = byId<HTMLElement>("tagModalTitle");
 const tagModalCloseBtn = byId<HTMLButtonElement>("tagModalCloseBtn");
@@ -173,9 +162,6 @@ const settingsOpenButtons = Array.from(document.querySelectorAll<HTMLElement>("[
 
 const iconCtx = iconCanvas.getContext("2d");
 
-let nextOffset = 0;
-let hasMore = true;
-let activeEntryId: number | null = null;
 let iconImage: HTMLImageElement | null = null;
 let baseScale = 1;
 let zoomValue = 1;
@@ -263,12 +249,6 @@ function setDrawerOpen(open: boolean): void {
   }
   entryDrawer.classList.toggle("open", open);
   drawerBackdrop.classList.toggle("open", open);
-}
-
-function setActiveEntryItem(): void {
-  entryList.querySelectorAll<HTMLLIElement>("li[data-entry-id]").forEach((item) => {
-    item.classList.toggle("active", Number(item.dataset.entryId) === activeEntryId);
-  });
 }
 
 function syncThemeButton(theme: ThemeName): void {
@@ -662,9 +642,6 @@ async function loadProfile(): Promise<void> {
   settingsProfileRoleBadge.hidden = !isAdmin;
   renderEmailVerificationState(data.email, data.email_verified);
   setStatusMessage(emailVerificationStatus, "");
-  addTagBtn.disabled = !isAdmin;
-  addTagBtn.textContent = isAdmin ? t("dashboard.newTag") : t("dashboard.adminOnlyTag");
-  addTagBtn.hidden = !isAdmin;
   siteAdminPanel.hidden = !isAdmin;
   settingsNavButtons.forEach((button) => {
     if (button.dataset.settingsNav === "site") {
@@ -854,65 +831,6 @@ function closeSiteAdminModal(): void {
   setModalOpen(siteAdminModal, false);
 }
 
-async function loadEntries(reset = false): Promise<void> {
-  if (reset) {
-    nextOffset = 0;
-    hasMore = true;
-    entryList.innerHTML = "";
-  }
-
-  if (!hasMore) {
-    return;
-  }
-
-  const { response, data } = await fetchEntries(nextOffset);
-  if (!response.ok) {
-    entryList.innerHTML = `<li>${t("dashboard.entryLoadFailed")}</li>`;
-    return;
-  }
-  const entries: EntrySummary[] = data.entries || [];
-  if (reset && !entries.length) {
-    entryList.innerHTML = `<li>${t("dashboard.noEntries")}</li>`;
-    hasMore = false;
-    loadMoreBtn.style.display = "none";
-    return;
-  }
-
-  entries.forEach((entry) => {
-    const li = document.createElement("li");
-    li.dataset.entryId = String(entry.id);
-    li.innerHTML = entry.is_public
-      ? `<span>${entry.title}</span><span class="tag-chip">Public</span>`
-      : `<span>${entry.title}</span>`;
-    li.addEventListener("click", () => {
-      void loadEntry(entry.id);
-    });
-    entryList.appendChild(li);
-  });
-
-  hasMore = Boolean(data.has_more);
-  nextOffset = Number(data.next_offset || 0);
-  loadMoreBtn.style.display = hasMore ? "inline-flex" : "none";
-}
-
-async function loadEntry(id: number): Promise<void> {
-  const { response, data } = await fetchEntry(id);
-  if (!response.ok) {
-    entryContent.textContent = t("dashboard.entryReadFailed");
-    return;
-  }
-
-  activeEntryId = data.entry ? data.entry.id : null;
-  setActiveEntryItem();
-  const rawContent = data.content || t("dashboard.emptyContent");
-  entryContent.innerHTML = renderMarkdown(rawContent);
-  editBtn.disabled = data.can_edit === false;
-  deleteBtn.disabled = data.can_edit === false;
-  if (isMobileLayout()) {
-    setDrawerOpen(false);
-  }
-}
-
 function drawIconPreview(): void {
   if (!iconCtx || !iconImage) {
     return;
@@ -956,13 +874,6 @@ function moveDrag(clientX: number, clientY: number): void {
 function stopDrag(): void {
   dragging = false;
 }
-
-addTagBtn.addEventListener("click", () => {
-  if (addTagBtn.disabled) {
-    return;
-  }
-  openTagModal();
-});
 
 settingsOpenButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -1425,10 +1336,6 @@ newEntryBtn.addEventListener("click", () => {
   window.location.href = "/editor.html";
 });
 
-loadMoreBtn.addEventListener("click", () => {
-  void loadEntries();
-});
-
 drawerToggleBtn.addEventListener("click", () => {
   setDrawerOpen(!entryDrawer.classList.contains("open"));
 });
@@ -1444,29 +1351,6 @@ drawerBackdrop.addEventListener("click", () => {
 window.addEventListener("resize", () => {
   if (!isMobileLayout()) {
     setDrawerOpen(false);
-  }
-});
-
-editBtn.addEventListener("click", () => {
-  if (!activeEntryId) {
-    return;
-  }
-  window.location.href = `/editor.html?id=${activeEntryId}`;
-});
-
-deleteBtn.addEventListener("click", async () => {
-  if (!activeEntryId) {
-    return;
-  }
-  if (!window.confirm(t("dashboard.confirmDeleteEntry"))) {
-    return;
-  }
-
-  const response = await deleteEntry(activeEntryId);
-  if (response.ok) {
-    activeEntryId = null;
-    entryContent.textContent = t("dashboard.selectEntry");
-    await loadEntries(true);
   }
 });
 
@@ -1763,7 +1647,7 @@ customizeCloseBtn.addEventListener("click", () => {
 void (async () => {
   await hydrateSiteBrand();
   await loadProfile();
-  await Promise.all([loadEntries(true), loadLoginHistory(), loadPasskeys(), loadSiteAdminData(), loadAndRenderWidgets()]);
+  await Promise.all([loadLoginHistory(), loadPasskeys(), loadSiteAdminData(), loadAndRenderWidgets()]);
 
   // Open settings modal if redirected from another page with ?settings=
   const settingsParam = new URLSearchParams(window.location.search).get("settings");
