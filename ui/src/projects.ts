@@ -31,6 +31,7 @@ import type { ResearchRun } from "./api/projects.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
 import { fetchIOSApps } from "./api/iosdist.js";
 import type { BotUser } from "./types/dashboard.js";
+import type { ChatLLMConfig } from "./types/chat.js";
 import type { IOSApp } from "./types/iosdist.js";
 import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
@@ -153,6 +154,10 @@ let activeFeatures: ProjectFeature[] = [];
 let activeTasks: ProjectTask[] = [];
 let activeResearchRuns: ResearchRun[] = [];
 let availableBots: BotUser[] = [];
+// availableLLMConfigs caches the workspace-available LLM configs so
+// the dispatch confirm modal can preview "项目默认 LLM" without
+// blocking on a fresh fetch. Populated by loadDecomposeLLMs.
+let availableLLMConfigs: ChatLLMConfig[] = [];
 let pickerOpenForTaskID: string | null = null;
 // botToolMap caches each bot's currently-attached agent tool name
 // (kimi/claude/codex/...) so the pickup picker can highlight bots
@@ -1217,6 +1222,7 @@ async function loadDecomposeLLMs(): Promise<void> {
     return;
   }
   const configs = data.configs || [];
+  availableLLMConfigs = configs;
   const opts = ['<option value="">拆解用 LLM（自动选）</option>'];
   for (const cfg of configs) {
     const label = `${escapeHTML(cfg.name)} · ${escapeHTML(cfg.model)}${cfg.has_api_key ? "" : "（缺 API Key）"}`;
@@ -1280,14 +1286,23 @@ async function doResearchDispatch(taskID: string, botUserID: string): Promise<vo
   if (!activeProject) return;
   const task = activeTasks.find((t) => t.id === taskID);
   if (!task) return;
-  // Look up the bot's bound LLM as a "best-effort preview" — final
-  // resolution happens server-side (workspace default fallback) and
-  // the actual LLM is shown again on success. We just want to give
-  // the operator something concrete to confirm.
+  // Best-effort preview of which LLM the dispatch will use. Mirror
+  // the server-side priority: project default > bot's bound LLM >
+  // workspace default. Falls back to a generic note when none is
+  // discoverable from the loaded project + bots state.
   const bot = availableBots.find((b) => b.bot_user_id === botUserID);
-  const llmPreview = bot && bot.llm_config_id > 0 && bot.config_name
-    ? bot.config_name
-    : "工作区默认 LLM（后端解析）";
+  let llmPreview: string;
+  const projectLLMID = activeProject.default_llm_config_id ?? null;
+  const projectLLM = projectLLMID
+    ? availableLLMConfigs.find((c) => c.id === projectLLMID)
+    : null;
+  if (projectLLM) {
+    llmPreview = `${projectLLM.name} · ${projectLLM.model}（项目默认）`;
+  } else if (bot && bot.llm_config_id > 0 && bot.config_name) {
+    llmPreview = bot.config_name;
+  } else {
+    llmPreview = "工作区默认 LLM（后端解析）";
+  }
   const confirmMsg = [
     `派发研究任务到 ${bot?.name ?? botUserID}？`,
     "",

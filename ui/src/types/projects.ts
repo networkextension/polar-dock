@@ -29,6 +29,10 @@ export type Project = {
   // pickup body includes the bundle id + xcodegen guidance and
   // the iOS submit-build flow is enabled.
   iosdist_app_id?: number | null;
+  // default_llm_config_id: persisted at AI 拆解 time. Sub-task chats
+  // and research dispatches inherit this. null = project hasn't been
+  // decomposed yet (or the referenced config was deleted).
+  default_llm_config_id?: number | null;
   created_at: string;
   updated_at: string;
 };
