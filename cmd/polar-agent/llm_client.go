@@ -73,11 +73,68 @@ type llmClient struct {
 	http    *http.Client
 }
 
-func newLLMClient(baseURL, apiKey string) *llmClient {
+// newLLMClient builds an HTTP client for the LLM endpoint.
+//
+// proxyURL: when non-empty, route LLM requests through this HTTP(S)
+// proxy. Comes from llm_configs.proxy_url plumbed by dock.
+//
+// dockBypassURL: when non-empty, requests whose host matches this
+// URL's host are sent direct (bypassing the proxy). Used so the
+// agent's own dock callbacks (research /start, /result) don't go
+// through the upstream-LLM proxy. Loopback / 192.168.* / 10.* hosts
+// are also auto-bypassed since they're never reachable through an
+// upstream proxy.
+func newLLMClient(baseURL, apiKey, proxyURL, dockBypassURL string) *llmClient {
+	transport := &http.Transport{
+		Proxy: buildProxyFunc(proxyURL, dockBypassURL),
+	}
 	return &llmClient{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		apiKey:  strings.TrimSpace(apiKey),
-		http:    &http.Client{Timeout: 180 * time.Second},
+		http: &http.Client{
+			Timeout:   180 * time.Second,
+			Transport: transport,
+		},
+	}
+}
+
+// buildProxyFunc returns a Proxy func suitable for http.Transport.Proxy.
+// Honors three rules:
+//  1. Empty proxyURL → always direct (no proxy at all).
+//  2. Bypass when request host == dockBypassURL host. Strips port
+//     from both sides for comparison.
+//  3. Bypass loopback + RFC1918 private addresses. Upstream proxies
+//     never have a route to "192.168.x.x" so sending traffic there
+//     just times out.
+//
+// Otherwise the configured proxyURL is used. Errors parsing proxyURL
+// fall back to "direct" so a misconfig doesn't block all traffic.
+func buildProxyFunc(proxyURL, dockBypassURL string) func(*http.Request) (*url.URL, error) {
+	parsedProxy, err := url.Parse(strings.TrimSpace(proxyURL))
+	// Require a recognizable scheme + host. Anything else (typo,
+	// missing scheme, empty value) → direct fallback so a misconfig
+	// doesn't black-hole all LLM traffic.
+	if strings.TrimSpace(proxyURL) == "" || err != nil || parsedProxy.Host == "" {
+		return func(*http.Request) (*url.URL, error) { return nil, nil }
+	}
+	switch parsedProxy.Scheme {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return func(*http.Request) (*url.URL, error) { return nil, nil }
+	}
+	dockHost := ""
+	if u, err := url.Parse(strings.TrimSpace(dockBypassURL)); err == nil {
+		dockHost = u.Hostname()
+	}
+	return func(req *http.Request) (*url.URL, error) {
+		host := req.URL.Hostname()
+		if dockHost != "" && strings.EqualFold(host, dockHost) {
+			return nil, nil
+		}
+		if host == "" || host == "localhost" || strings.HasPrefix(host, "127.") || strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "192.168.") || strings.HasPrefix(host, "172.16.") {
+			return nil, nil
+		}
+		return parsedProxy, nil
 	}
 }
 
