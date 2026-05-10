@@ -262,9 +262,15 @@ func (s *Server) handleAgentWS(c *gin.Context) {
 	}
 	_ = s.touchAgentTokenUsed(tokenID)
 
+	// Prefer the proxy-forwarded client IP (X-Real-IP / X-Forwarded-For)
+	// when set. c.Request.RemoteAddr is the immediate TCP peer, which
+	// is nginx (127.0.0.1) in the typical deployment — useless for
+	// "where is this agent coming from". c.ClientIP() honors the
+	// forwarded headers when gin's trusted-proxy list allows them
+	// (default = trust all, see the gin startup warning).
 	ac := &agentConn{
 		tokenID:           tokenID,
-		requestRemoteAddr: c.Request.RemoteAddr,
+		requestRemoteAddr: c.ClientIP(),
 		attachedAt:        time.Now(),
 		userID:            userID,
 		botUserID:         botUserID,
