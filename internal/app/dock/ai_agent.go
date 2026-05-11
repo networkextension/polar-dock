@@ -182,6 +182,13 @@ const (
 	aiProviderXAIResponses     aiProvider = "xai_responses"
 	aiProviderVolcesResponses  aiProvider = "volces_responses"
 	aiProviderAnthropic        aiProvider = "anthropic_messages"
+	// MiroMind / MiroThinker (api.miromind.ai) speaks OpenAI Chat
+	// Completions on the wire, but its streaming frames carry the
+	// deepresearch thinking trace in `choices[].delta.reasoning_steps`
+	// instead of (or before) `delta.content`. We give it a dedicated
+	// stream decoder so users see the reasoning live; the non-streaming
+	// path is identical to OpenAI-compat.
+	aiProviderMiroMind aiProvider = "miromind"
 )
 
 type geminiGenerateContentRequest struct {
@@ -839,6 +846,11 @@ func (a *aiAgent) requestChatCompletionInner(runtimeConfig aiRuntimeConfig, payl
 		return a.requestXAIResponses(runtimeConfig, payload)
 	case aiProviderVolcesResponses:
 		return a.requestVolcesResponses(runtimeConfig, payload)
+	case aiProviderMiroMind:
+		// Wire shape is OpenAI Chat Completions; reasoning_steps only
+		// appears in streaming deltas, so the non-streaming response
+		// is just `choices[0].message.content`.
+		return a.requestOpenAICompatibleChatCompletion(runtimeConfig, payload)
 	default:
 		return a.requestOpenAICompatibleChatCompletion(runtimeConfig, payload)
 	}
@@ -1293,6 +1305,9 @@ func detectAIProvider(baseURL string) aiProvider {
 	}
 	if strings.Contains(text, "api.x.ai") {
 		return aiProviderXAIResponses
+	}
+	if strings.Contains(text, "api.miromind.ai") {
+		return aiProviderMiroMind
 	}
 	// Volcano Engine (字节豆包) exposes both Chat Completions
 	// (/api/v3/chat/completions) and Responses API
