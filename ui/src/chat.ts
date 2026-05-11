@@ -167,6 +167,48 @@ function escapeHtml(input: string): string {
     .split("'").join("&#39;");
 }
 
+// linkifyEscaped is the renderer for plain user-to-user DM text. It
+// behaves like escapeHtml on every character except http(s):// URLs,
+// which become <a target="_blank" rel="noopener noreferrer">. Use this
+// instead of escapeHtml for any place where a raw URL pasted by a user
+// should be clickable (e.g. a workspace invite link copied from the
+// admin tab and dropped into a DM). System / bot messages already go
+// through renderMarkdown, which GFM-autolinks for them.
+//
+// Safety: the URL substring is escapeHtml'd before being interpolated
+// into both the href and the link text, so a hostile input like
+// "https://x.com/<script>" cannot inject markup. Trailing sentence
+// punctuation (.,;:!?)]}>) is sliced off the URL into the surrounding
+// text so a sentence like "见 https://example.com." doesn't grab the
+// period.
+function linkifyEscaped(input: string): string {
+  if (!input) return "";
+  const urlRegex = /https?:\/\/[^\s<>"']+/g;
+  let out = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = urlRegex.exec(input)) !== null) {
+    out += escapeHtml(input.slice(last, m.index));
+    let url = m[0];
+    let trailing = "";
+    while (url.length > 0 && /[.,;:!?)\]}>]/.test(url[url.length - 1])) {
+      trailing = url[url.length - 1] + trailing;
+      url = url.slice(0, -1);
+    }
+    if (url.length === 0) {
+      // Pathological "https://" with nothing after — treat as plain text.
+      out += escapeHtml(m[0]);
+    } else {
+      const safe = escapeHtml(url);
+      out += `<a href="${safe}" target="_blank" rel="noopener noreferrer">${safe}</a>`;
+      out += escapeHtml(trailing);
+    }
+    last = m.index + m[0].length;
+  }
+  out += escapeHtml(input.slice(last));
+  return out;
+}
+
 // shared_markdown messages carry: a title (first ~60 chars of the AI reply),
 // a preview (first ~120 chars), and on expand, the full markdown which the
 // backend stored as `# {title}\n\n{reply}`. All three start with the same
@@ -867,7 +909,7 @@ function renderMessages(messages: ChatMessage[], scrollToBottom = false): void {
             })()
         : isSystem
           ? renderMarkdown(msg.content || "")
-          : escapeHtml(msg.content || "");
+          : linkifyEscaped(msg.content || "");
       const bubbleClass = msg.deleted
         ? "message-bubble deleted"
         : isStreamingBot
