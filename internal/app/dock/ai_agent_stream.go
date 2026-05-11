@@ -80,6 +80,11 @@ func (a *aiAgent) requestStreamingChatCompletionInner(ctx context.Context, runti
 	case aiProviderXAIResponses:
 		out, err := a.streamXAI(ctx, runtimeConfig, payload, onDelta)
 		return out, nil, err
+	case aiProviderVolcesResponses:
+		out, err := a.streamVolces(ctx, runtimeConfig, payload, onDelta)
+		return out, nil, err
+	case aiProviderMiroMind:
+		return a.streamMiroMind(ctx, runtimeConfig, payload, onDelta)
 	default:
 		return a.streamOpenAICompatible(ctx, runtimeConfig, payload, onDelta)
 	}
@@ -337,6 +342,159 @@ func (a *aiAgent) streamOpenAICompatible(ctx context.Context, runtimeConfig aiRu
 	}
 }
 
+// ---- MiroMind / MiroThinker -----------------------------------------------
+//
+// MiroMind speaks OpenAI Chat Completions on the wire (Bearer auth, /v1/chat/
+// completions, SSE frames carrying chat.completion.chunk shapes). The wrinkle
+// is that deepresearch models stream their thinking trace as
+//
+//	"delta": { "reasoning_steps": [ {"type":"thinking","thought":"…"} ] }
+//
+// instead of (or before) delta.content. We surface that trace to the user by
+// wrapping the concatenated thoughts in <think>…</think> tags — the same
+// convention DeepSeek-R1 / QwQ use, which downstream renderers already know
+// how to collapse or strip. Final answer text (delta.content) is emitted
+// after the closing </think> tag.
+
+type miroMindStreamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Role           string                  `json:"role,omitempty"`
+			Content        *string                 `json:"content,omitempty"`
+			ReasoningSteps []miroMindReasoningStep `json:"reasoning_steps,omitempty"`
+		} `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *aiUsage        `json:"usage,omitempty"`
+	Error json.RawMessage `json:"error,omitempty"`
+}
+
+type miroMindReasoningStep struct {
+	Type    string `json:"type"`
+	Thought string `json:"thought"`
+}
+
+func (a *aiAgent) streamMiroMind(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
+	if payload.StreamOptions == nil {
+		payload.StreamOptions = &aiStreamOptions{IncludeUsage: true}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", nil, err
+	}
+	session, err := a.startStreamingRequest(ctx, "miromind", runtimeConfig.BaseURL, "application/json", body, map[string]string{
+		"Authorization": "Bearer " + runtimeConfig.APIKey,
+	}, runtimeConfig.ProxyURL)
+	if err != nil {
+		return "", nil, err
+	}
+	defer session.close()
+
+	emit := func(s string, assembled *strings.Builder) {
+		if s == "" {
+			return
+		}
+		assembled.WriteString(s)
+		if onDelta != nil {
+			onDelta(s)
+		}
+	}
+
+	var (
+		assembled  strings.Builder
+		inThinking bool
+		seenFirst  bool
+		gotDone    bool
+		usage      *aiUsage
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			if inThinking {
+				emit("\n</think>\n\n", &assembled)
+			}
+			return assembled.String(), usage, ctx.Err()
+		case err := <-session.errs:
+			if err != nil {
+				if inThinking {
+					emit("\n</think>\n\n", &assembled)
+				}
+				return assembled.String(), usage, err
+			}
+		case frame, ok := <-session.frames:
+			if !ok {
+				if inThinking {
+					emit("\n</think>\n\n", &assembled)
+				}
+				if !gotDone {
+					return assembled.String(), usage, errors.New("miromind stream ended without [DONE]")
+				}
+				return assembled.String(), usage, nil
+			}
+			if frame.data == "" {
+				continue
+			}
+			if frame.data == "[DONE]" {
+				if inThinking {
+					emit("\n</think>\n\n", &assembled)
+					inThinking = false
+				}
+				gotDone = true
+				return assembled.String(), usage, nil
+			}
+			var chunk miroMindStreamChunk
+			if err := json.Unmarshal([]byte(frame.data), &chunk); err != nil {
+				log.Printf("ai agent stream parse miromind chunk failed: %v body=%s", err, truncateForLog(frame.data, 200))
+				continue
+			}
+			if message := parseAIErrorMessage(chunk.Error); message != "" {
+				if inThinking {
+					emit("\n</think>\n\n", &assembled)
+				}
+				return assembled.String(), usage, errors.New(message)
+			}
+			if chunk.Usage != nil {
+				usage = chunk.Usage
+			}
+			for _, choice := range chunk.Choices {
+				// Reasoning trace first — open <think> on the first
+				// thought we see, accumulate subsequent thoughts inside.
+				for _, step := range choice.Delta.ReasoningSteps {
+					if step.Type != "" && step.Type != "thinking" {
+						continue
+					}
+					if step.Thought == "" {
+						continue
+					}
+					if !inThinking {
+						emit("<think>\n", &assembled)
+						inThinking = true
+					}
+					emit(step.Thought, &assembled)
+					if !seenFirst {
+						seenFirst = true
+						log.Printf("ai agent stream first chunk: provider=miromind phase=thinking bytes=%d", len(step.Thought))
+					}
+				}
+				// Final content. Close the <think> block once on
+				// transition, then stream content as plain deltas.
+				if choice.Delta.Content != nil && *choice.Delta.Content != "" {
+					if inThinking {
+						emit("\n</think>\n\n", &assembled)
+						inThinking = false
+					}
+					delta := *choice.Delta.Content
+					emit(delta, &assembled)
+					if !seenFirst {
+						seenFirst = true
+						log.Printf("ai agent stream first chunk: provider=miromind phase=content bytes=%d", len(delta))
+					}
+				}
+			}
+		}
+	}
+}
+
 // ---- Anthropic Messages ---------------------------------------------------
 
 type anthropicStreamDelta struct {
@@ -583,6 +741,90 @@ func (a *aiAgent) streamXAI(ctx context.Context, runtimeConfig aiRuntimeConfig, 
 				if !seenFirst {
 					seenFirst = true
 					log.Printf("ai agent stream first chunk: provider=xai bytes=%d", len(chunk.Delta))
+				}
+				if onDelta != nil {
+					onDelta(chunk.Delta)
+				}
+			default:
+				// response.created / output_item.added / output_text.done /
+				// content_part.* / content_part.done — no-op.
+			}
+		}
+	}
+}
+
+// ---- Volces Responses -----------------------------------------------------
+//
+// Volces' Responses API (`/api/v3/responses` on ark.cn-beijing.volces.com)
+// follows OpenAI's Responses SSE shape — same event types as xAI
+// (`response.output_text.delta`, `response.completed`, `response.error`).
+// Two differences from streamXAI:
+//   - No web_search tool in the payload (Volces 400s on it; see
+//     convertToVolcesResponsesRequest).
+//   - BaseURL is used verbatim — Volces' URL is already the full
+//     `/responses` path, no rewriting like buildXAIResponsesRequestURL.
+func (a *aiAgent) streamVolces(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
+	reqURL := strings.TrimSpace(runtimeConfig.BaseURL)
+	if reqURL == "" {
+		return "", errors.New("Volces 配置缺少 Base URL")
+	}
+	bodyPayload := convertToVolcesResponsesRequest(payload)
+	bodyPayloadStreaming := struct {
+		xAIResponsesRequest
+		Stream bool `json:"stream"`
+	}{xAIResponsesRequest: bodyPayload, Stream: true}
+	body, err := json.Marshal(bodyPayloadStreaming)
+	if err != nil {
+		return "", err
+	}
+	session, err := a.startStreamingRequest(ctx, "volces", reqURL, "application/json", body, map[string]string{
+		"Authorization": "Bearer " + runtimeConfig.APIKey,
+	}, runtimeConfig.ProxyURL)
+	if err != nil {
+		return "", err
+	}
+	defer session.close()
+
+	var (
+		assembled strings.Builder
+		seenFirst bool
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return assembled.String(), ctx.Err()
+		case err := <-session.errs:
+			if err != nil {
+				return assembled.String(), err
+			}
+		case frame, ok := <-session.frames:
+			if !ok {
+				return assembled.String(), nil
+			}
+			if frame.data == "" {
+				continue
+			}
+			var chunk xAIStreamEvent
+			if err := json.Unmarshal([]byte(frame.data), &chunk); err != nil {
+				log.Printf("ai agent stream parse volces chunk failed: %v body=%s", err, truncateForLog(frame.data, 200))
+				continue
+			}
+			switch chunk.Type {
+			case "response.error":
+				if chunk.Error != nil && chunk.Error.Message != "" {
+					return assembled.String(), errors.New(chunk.Error.Message)
+				}
+				return assembled.String(), errors.New("volces stream returned response.error")
+			case "response.completed":
+				return assembled.String(), nil
+			case "response.output_text.delta":
+				if chunk.Delta == "" {
+					continue
+				}
+				assembled.WriteString(chunk.Delta)
+				if !seenFirst {
+					seenFirst = true
+					log.Printf("ai agent stream first chunk: provider=volces bytes=%d", len(chunk.Delta))
 				}
 				if onDelta != nil {
 					onDelta(chunk.Delta)

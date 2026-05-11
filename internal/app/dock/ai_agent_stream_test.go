@@ -415,3 +415,294 @@ loop:
 		t.Errorf("expected error 'boom', got %q", gotErr)
 	}
 }
+
+// runMiroMindDecode mirrors streamMiroMind's loop without the HTTP/session
+// scaffolding so we can feed canned SSE bodies in. Stays in lockstep with
+// the production loop's reasoning_steps + content interleaving + <think>
+// open/close logic.
+func runMiroMindDecode(t *testing.T, body string) (string, *aiUsage, error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	emit := func(s string, b *strings.Builder) {
+		if s != "" {
+			b.WriteString(s)
+		}
+	}
+	var (
+		assembled  strings.Builder
+		inThinking bool
+		gotDone    bool
+		usage      *aiUsage
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return assembled.String(), usage, ctx.Err()
+		case err := <-errs:
+			if err != nil {
+				return assembled.String(), usage, err
+			}
+		case frame, ok := <-frames:
+			if !ok {
+				if inThinking {
+					emit("\n</think>\n\n", &assembled)
+				}
+				if !gotDone {
+					// Mirror production: missing [DONE] is an error, but
+					// for assembly assertions we just return what we have.
+					return assembled.String(), usage, nil
+				}
+				return assembled.String(), usage, nil
+			}
+			if frame.data == "" {
+				continue
+			}
+			if frame.data == "[DONE]" {
+				if inThinking {
+					emit("\n</think>\n\n", &assembled)
+					inThinking = false
+				}
+				gotDone = true
+				return assembled.String(), usage, nil
+			}
+			var chunk miroMindStreamChunk
+			if err := jsonUnmarshalString(frame.data, &chunk); err != nil {
+				continue
+			}
+			if chunk.Usage != nil {
+				usage = chunk.Usage
+			}
+			for _, choice := range chunk.Choices {
+				for _, step := range choice.Delta.ReasoningSteps {
+					if step.Type != "" && step.Type != "thinking" {
+						continue
+					}
+					if step.Thought == "" {
+						continue
+					}
+					if !inThinking {
+						emit("<think>\n", &assembled)
+						inThinking = true
+					}
+					emit(step.Thought, &assembled)
+				}
+				if choice.Delta.Content != nil && *choice.Delta.Content != "" {
+					if inThinking {
+						emit("\n</think>\n\n", &assembled)
+						inThinking = false
+					}
+					emit(*choice.Delta.Content, &assembled)
+				}
+			}
+		}
+	}
+}
+
+func TestMiroMindStreamingThinkingThenContent(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"choices":[{"delta":{"role":"assistant"}}]}`,
+		``,
+		`data: {"choices":[{"delta":{"reasoning_steps":[{"type":"thinking","thought":"hello "}]}}]}`,
+		``,
+		`data: {"choices":[{"delta":{"reasoning_steps":[{"type":"thinking","thought":"world"}]}}]}`,
+		``,
+		`data: {"choices":[{"delta":{"content":"Answer: 42"}}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	got, _, err := runMiroMindDecode(t, body)
+	if err != nil {
+		t.Fatalf("decode err: %v", err)
+	}
+	want := "<think>\nhello world\n</think>\n\nAnswer: 42"
+	if got != want {
+		t.Errorf("assembled mismatch:\n got=%q\nwant=%q", got, want)
+	}
+}
+
+func TestMiroMindStreamingThinkingOnly(t *testing.T) {
+	// Deepresearch responses can be entirely thinking — closing the
+	// <think> block on [DONE] is what protects the renderer from an
+	// unclosed tag.
+	body := strings.Join([]string{
+		`data: {"choices":[{"delta":{"reasoning_steps":[{"type":"thinking","thought":"only "}]}}]}`,
+		``,
+		`data: {"choices":[{"delta":{"reasoning_steps":[{"type":"thinking","thought":"a trace"}]}}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	got, _, err := runMiroMindDecode(t, body)
+	if err != nil {
+		t.Fatalf("decode err: %v", err)
+	}
+	want := "<think>\nonly a trace\n</think>\n\n"
+	if got != want {
+		t.Errorf("assembled mismatch:\n got=%q\nwant=%q", got, want)
+	}
+}
+
+func TestMiroMindStreamingCapturesUsage(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"choices":[{"delta":{"content":"hi"}}]}`,
+		``,
+		`data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":3,"total_tokens":14}}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	content, usage, err := runMiroMindDecode(t, body)
+	if err != nil {
+		t.Fatalf("decode err: %v", err)
+	}
+	if content != "hi" {
+		t.Errorf("content: got %q want %q", content, "hi")
+	}
+	if usage == nil || usage.PromptTokens != 11 || usage.CompletionTokens != 3 {
+		t.Errorf("usage: got %+v, want prompt=11 completion=3", usage)
+	}
+}
+
+func TestDetectAIProviderMiroMind(t *testing.T) {
+	cases := []struct {
+		url  string
+		want aiProvider
+	}{
+		{"https://api.miromind.ai/v1/chat/completions", aiProviderMiroMind},
+		{"https://API.MiroMind.AI/v1/chat/completions", aiProviderMiroMind},
+		{"https://api.openai.com/v1/chat/completions", aiProviderOpenAICompatible},
+		{"https://api.anthropic.com/v1/messages", aiProviderAnthropic},
+		{"https://ark.cn-beijing.volces.com/api/v3/responses", aiProviderVolcesResponses},
+		{"https://ark.cn-beijing.volces.com/api/v3/chat/completions", aiProviderOpenAICompatible},
+	}
+	for _, tc := range cases {
+		if got := detectAIProvider(tc.url); got != tc.want {
+			t.Errorf("detectAIProvider(%q) = %q, want %q", tc.url, got, tc.want)
+		}
+	}
+}
+
+// runVolcesDecode mirrors streamVolces' SSE loop without the HTTP/session
+// scaffolding so we can feed canned fixtures in. Volces shares the xAI
+// event shape, so the loop body is intentionally identical to its
+// counterpart in streamXAI — if you change one, change the other.
+func runVolcesDecode(t *testing.T, body string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	var assembled strings.Builder
+	for {
+		select {
+		case <-ctx.Done():
+			return assembled.String(), ctx.Err()
+		case err := <-errs:
+			if err != nil {
+				return assembled.String(), err
+			}
+		case frame, ok := <-frames:
+			if !ok {
+				return assembled.String(), nil
+			}
+			if frame.data == "" {
+				continue
+			}
+			var chunk xAIStreamEvent
+			if err := jsonUnmarshalString(frame.data, &chunk); err != nil {
+				continue
+			}
+			switch chunk.Type {
+			case "response.error":
+				if chunk.Error != nil && chunk.Error.Message != "" {
+					return assembled.String(), errFromString(chunk.Error.Message)
+				}
+				return assembled.String(), errFromString("volces stream returned response.error")
+			case "response.completed":
+				return assembled.String(), nil
+			case "response.output_text.delta":
+				assembled.WriteString(chunk.Delta)
+			}
+		}
+	}
+}
+
+// errFromString is a tiny helper so the decode loop above can fabricate
+// errors without dragging fmt/errors imports into the test file just for
+// this one site. Kept local to avoid churn in other tests.
+func errFromString(s string) error { return &stringError{s} }
+
+type stringError struct{ s string }
+
+func (e *stringError) Error() string { return e.s }
+
+func TestVolcesStreamingHappyPath(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		``,
+		`data: {"type":"response.output_text.delta","delta":"part1 "}`,
+		``,
+		`data: {"type":"response.output_text.delta","delta":"part2"}`,
+		``,
+		`data: {"type":"response.completed"}`,
+		``,
+	}, "\n")
+	got, err := runVolcesDecode(t, body)
+	if err != nil {
+		t.Fatalf("decode err: %v", err)
+	}
+	if got != "part1 part2" {
+		t.Errorf("expected %q, got %q", "part1 part2", got)
+	}
+}
+
+func TestVolcesStreamingError(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"start"}`,
+		``,
+		`data: {"type":"response.error","error":{"type":"upstream","message":"boom"}}`,
+		``,
+	}, "\n")
+	got, err := runVolcesDecode(t, body)
+	if err == nil || err.Error() != "boom" {
+		t.Fatalf("expected error 'boom', got %v", err)
+	}
+	if got != "start" {
+		t.Errorf("expected partial 'start', got %q", got)
+	}
+}
+
+func TestVolcesStreamingPayloadShape(t *testing.T) {
+	// Regression guard: streaming wrapper must add `stream:true`, must NOT
+	// add web_search (Volces 400s on it), and must use `input` not
+	// `messages` (Responses API rejects messages).
+	req := convertToVolcesResponsesRequest(aiChatCompletionRequest{
+		Model: "doubao-1-5",
+		Messages: []aiChatCompletionMessage{
+			{Role: "user", Content: "hi"},
+		},
+	})
+	wrapper := struct {
+		xAIResponsesRequest
+		Stream bool `json:"stream"`
+	}{xAIResponsesRequest: req, Stream: true}
+	body, err := json.Marshal(wrapper)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(body)
+	if !strings.Contains(s, `"stream":true`) {
+		t.Errorf("stream flag missing: %s", s)
+	}
+	if strings.Contains(s, "web_search") {
+		t.Errorf("web_search leaked into Volces payload: %s", s)
+	}
+	if strings.Contains(s, `"messages"`) {
+		t.Errorf("messages leaked into Volces payload (must be input): %s", s)
+	}
+	if !strings.Contains(s, `"input"`) {
+		t.Errorf("expected input array in Volces payload: %s", s)
+	}
+}
