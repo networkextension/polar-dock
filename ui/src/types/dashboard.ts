@@ -217,6 +217,14 @@ export type MarkdownAssistResponse = ErrorResponse & {
     config_id: number;
     model: string;
   };
+  // Token usage from the upstream LLM. Only present when the provider
+  // returns it (OpenAI-compat + MiroMind populate it on non-streaming
+  // calls; Anthropic/Gemini/xAI leave it nil). UI shows "—" when missing.
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens?: number;
+  };
 };
 
 export type PackTunnelKCPTunConfig = {

@@ -144,6 +144,14 @@ func (s *Server) handlePostAssistWithBot(c *gin.Context) {
 			"model":     llmConfig.Model,
 		},
 	}
+	// Surface token usage when the upstream provided it (OpenAI-compat
+	// providers + MiroMind populate `usage`; Anthropic/Gemini/xAI on the
+	// non-streaming path leave it nil — caller renders "—" in that case).
+	// Issue #170: posts plaza assist previously discarded `result.Usage`,
+	// so the operator had no visibility into per-call token spend.
+	if result.Usage != nil {
+		resp["usage"] = result.Usage
+	}
 	if bot != nil {
 		resp["bot"] = gin.H{"id": bot.ID, "name": bot.Name}
 	}
@@ -241,6 +249,9 @@ func (s *Server) handleReplyAssistWithBot(c *gin.Context) {
 			"config_id": llmConfig.ID,
 			"model":     llmConfig.Model,
 		},
+	}
+	if result.Usage != nil {
+		resp["usage"] = result.Usage
 	}
 	if bot != nil {
 		resp["bot"] = gin.H{"id": bot.ID, "name": bot.Name}
