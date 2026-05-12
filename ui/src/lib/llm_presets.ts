@@ -89,6 +89,18 @@ export const LLM_PROVIDER_PRESETS: LLMProviderPreset[] = [
     note: "Xiaomi MiMo",
   },
   {
+    // MiroThinker / MiroMind — OpenAI-compat on the wire. Deepresearch
+    // models stream their reasoning trace as delta.reasoning_steps which
+    // the backend (aiProviderMiroMind) wraps in <think>…</think>.
+    id: "miromind",
+    displayName: "MiroThinker (MiroMind)",
+    kind: "openaiCompatible",
+    endpoint: "https://api.miromind.ai/v1/chat/completions",
+    defaultModelID: "mirothinker-1-7-deepresearch-mini",
+    docsURL: "https://miromind.ai/",
+    note: "MiroMind deepresearch - 推理 trace 实时回显 (<think>…</think>)",
+  },
+  {
     // Video preset. NOT a chat model — this config is consumed only by
     // the Video Studio module and is filtered out of the chat / bot
     // pickers by provider_kind on the backend.
@@ -149,6 +161,7 @@ export function matchPresetByBaseURL(baseURL: string): string | null {
   if (text.includes("dashscope.aliyuncs.com")) return "qwen";
   if (text.includes("api.moonshot.cn")) return "moonshot";
   if (text.includes("xiaomimimo.com")) return "xiaomimimo";
+  if (text.includes("api.miromind.ai")) return "miromind";
   return null;
 }
 
