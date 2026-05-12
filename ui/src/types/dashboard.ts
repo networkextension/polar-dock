@@ -219,7 +219,8 @@ export type MarkdownAssistResponse = ErrorResponse & {
   };
   // Token usage from the upstream LLM. Only present when the provider
   // returns it (OpenAI-compat + MiroMind populate it on non-streaming
-  // calls; Anthropic/Gemini/xAI leave it nil). UI shows "—" when missing.
+  // calls; Anthropic/Gemini/xAI leave it nil). Rendered via
+  // lib/assist_usage.ts → formatAssistUsageBadge (returns "" when nil).
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;

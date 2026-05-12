@@ -1,4 +1,5 @@
 import { buildAssetUrl, resolveAvatar } from "./lib/avatar.js";
+import { formatAssistUsageBadge } from "./lib/assist_usage.js";
 import { byId, query } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
@@ -136,17 +137,6 @@ let assistLLMConfigs: LLMConfig[] = [];
 let assistBotsLoaded = false;
 let postAssistResult = "";
 let replyAssistResult = "";
-
-// formatAssistUsageBadge renders the post-assist status-line suffix that
-// surfaces token spend (issue #170). Empty string when the provider
-// didn't emit a usage block — caller appends conditionally.
-function formatAssistUsageBadge(usage?: { prompt_tokens: number; completion_tokens: number; total_tokens?: number }): string {
-  if (!usage) {
-    return "";
-  }
-  const total = usage.total_tokens ?? usage.prompt_tokens + usage.completion_tokens;
-  return ` · ${total} tok (${usage.prompt_tokens}→${usage.completion_tokens})`;
-}
 let videoModal: HTMLDivElement | null = null;
 let videoModalPlayer: HTMLVideoElement | null = null;
 let imageModal: HTMLDivElement | null = null;

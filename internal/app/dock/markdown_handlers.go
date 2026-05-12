@@ -135,6 +135,12 @@ func (s *Server) handleMarkdownAssistWithBot(c *gin.Context) {
 			"model":     llmConfig.Model,
 		},
 	}
+	// Same usage echo as the post-assist endpoints (issue #170); kept
+	// in sync so all three assist callers (editor, creation bubble,
+	// posts plaza) report token spend consistently.
+	if result.Usage != nil {
+		resp["usage"] = result.Usage
+	}
 	if bot != nil {
 		resp["bot"] = gin.H{"id": bot.ID, "name": bot.Name}
 	}

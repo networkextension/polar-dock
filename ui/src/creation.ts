@@ -4,6 +4,7 @@ import { Markdown } from "tiptap-markdown";
 
 import { assistMarkdownWithBot, fetchAvailableLLMConfigs, fetchBotUsers } from "./api/dashboard.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
+import { formatAssistUsageBadge } from "./lib/assist_usage.js";
 import { byId } from "./lib/dom.js";
 import { t } from "./lib/i18n.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
@@ -200,7 +201,8 @@ async function runPolish(instructionOverride?: string): Promise<void> {
     bubblePreview.textContent = pendingResult;
     bubbleApplyRow.hidden = false;
     const llmLabel = data.llm?.model ? ` · ${data.llm.model}` : "";
-    bubbleStatus.textContent = `${t("creation.assistReady")}${llmLabel}`;
+    const usageBadge = formatAssistUsageBadge(data.usage);
+    bubbleStatus.textContent = `${t("creation.assistReady")}${llmLabel}${usageBadge}`;
   } catch {
     bubbleStatus.textContent = t("common.networkError");
   } finally {
