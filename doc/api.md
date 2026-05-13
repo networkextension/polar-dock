@@ -3421,10 +3421,36 @@ Content-Disposition: attachment; filename="default-rules.conf"
     "content": "以下是本次 AI 回复的摘要预览……",
     "markdown_entry_id": 135,
     "markdown_title": "活动执行 SOP 建议",
-    "created_at": "2026-03-24T10:20:30+08:00"
+    "created_at": "2026-03-24T10:20:30+08:00",
+    "streaming": false,
+    "seq": 0
   }
 }
 ```
+
+##### 流式（streaming）下的 `message` 事件
+
+AI 回复采用“同 `id` 重广播 + 内容增量”的方式下发：
+
+- 同一条 `message.id` 在生成期间会被多次广播，`content` 字段会越来越长。
+  客户端必须按 `id` 去重并 **替换** 当前条目，禁止追加。
+- `message.streaming`（bool，OpenAPI 字段，未在 `omitempty` 时省略表示 `false`）：
+  - `true` 表示后续仍会有快照到来；
+  - `false` 表示这是 AI 这一轮回复的最终快照。
+- `message.seq`（int64，单调递增的快照序号，省略时按 `0` 处理）：
+  客户端应忽略 `seq` 比已应用值更小的事件，避免乱序回退。
+- `content` 中可能出现一个或多个 `<think>…</think>` 段，承载模型的“思考”
+  过程（来源于上游提供商的 `delta.reasoning_steps[].thinking`，
+  详见 [`provider_microthinker_api.md`](./provider_microthinker_api.md)）。
+  客户端 **应** 把 `<think>…</think>` 内容与正文分开渲染（例如折叠面板）。
+  生成过程中可能出现尚未闭合的 `<think>`，表示思考还在持续，无需视为格式错误。
+- 第一帧通常是 `content == ""` 的占位帧（`streaming=true`），
+  客户端可据此立即插入气泡并显示“生成中…”指示。
+- 服务端约每秒下发一次增量快照；最后一帧（`streaming=false`）后不会再针对
+  同一 `id` 下发本事件，但 `revoke` 等其它事件仍可能到来。
+
+普通用户消息以及非流式 LLM 配置下，`streaming` 始终为 `false`、`seq` 为 `0`，
+表现与历史行为一致。
 
 #### 已读事件 `read`
 
