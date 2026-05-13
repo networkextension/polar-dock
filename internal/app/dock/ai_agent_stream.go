@@ -48,11 +48,18 @@ type streamChunkCallback func(delta string)
 // the right provider based on the BaseURL and returns the assembled string
 // (also delivered piecewise via onDelta). Honors ctx cancellation.
 //
-// Records timing + status on every call. Tokens are recorded when the
-// provider's stream emits a usage frame — today that's just the OpenAI-
-// compat path, which sets stream_options.include_usage=true on the
-// outgoing request and parses the final frame's `usage` block. Other
-// SSE protocols (Anthropic / Gemini / XAI) leave usage nil.
+// Records timing + status on every call. Tokens are recorded for every
+// provider whose stream embeds usage anywhere:
+//   - OpenAI-compat / MiroMind: final frame's `usage` block (request
+//     side sets stream_options.include_usage=true)
+//   - Anthropic Messages: usage.input_tokens on message_start +
+//     usage.output_tokens on message_delta
+//   - Gemini: usageMetadata.{promptTokenCount,candidatesTokenCount}
+//     on the terminal chunk
+//   - xAI / Volces Responses: response.completed.response.usage
+// Providers that don't include usage in their stream still get
+// timing + status; usage stays nil so metrics record 0/0 rather than
+// guess.
 func (a *aiAgent) requestStreamingChatCompletion(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
 	payload.Stream = true
 	provider := detectAIProvider(runtimeConfig.BaseURL)
@@ -72,17 +79,13 @@ func (a *aiAgent) requestStreamingChatCompletion(ctx context.Context, runtimeCon
 func (a *aiAgent) requestStreamingChatCompletionInner(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
 	switch detectAIProvider(runtimeConfig.BaseURL) {
 	case aiProviderAnthropic:
-		out, err := a.streamAnthropic(ctx, runtimeConfig, payload, onDelta)
-		return out, nil, err
+		return a.streamAnthropic(ctx, runtimeConfig, payload, onDelta)
 	case aiProviderGemini:
-		out, err := a.streamGemini(ctx, runtimeConfig, payload, onDelta)
-		return out, nil, err
+		return a.streamGemini(ctx, runtimeConfig, payload, onDelta)
 	case aiProviderXAIResponses:
-		out, err := a.streamXAI(ctx, runtimeConfig, payload, onDelta)
-		return out, nil, err
+		return a.streamXAI(ctx, runtimeConfig, payload, onDelta)
 	case aiProviderVolcesResponses:
-		out, err := a.streamVolces(ctx, runtimeConfig, payload, onDelta)
-		return out, nil, err
+		return a.streamVolces(ctx, runtimeConfig, payload, onDelta)
 	case aiProviderMiroMind:
 		return a.streamMiroMind(ctx, runtimeConfig, payload, onDelta)
 	default:
@@ -509,10 +512,10 @@ type anthropicErrorPayload struct {
 	Message string `json:"message"`
 }
 
-func (a *aiAgent) streamAnthropic(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
+func (a *aiAgent) streamAnthropic(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
 	reqURL, err := buildAnthropicMessagesRequestURL(runtimeConfig.BaseURL)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	bodyPayload := convertToAnthropicMessagesRequest(payload)
 	bodyPayloadStreaming := struct {
@@ -521,40 +524,83 @@ func (a *aiAgent) streamAnthropic(ctx context.Context, runtimeConfig aiRuntimeCo
 	}{anthropicMessagesRequest: bodyPayload, Stream: true}
 	body, err := json.Marshal(bodyPayloadStreaming)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	session, err := a.startStreamingRequest(ctx, "anthropic", reqURL, "application/json", body, map[string]string{
 		"x-api-key":         runtimeConfig.APIKey,
 		"anthropic-version": "2023-06-01",
 	}, runtimeConfig.ProxyURL)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer session.close()
 
+	// Anthropic streams usage in two pieces: input_tokens arrives in the
+	// message_start envelope (immediately), and output_tokens arrives in
+	// the message_delta event right before message_stop. Collect both and
+	// only return a non-nil usage when at least one of them is set so the
+	// "no usage at all" failure case still surfaces as nil per the
+	// per-call contract in [[reference-llm-architecture]].
 	var (
-		assembled strings.Builder
-		seenFirst bool
+		assembled    strings.Builder
+		seenFirst    bool
+		inputTokens  int
+		outputTokens int
 	)
 	for {
 		select {
 		case <-ctx.Done():
-			return assembled.String(), ctx.Err()
+			return assembled.String(), finalizeAnthropicUsage(inputTokens, outputTokens), ctx.Err()
 		case err := <-session.errs:
 			if err != nil {
-				return assembled.String(), err
+				return assembled.String(), finalizeAnthropicUsage(inputTokens, outputTokens), err
 			}
 		case frame, ok := <-session.frames:
 			if !ok {
-				return assembled.String(), nil
+				return assembled.String(), finalizeAnthropicUsage(inputTokens, outputTokens), nil
 			}
 			switch frame.event {
 			case "ping", "":
 				continue
 			case "error":
-				return assembled.String(), errors.New("anthropic stream error: " + frame.data)
+				return assembled.String(), finalizeAnthropicUsage(inputTokens, outputTokens), errors.New("anthropic stream error: " + frame.data)
 			case "message_stop":
-				return assembled.String(), nil
+				return assembled.String(), finalizeAnthropicUsage(inputTokens, outputTokens), nil
+			case "message_start":
+				var env struct {
+					Message struct {
+						Usage struct {
+							InputTokens  int `json:"input_tokens"`
+							OutputTokens int `json:"output_tokens"`
+						} `json:"usage"`
+					} `json:"message"`
+				}
+				if err := json.Unmarshal([]byte(frame.data), &env); err == nil {
+					if env.Message.Usage.InputTokens > 0 {
+						inputTokens = env.Message.Usage.InputTokens
+					}
+					// Anthropic's message_start sometimes carries a tiny
+					// output_tokens=1 placeholder; the real count arrives
+					// in message_delta. Take max() so we don't undercount.
+					if env.Message.Usage.OutputTokens > outputTokens {
+						outputTokens = env.Message.Usage.OutputTokens
+					}
+				}
+			case "message_delta":
+				var env struct {
+					Usage struct {
+						InputTokens  int `json:"input_tokens"`
+						OutputTokens int `json:"output_tokens"`
+					} `json:"usage"`
+				}
+				if err := json.Unmarshal([]byte(frame.data), &env); err == nil {
+					if env.Usage.InputTokens > 0 {
+						inputTokens = env.Usage.InputTokens
+					}
+					if env.Usage.OutputTokens > outputTokens {
+						outputTokens = env.Usage.OutputTokens
+					}
+				}
 			case "content_block_delta":
 				var chunk anthropicStreamDelta
 				if err := json.Unmarshal([]byte(frame.data), &chunk); err != nil {
@@ -580,46 +626,63 @@ func (a *aiAgent) streamAnthropic(ctx context.Context, runtimeConfig aiRuntimeCo
 					onDelta(text)
 				}
 			default:
-				// content_block_start, content_block_stop, message_start,
-				// message_delta — no text payload, no-op.
+				// content_block_start, content_block_stop — no text payload, no-op.
 			}
 		}
 	}
 }
 
+// finalizeAnthropicUsage returns nil when neither token count was
+// observed (so the caller's metrics path records 0/0 rather than
+// faking the "we saw usage" signal). Token counts of 0 with a
+// confirmed message_delta are still surfaced; only a complete miss
+// returns nil.
+func finalizeAnthropicUsage(in, out int) *aiUsage {
+	if in == 0 && out == 0 {
+		return nil
+	}
+	return &aiUsage{PromptTokens: in, CompletionTokens: out, TotalTokens: in + out}
+}
+
 // ---- Google Gemini ---------------------------------------------------------
 
-func (a *aiAgent) streamGemini(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
+func (a *aiAgent) streamGemini(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
 	reqURL, err := buildGeminiStreamRequestURL(runtimeConfig.BaseURL, runtimeConfig.Model, runtimeConfig.APIKey)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	bodyPayload := convertToGeminiRequest(payload)
 	body, err := json.Marshal(bodyPayload)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	session, err := a.startStreamingRequest(ctx, "gemini", reqURL, "application/json", body, nil, runtimeConfig.ProxyURL)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer session.close()
 
+	// Gemini's streamGenerateContent emits usageMetadata on the final
+	// chunk (and occasionally on intermediate ones too). Take the last
+	// non-nil reading — totals only grow monotonically through the
+	// stream, so "last writer wins" gives the canonical post-stream
+	// count.
 	var (
 		assembled strings.Builder
 		seenFirst bool
+		usage     *aiUsage
 	)
 	for {
 		select {
 		case <-ctx.Done():
-			return assembled.String(), ctx.Err()
+			return assembled.String(), usage, ctx.Err()
 		case err := <-session.errs:
 			if err != nil {
-				return assembled.String(), err
+				return assembled.String(), usage, err
 			}
 		case frame, ok := <-session.frames:
 			if !ok {
-				return assembled.String(), nil
+				return assembled.String(), usage, nil
 			}
 			if frame.data == "" {
 				continue
@@ -630,7 +693,15 @@ func (a *aiAgent) streamGemini(ctx context.Context, runtimeConfig aiRuntimeConfi
 				continue
 			}
 			if message := parseAIErrorMessage(chunk.Error); message != "" {
-				return assembled.String(), errors.New(message)
+				return assembled.String(), usage, errors.New(message)
+			}
+			if chunk.UsageMetadata != nil {
+				m := chunk.UsageMetadata
+				usage = &aiUsage{
+					PromptTokens:     m.PromptTokenCount,
+					CompletionTokens: m.CandidatesTokenCount,
+					TotalTokens:      m.TotalTokenCount,
+				}
 			}
 			text := extractGeminiResponseText(chunk)
 			if text == "" {
@@ -673,16 +744,30 @@ func buildGeminiStreamRequestURL(baseURL, model, apiKey string) (string, error) 
 // ---- xAI Responses --------------------------------------------------------
 
 type xAIStreamEvent struct {
-	Type     string                 `json:"type"`
-	Delta    string                 `json:"delta,omitempty"`
-	Response map[string]any         `json:"response,omitempty"`
+	Type  string `json:"type"`
+	Delta string `json:"delta,omitempty"`
+	// Response is the full response object payload on response.completed
+	// events. Both xAI and Volces emit it; the embedded `usage` block is
+	// our token source. Kept as a typed struct (not map[string]any) so
+	// usage extraction doesn't need type assertions on every key.
+	Response *xAIResponseSnapshot   `json:"response,omitempty"`
 	Error    *anthropicErrorPayload `json:"error,omitempty"`
 }
 
-func (a *aiAgent) streamXAI(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
+type xAIResponseSnapshot struct {
+	Usage *xAIResponsesUsage `json:"usage,omitempty"`
+}
+
+type xAIResponsesUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
+func (a *aiAgent) streamXAI(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
 	reqURL, err := buildXAIResponsesRequestURL(runtimeConfig.BaseURL)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	bodyPayload := convertToXAIResponsesRequest(payload)
 	bodyPayloadStreaming := struct {
@@ -691,66 +776,17 @@ func (a *aiAgent) streamXAI(ctx context.Context, runtimeConfig aiRuntimeConfig, 
 	}{xAIResponsesRequest: bodyPayload, Stream: true}
 	body, err := json.Marshal(bodyPayloadStreaming)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	session, err := a.startStreamingRequest(ctx, "xai", reqURL, "application/json", body, map[string]string{
 		"Authorization": "Bearer " + runtimeConfig.APIKey,
 	}, runtimeConfig.ProxyURL)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer session.close()
 
-	var (
-		assembled strings.Builder
-		seenFirst bool
-	)
-	for {
-		select {
-		case <-ctx.Done():
-			return assembled.String(), ctx.Err()
-		case err := <-session.errs:
-			if err != nil {
-				return assembled.String(), err
-			}
-		case frame, ok := <-session.frames:
-			if !ok {
-				return assembled.String(), nil
-			}
-			if frame.data == "" {
-				continue
-			}
-			var chunk xAIStreamEvent
-			if err := json.Unmarshal([]byte(frame.data), &chunk); err != nil {
-				log.Printf("ai agent stream parse xai chunk failed: %v body=%s", err, truncateForLog(frame.data, 200))
-				continue
-			}
-			switch chunk.Type {
-			case "response.error":
-				if chunk.Error != nil && chunk.Error.Message != "" {
-					return assembled.String(), errors.New(chunk.Error.Message)
-				}
-				return assembled.String(), errors.New("xai stream returned response.error")
-			case "response.completed":
-				return assembled.String(), nil
-			case "response.output_text.delta":
-				if chunk.Delta == "" {
-					continue
-				}
-				assembled.WriteString(chunk.Delta)
-				if !seenFirst {
-					seenFirst = true
-					log.Printf("ai agent stream first chunk: provider=xai bytes=%d", len(chunk.Delta))
-				}
-				if onDelta != nil {
-					onDelta(chunk.Delta)
-				}
-			default:
-				// response.created / output_item.added / output_text.done /
-				// content_part.* / content_part.done — no-op.
-			}
-		}
-	}
+	return a.consumeResponsesStream(ctx, "xai", session, onDelta)
 }
 
 // ---- Volces Responses -----------------------------------------------------
@@ -763,10 +799,10 @@ func (a *aiAgent) streamXAI(ctx context.Context, runtimeConfig aiRuntimeConfig, 
 //     convertToVolcesResponsesRequest).
 //   - BaseURL is used verbatim — Volces' URL is already the full
 //     `/responses` path, no rewriting like buildXAIResponsesRequestURL.
-func (a *aiAgent) streamVolces(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, error) {
+func (a *aiAgent) streamVolces(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
 	reqURL := strings.TrimSpace(runtimeConfig.BaseURL)
 	if reqURL == "" {
-		return "", errors.New("Volces 配置缺少 Base URL")
+		return "", nil, errors.New("Volces 配置缺少 Base URL")
 	}
 	bodyPayload := convertToVolcesResponsesRequest(payload)
 	bodyPayloadStreaming := struct {
@@ -775,48 +811,75 @@ func (a *aiAgent) streamVolces(ctx context.Context, runtimeConfig aiRuntimeConfi
 	}{xAIResponsesRequest: bodyPayload, Stream: true}
 	body, err := json.Marshal(bodyPayloadStreaming)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	session, err := a.startStreamingRequest(ctx, "volces", reqURL, "application/json", body, map[string]string{
 		"Authorization": "Bearer " + runtimeConfig.APIKey,
 	}, runtimeConfig.ProxyURL)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer session.close()
 
+	return a.consumeResponsesStream(ctx, "volces", session, onDelta)
+}
+
+// consumeResponsesStream is the shared OpenAI-Responses SSE event loop
+// used by both xAI and Volces. They emit the same event vocabulary
+// (`response.output_text.delta`, `response.completed`,
+// `response.error`) and the same `response.completed.response.usage`
+// block on the terminating event, so a single loop covers both. The
+// providerLabel parameter is only used for log prefix discrimination.
+func (a *aiAgent) consumeResponsesStream(ctx context.Context, providerLabel string, session *streamSession, onDelta streamChunkCallback) (string, *aiUsage, error) {
 	var (
 		assembled strings.Builder
 		seenFirst bool
+		usage     *aiUsage
 	)
+	captureUsage := func(snapshot *xAIResponseSnapshot) {
+		if snapshot == nil || snapshot.Usage == nil {
+			return
+		}
+		u := snapshot.Usage
+		total := u.TotalTokens
+		if total == 0 {
+			total = u.InputTokens + u.OutputTokens
+		}
+		usage = &aiUsage{
+			PromptTokens:     u.InputTokens,
+			CompletionTokens: u.OutputTokens,
+			TotalTokens:      total,
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return assembled.String(), ctx.Err()
+			return assembled.String(), usage, ctx.Err()
 		case err := <-session.errs:
 			if err != nil {
-				return assembled.String(), err
+				return assembled.String(), usage, err
 			}
 		case frame, ok := <-session.frames:
 			if !ok {
-				return assembled.String(), nil
+				return assembled.String(), usage, nil
 			}
 			if frame.data == "" {
 				continue
 			}
 			var chunk xAIStreamEvent
 			if err := json.Unmarshal([]byte(frame.data), &chunk); err != nil {
-				log.Printf("ai agent stream parse volces chunk failed: %v body=%s", err, truncateForLog(frame.data, 200))
+				log.Printf("ai agent stream parse %s chunk failed: %v body=%s", providerLabel, err, truncateForLog(frame.data, 200))
 				continue
 			}
 			switch chunk.Type {
 			case "response.error":
 				if chunk.Error != nil && chunk.Error.Message != "" {
-					return assembled.String(), errors.New(chunk.Error.Message)
+					return assembled.String(), usage, errors.New(chunk.Error.Message)
 				}
-				return assembled.String(), errors.New("volces stream returned response.error")
+				return assembled.String(), usage, fmt.Errorf("%s stream returned response.error", providerLabel)
 			case "response.completed":
-				return assembled.String(), nil
+				captureUsage(chunk.Response)
+				return assembled.String(), usage, nil
 			case "response.output_text.delta":
 				if chunk.Delta == "" {
 					continue
@@ -824,14 +887,17 @@ func (a *aiAgent) streamVolces(ctx context.Context, runtimeConfig aiRuntimeConfi
 				assembled.WriteString(chunk.Delta)
 				if !seenFirst {
 					seenFirst = true
-					log.Printf("ai agent stream first chunk: provider=volces bytes=%d", len(chunk.Delta))
+					log.Printf("ai agent stream first chunk: provider=%s bytes=%d", providerLabel, len(chunk.Delta))
 				}
 				if onDelta != nil {
 					onDelta(chunk.Delta)
 				}
 			default:
 				// response.created / output_item.added / output_text.done /
-				// content_part.* / content_part.done — no-op.
+				// content_part.* / content_part.done — no-op for plain
+				// text streaming. Some upstream variants emit a usage
+				// snapshot on these too; capture defensively.
+				captureUsage(chunk.Response)
 			}
 		}
 	}
