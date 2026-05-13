@@ -138,7 +138,11 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 		APIKey       string `json:"api_key"`
 		SystemPrompt string `json:"system_prompt"`
 		Shared       bool   `json:"shared"`
-		Streaming    bool   `json:"streaming"`
+		// Streaming is *bool so absence (nil) means "don't touch" — the
+		// dashboard UI form historically omitted this field on save,
+		// which silently flipped streaming to false on every edit. With
+		// *bool, omission preserves whatever the row already had.
+		Streaming    *bool  `json:"streaming,omitempty"`
 		UpdateAPIKey bool   `json:"update_api_key"`
 		ProviderKind string `json:"provider_kind"`
 		Extras       string `json:"extras"`

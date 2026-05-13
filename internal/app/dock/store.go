@@ -1108,7 +1108,28 @@ ALTER TABLE llm_configs
 ALTER TABLE llm_configs
 	ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE llm_configs
-	ADD COLUMN IF NOT EXISTS streaming BOOLEAN NOT NULL DEFAULT FALSE;
+	ADD COLUMN IF NOT EXISTS streaming BOOLEAN NOT NULL DEFAULT TRUE;
+-- Streaming became the default chat experience after the streaming
+-- coverage gap was closed (PR #168 / #172 / #174). Earlier deployments
+-- ran the original migration with DEFAULT FALSE, so fresh installs
+-- now flip to TRUE while we also reconcile existing rows below. The
+-- per-call rebind ALTER COLUMN is idempotent -- safe to keep in the
+-- always-on bootstrap.
+ALTER TABLE llm_configs
+	ALTER COLUMN streaming SET DEFAULT TRUE;
+-- One-shot backfill, guarded by a sentinel so we don't keep flipping
+-- back any row a user deliberately disables after the upgrade. After
+-- the first successful boot post-migration every row has
+-- streaming_default_migrated=TRUE, so the UPDATE becomes a no-op.
+-- Subsequent toggles by the user persist normally.
+ALTER TABLE llm_configs
+	ADD COLUMN IF NOT EXISTS streaming_default_migrated BOOLEAN NOT NULL DEFAULT FALSE;
+UPDATE llm_configs
+	SET streaming = TRUE, streaming_default_migrated = TRUE
+	WHERE streaming = FALSE AND streaming_default_migrated = FALSE;
+UPDATE llm_configs
+	SET streaming_default_migrated = TRUE
+	WHERE streaming_default_migrated = FALSE;
 ALTER TABLE llm_configs
 	ADD COLUMN IF NOT EXISTS is_platform BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_llm_configs_platform
@@ -2618,17 +2639,26 @@ func (s *Server) createLLMConfig(workspaceID, ownerUserID, name, baseURL, model,
 	return &item, nil
 }
 
-func (s *Server) updateLLMConfig(workspaceID string, id int64, name, baseURL, model, apiKey, systemPrompt, proxyURL string, shared, streaming, replaceAPIKey bool, now time.Time) (*LLMConfig, error) {
+// updateLLMConfig: streaming is *bool with "nil means preserve current
+// value" semantics. The UPDATE wraps that param in sql.NullBool so the
+// SQL side can COALESCE($8, streaming) — caller passes nil when the
+// inbound request body omitted the field (typical for the dashboard
+// UI's edit flow which historically didn't include the checkbox).
+func (s *Server) updateLLMConfig(workspaceID string, id int64, name, baseURL, model, apiKey, systemPrompt, proxyURL string, shared bool, streaming *bool, replaceAPIKey bool, now time.Time) (*LLMConfig, error) {
+	streamingArg := sql.NullBool{}
+	if streaming != nil {
+		streamingArg = sql.NullBool{Bool: *streaming, Valid: true}
+	}
 	query := `UPDATE llm_configs
 	             SET name = $3,
 	                 base_url = $4,
 	                 model = $5,
 	                 system_prompt = $6,
 	                 shared = $7,
-	                 streaming = $8,
+	                 streaming = COALESCE($8, streaming),
 	                 proxy_url = $9,
 	                 updated_at = $10`
-	args := []any{id, workspaceID, name, baseURL, model, systemPrompt, shared, streaming, proxyURL, now}
+	args := []any{id, workspaceID, name, baseURL, model, systemPrompt, shared, streamingArg, proxyURL, now}
 	if replaceAPIKey {
 		query += `, api_key = $11`
 		args = append(args, apiKey)
