@@ -1,4 +1,5 @@
 import { buildAssetUrl, resolveAvatar } from "./lib/avatar.js";
+import { formatAssistUsageBadge } from "./lib/assist_usage.js";
 import { byId, query } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
@@ -257,7 +258,8 @@ function setupPostAssistPanel(): void {
       postAssistPreview.hidden = false;
       postAssistApplyBtn.disabled = false;
       const llmLabel = data.llm?.model ? ` · ${data.llm.model}` : "";
-      postAssistStatus.textContent = `${t("post.assistDone")}${llmLabel}`;
+      const usageBadge = formatAssistUsageBadge(data.usage);
+      postAssistStatus.textContent = `${t("post.assistDone")}${llmLabel}${usageBadge}`;
     } catch {
       postAssistStatus.textContent = t("common.networkError");
     } finally {
@@ -341,7 +343,8 @@ function setupReplyAssist(postId: number, replyInput: HTMLInputElement): void {
       preview.hidden = false;
       applyBtn.disabled = false;
       const llmLabel = data.llm?.model ? ` · ${data.llm.model}` : "";
-      status.textContent = `${t("post.assistDone")}${llmLabel}`;
+      const usageBadge = formatAssistUsageBadge(data.usage);
+      status.textContent = `${t("post.assistDone")}${llmLabel}${usageBadge}`;
     } catch {
       status.textContent = t("common.networkError");
     } finally {

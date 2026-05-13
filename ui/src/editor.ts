@@ -1,3 +1,4 @@
+import { formatAssistUsageBadge } from "./lib/assist_usage.js";
 import { byId } from "./lib/dom.js";
 import { renderMarkdown } from "./lib/marked.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
@@ -357,7 +358,8 @@ assistRunBtn.addEventListener("click", async () => {
     renderAssistPreview();
     renderAssistDiff();
     const llmLabel = data.llm?.model ? ` · ${data.llm.model}` : "";
-    assistStatus.textContent = `润色完成${llmLabel}`;
+    const usageBadge = formatAssistUsageBadge(data.usage);
+    assistStatus.textContent = `润色完成${llmLabel}${usageBadge}`;
     assistApplyBtn.disabled = false;
     assistDiffBtn.disabled = false;
   } catch {
