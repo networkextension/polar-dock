@@ -387,6 +387,41 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 			}
 			log.Printf("[agent ws] hello bot=%s caps=%v tool=%q payload=%s",
 				ac.botUserID, ac.capabilities, ac.tool, truncateForLog(string(raw), 200))
+		case "skill.advertise":
+			// Host module Phase 0: agent reports its compiled-in skill
+			// kinds. We persist them onto the hosts row + bump
+			// last_seen_at so the UI shows the host as online with
+			// the right set of enable-able cards. Legacy agents whose
+			// tokens haven't been through /api/hosts/register have no
+			// hosts row — that's fine, we log + drop.
+			var msg struct {
+				Skills []AdvertisedSkill `json:"skills"`
+			}
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				log.Printf("[agent ws] skill.advertise parse failed token=%s: %v", ac.tokenID, err)
+				continue
+			}
+			if ac.hostID == "" {
+				host, herr := s.getHostByAgentToken(ac.tokenID)
+				if herr != nil {
+					log.Printf("[agent ws] resolve host by token=%s: %v", ac.tokenID, herr)
+					continue
+				}
+				if host == nil {
+					// Legacy agent without a hosts row — drop quietly.
+					// Once that operator runs `polar-agent register`,
+					// they'll get a hosts row and next advertise lands.
+					log.Printf("[agent ws] skill.advertise token=%s has no host row (legacy agent), dropping %d skills", ac.tokenID, len(msg.Skills))
+					continue
+				}
+				ac.hostID = host.ID
+			}
+			remoteIP := remoteIPForRequest(ac.requestRemoteAddr)
+			if err := s.updateHostAdvertisedSkills(ac.hostID, msg.Skills, remoteIP, time.Now().UTC()); err != nil {
+				log.Printf("[agent ws] persist advertised skills host=%s: %v", ac.hostID, err)
+				continue
+			}
+			log.Printf("[agent ws] skill.advertise host=%s skills=%d", ac.hostID, len(msg.Skills))
 		default:
 			log.Printf("[agent ws] unknown kind=%s bot=%s", head.Kind, ac.botUserID)
 		}

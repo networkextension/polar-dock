@@ -788,6 +788,14 @@ func (s *Server) registerRoutes() {
 		api.POST("/agent/auto-register", s.PolarAgentAuthMiddleware(), s.handleAgentAutoRegister)
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
 		api.POST("/agent/bots/:bot_id/dispatch", s.AuthMiddleware(), s.handleAgentDispatch)
+		// hosts (workspace-scoped named machines reachable via
+		// polar-agent; see doc/host-module-design.md). Phase 0
+		// landed CRUD + enrollment; skill enable/start lands in P1+.
+		api.POST("/hosts/enroll", s.AuthMiddleware(), s.handleHostEnroll)
+		api.POST("/hosts/register", s.handleHostRegister) // bearer = enroll token, no session
+		api.GET("/hosts", s.AuthMiddleware(), s.handleHostList)
+		api.GET("/hosts/:id", s.AuthMiddleware(), s.handleHostDetail)
+		api.DELETE("/hosts/:id", s.AuthMiddleware(), s.handleHostDelete)
 		// projects (workspace-scoped product container with AI
 		// requirement decomposition + plan generation).
 		api.GET("/projects", s.AuthMiddleware(), s.handleProjectList)

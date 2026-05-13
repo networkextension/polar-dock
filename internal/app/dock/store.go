@@ -2082,6 +2082,70 @@ ALTER TABLE agent_tokens
 ALTER TABLE agent_tokens
 	ADD COLUMN IF NOT EXISTS last_attached_at TIMESTAMPTZ;
 
+-- ============================================================
+-- Host module (Phase 0). Design: doc/host-module-design.md
+-- ============================================================
+-- hosts: a named machine reachable via polar-agent. Workspace-scoped
+-- (one host can only belong to one workspace). Linked 1:1 to an
+-- agent_tokens row that authenticates the agent's WS connection.
+-- advertised_skills_json is a snapshot of what the agent's compiled-in
+-- skill registry exposed on its last connect; UI reads this to know
+-- which skill kinds the operator can enable.
+CREATE TABLE IF NOT EXISTS hosts (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	slug TEXT NOT NULL,
+	name TEXT NOT NULL,
+	agent_token_id TEXT REFERENCES agent_tokens(id) ON DELETE SET NULL,
+	os TEXT NOT NULL DEFAULT '',
+	arch TEXT NOT NULL DEFAULT '',
+	last_seen_ip TEXT NOT NULL DEFAULT '',
+	advertised_skills_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+	last_seen_at TIMESTAMPTZ,
+	created_at TIMESTAMPTZ NOT NULL,
+	UNIQUE (workspace_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_hosts_workspace ON hosts(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_hosts_last_seen ON hosts(last_seen_at DESC);
+-- Lookup by agent_token_id is hot path on every WS message (to resolve
+-- the host_id from the connection). Partial index keeps it cheap.
+CREATE INDEX IF NOT EXISTS idx_hosts_agent_token
+	ON hosts(agent_token_id) WHERE agent_token_id IS NOT NULL;
+
+-- host_skills: operator-enabled skill on a host. Schema exists in P0
+-- so future phase migrations don't need to add the table; nothing
+-- writes to this in P0 (Phase 1 adds the coder skill handlers).
+CREATE TABLE IF NOT EXISTS host_skills (
+	id BIGSERIAL PRIMARY KEY,
+	host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+	kind TEXT NOT NULL,
+	name TEXT NOT NULL,
+	config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+	enabled BOOLEAN NOT NULL DEFAULT TRUE,
+	auto_start BOOLEAN NOT NULL DEFAULT TRUE,
+	created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_at TIMESTAMPTZ NOT NULL,
+	updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_host_skills_host ON host_skills(host_id);
+
+-- host_skill_runs: each start/stop attempt of a host_skill. Same P0
+-- caveat: schema only, no handlers yet.
+CREATE TABLE IF NOT EXISTS host_skill_runs (
+	id BIGSERIAL PRIMARY KEY,
+	skill_id BIGINT NOT NULL REFERENCES host_skills(id) ON DELETE CASCADE,
+	started_at TIMESTAMPTZ NOT NULL,
+	ended_at TIMESTAMPTZ,
+	status TEXT NOT NULL DEFAULT 'starting',
+	pid INTEGER,
+	listen_addr TEXT NOT NULL DEFAULT '',
+	error_message TEXT NOT NULL DEFAULT '',
+	log_path TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_skill_runs_skill ON host_skill_runs(skill_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_skill_runs_active
+	ON host_skill_runs(status) WHERE status IN ('starting', 'running');
+
 -- projects: top-level container for an AI-driven product. One row =
 -- "the thing being built". The chat-with-AI flow lives under it:
 -- user description → decomposed features → selected features → tasks

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"gin-auth-app/cmd/polar-agent/skills"
 )
 
 // hostName returns os.Hostname() with errors swallowed — the host
@@ -101,6 +103,21 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 		hello["tool"] = spec.Name
 	}
 	if b, err := json.Marshal(hello); err == nil {
+		_ = send(b)
+	}
+
+	// Host module Phase 0: immediately follow `hello` with
+	// `skill.advertise`. Dock parses it and snapshots the kinds into
+	// hosts.advertised_skills_json so the UI knows which skill cards to
+	// render. In P0 the registry is empty (no skill implementations
+	// are registered yet); the message still gets sent — empty list
+	// proves the wire is up end-to-end. From P1 onward each skill
+	// file's init() Register()s itself and the payload auto-populates.
+	advertise := map[string]any{
+		"kind":   "skill.advertise",
+		"skills": skills.Default().Advertised(),
+	}
+	if b, err := json.Marshal(advertise); err == nil {
 		_ = send(b)
 	}
 
