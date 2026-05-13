@@ -921,7 +921,10 @@ CREATE TABLE IF NOT EXISTS push_deliveries (
 );
 
 CREATE TABLE IF NOT EXISTS chat_member_state (
-	thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+	-- FK to chat_threads(id) is added below via a late-bound DO block
+	-- (search "chat_member_state_thread_id_fkey") because chat_threads
+	-- is CREATEd later in this same applySchema batch. PR #178 pattern.
+	thread_id BIGINT NOT NULL,
 	user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	mute_until TIMESTAMPTZ,
 	is_muted BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1135,8 +1138,10 @@ ALTER TABLE bot_users
 -- ON DELETE CASCADE → revoking the agent token cleans up its bots.
 ALTER TABLE bot_users
 	ADD COLUMN IF NOT EXISTS is_auto_registered BOOLEAN NOT NULL DEFAULT FALSE;
+-- FK to agent_tokens(id) is added below via a late-bound DO block
+-- (search "bot_users_auto_registered_by_token_fkey").
 ALTER TABLE bot_users
-	ADD COLUMN IF NOT EXISTS auto_registered_by_token TEXT REFERENCES agent_tokens(id) ON DELETE CASCADE;
+	ADD COLUMN IF NOT EXISTS auto_registered_by_token TEXT;
 CREATE INDEX IF NOT EXISTS idx_bot_users_auto_registered_token
 	ON bot_users(auto_registered_by_token) WHERE auto_registered_by_token IS NOT NULL;
 ALTER TABLE bot_users
@@ -1224,6 +1229,40 @@ ALTER TABLE posts
 	ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_posts_workspace ON posts(workspace_id, created_at DESC);
 
+-- projects: top-level container for an AI-driven product. One row =
+-- "the thing being built". The chat-with-AI flow lives under it:
+-- user description → decomposed features → selected features → tasks
+-- (one task per selected feature, 1:1 to a chat thread when a bot
+-- picks it up). Workspace-scoped from day one, no T6-style migration.
+--
+-- Status state machine:
+--   draft    — user just created, no decompose yet
+--   planning — features generated, user is selecting
+--   building — tasks created, bot(s) working
+--   beta     — first build out, in TF / OTA
+--   shipped  — public beta or live
+--   archived — done / shelved
+--
+-- CREATE moved above the ALTER block (and ahead of
+-- iosdist_agent_builds / project_research_runs) so fresh-DB bootstrap
+-- doesn't fail on missing relation. project_features /
+-- project_tasks / project_task_* CREATEs stay later in this batch
+-- because they reference chat_threads / llm_threads which are
+-- CREATEd in between.
+CREATE TABLE IF NOT EXISTS projects (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	creator_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'draft',
+	template TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
 -- Project structured constraints (added so the AI 拆解 prompt can
 -- be tightened with concrete environment + scenario hints, instead
 -- of producing wide / generic feature lists). Free text strings —
@@ -1252,7 +1291,9 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS git_remote_url TEXT NOT NULL DEFAU
 -- submit-build subcommand uses this app's cert/profile/ASC config
 -- to sign + upload to TestFlight. NULL = project isn't iOS-tied
 -- (web project, CLI tool, etc.).
-ALTER TABLE projects ADD COLUMN IF NOT EXISTS iosdist_app_id BIGINT REFERENCES iosdist_apps(id) ON DELETE SET NULL;
+-- FK to iosdist_apps(id) added below via late-bound DO block;
+-- iosdist_apps is CREATEd later in this batch.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS iosdist_app_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_projects_iosdist_app ON projects(iosdist_app_id) WHERE iosdist_app_id IS NOT NULL;
 
 -- iosdist_agent_builds: tracks the lifecycle of an agent-driven
@@ -1268,11 +1309,14 @@ CREATE INDEX IF NOT EXISTS idx_projects_iosdist_app ON projects(iosdist_app_id) 
 --   uploading  — sign succeeded, agent calling altool
 --   succeeded  — TF accepted; asc_build_id non-empty
 --   failed     — terminal failure; error_message + log_text capped
+-- FK to iosdist_apps(id) is added below via late-bound DO block;
+-- iosdist_apps is CREATEd later in this batch. projects(id) FK is
+-- inline since projects is CREATEd earlier (above the ALTER block).
 CREATE TABLE IF NOT EXISTS iosdist_agent_builds (
 	id BIGSERIAL PRIMARY KEY,
 	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
 	project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-	iosdist_app_id BIGINT REFERENCES iosdist_apps(id) ON DELETE SET NULL,
+	iosdist_app_id BIGINT,
 	agent_user_id TEXT,
 	status TEXT NOT NULL DEFAULT 'init',
 	sign_method TEXT NOT NULL DEFAULT '',
@@ -1303,11 +1347,14 @@ CREATE INDEX IF NOT EXISTS idx_iosdist_agent_builds_app ON iosdist_agent_builds(
 --   running    — agent ack'd via /start, LLM loop in progress
 --   succeeded  — agent finished, commit_sha + files_written populated
 --   failed     — terminal failure; error_message + log_text capped
+-- FK to project_tasks(id) is added below via late-bound DO block;
+-- project_tasks is CREATEd later in this batch. projects(id) FK is
+-- inline since projects is CREATEd earlier (above the ALTER block).
 CREATE TABLE IF NOT EXISTS project_research_runs (
 	id BIGSERIAL PRIMARY KEY,
 	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
 	project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-	task_id TEXT REFERENCES project_tasks(id) ON DELETE SET NULL,
+	task_id TEXT,
 	bot_user_id TEXT NOT NULL,
 	chat_thread_id BIGINT,
 	llm_thread_id BIGINT,
@@ -1373,8 +1420,10 @@ CREATE TABLE IF NOT EXISTS post_attachments (
 );
 CREATE INDEX IF NOT EXISTS idx_post_attachments_post ON post_attachments(post_id, ord);
 
+-- FK to chat_messages(id) added below via late-bound DO block;
+-- chat_messages is CREATEd later in this batch.
 CREATE TABLE IF NOT EXISTS chat_message_attachments (
-	message_id BIGINT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+	message_id BIGINT NOT NULL,
 	attachment_id TEXT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
 	ord INT NOT NULL DEFAULT 0,
 	PRIMARY KEY (message_id, attachment_id)
@@ -1509,6 +1558,22 @@ CREATE TABLE IF NOT EXISTS chat_threads (
 ALTER TABLE chat_threads
 	ADD COLUMN IF NOT EXISTS last_message_id BIGINT;
 
+-- Late-bound FK: chat_member_state.thread_id -> chat_threads(id).
+-- Declared above without inline REFERENCES because chat_threads is
+-- created later in the batch; same pattern as PR #178.
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'chat_member_state_thread_id_fkey'
+	) THEN
+		ALTER TABLE chat_member_state
+			ADD CONSTRAINT chat_member_state_thread_id_fkey
+			FOREIGN KEY (thread_id) REFERENCES chat_threads(id) ON DELETE CASCADE;
+	END IF;
+END
+$$;
+
 -- chat_thread_summaries — system agent's "上次停在哪" 1-2 sentence
 -- summary per thread. UNIQUE on thread_id since we keep at most one
 -- live summary per thread. up_to_message_id tracks how fresh the
@@ -1609,6 +1674,23 @@ ALTER TABLE chat_messages
 
 ALTER TABLE chat_messages
 	ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+-- Late-bound FK: chat_message_attachments.message_id -> chat_messages(id).
+-- chat_message_attachments is CREATEd earlier in this batch (before
+-- chat_messages) so the inline REFERENCES was dropped to avoid a fresh-DB
+-- "relation chat_messages does not exist" failure.
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'chat_message_attachments_message_id_fkey'
+	) THEN
+		ALTER TABLE chat_message_attachments
+			ADD CONSTRAINT chat_message_attachments_message_id_fkey
+			FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE;
+	END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS chat_reads (
 	thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
@@ -1855,13 +1937,16 @@ CREATE INDEX IF NOT EXISTS idx_iosdist_test_requests_email ON iosdist_test_reque
 -- = sha256(ipa_sha256 || cert_id || profile_id) so repeat clicks reuse
 -- the previous successful task instead of spamming Apple's servers /
 -- chatStorage with duplicate output IPAs.
+-- FKs to iosdist_versions/certificates/profiles added below via
+-- late-bound DO blocks; those target tables are CREATEd later in this
+-- batch. iosdist_apps is created earlier so its inline FK is fine.
 CREATE TABLE IF NOT EXISTS iosdist_sign_tasks (
 	id BIGSERIAL PRIMARY KEY,
 	app_id BIGINT NOT NULL REFERENCES iosdist_apps(id) ON DELETE CASCADE,
-	source_version_id BIGINT NOT NULL REFERENCES iosdist_versions(id) ON DELETE CASCADE,
+	source_version_id BIGINT NOT NULL,
 	output_version_id BIGINT,
-	cert_id BIGINT NOT NULL REFERENCES iosdist_certificates(id) ON DELETE CASCADE,
-	profile_id BIGINT NOT NULL REFERENCES iosdist_profiles(id) ON DELETE CASCADE,
+	cert_id BIGINT NOT NULL,
+	profile_id BIGINT NOT NULL,
 	idempotency_key TEXT NOT NULL,
 	status TEXT NOT NULL DEFAULT 'pending',
 	error_message TEXT NOT NULL DEFAULT '',
@@ -1983,6 +2068,57 @@ CREATE TABLE IF NOT EXISTS iosdist_profiles (
 );
 CREATE INDEX IF NOT EXISTS idx_iosdist_profiles_owner ON iosdist_profiles(owner_user_id, updated_at DESC);
 
+-- Late-bound FKs targeting iosdist_apps / iosdist_versions /
+-- iosdist_certificates / iosdist_profiles. Those tables are CREATEd
+-- after the referencing tables (projects, iosdist_agent_builds,
+-- iosdist_sign_tasks) so the inline REFERENCES were dropped above.
+-- Idempotent via pg_constraint probe so re-running applySchema doesn't
+-- double-add constraints.
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'projects_iosdist_app_id_fkey'
+	) THEN
+		ALTER TABLE projects
+			ADD CONSTRAINT projects_iosdist_app_id_fkey
+			FOREIGN KEY (iosdist_app_id) REFERENCES iosdist_apps(id) ON DELETE SET NULL;
+	END IF;
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'iosdist_agent_builds_iosdist_app_id_fkey'
+	) THEN
+		ALTER TABLE iosdist_agent_builds
+			ADD CONSTRAINT iosdist_agent_builds_iosdist_app_id_fkey
+			FOREIGN KEY (iosdist_app_id) REFERENCES iosdist_apps(id) ON DELETE SET NULL;
+	END IF;
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'iosdist_sign_tasks_source_version_id_fkey'
+	) THEN
+		ALTER TABLE iosdist_sign_tasks
+			ADD CONSTRAINT iosdist_sign_tasks_source_version_id_fkey
+			FOREIGN KEY (source_version_id) REFERENCES iosdist_versions(id) ON DELETE CASCADE;
+	END IF;
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'iosdist_sign_tasks_cert_id_fkey'
+	) THEN
+		ALTER TABLE iosdist_sign_tasks
+			ADD CONSTRAINT iosdist_sign_tasks_cert_id_fkey
+			FOREIGN KEY (cert_id) REFERENCES iosdist_certificates(id) ON DELETE CASCADE;
+	END IF;
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'iosdist_sign_tasks_profile_id_fkey'
+	) THEN
+		ALTER TABLE iosdist_sign_tasks
+			ADD CONSTRAINT iosdist_sign_tasks_profile_id_fkey
+			FOREIGN KEY (profile_id) REFERENCES iosdist_profiles(id) ON DELETE CASCADE;
+	END IF;
+END
+$$;
+
 -- T6-A workspace migration: add workspace_id (FK -> teams.id) to
 -- module resource tables. Column is nullable in this PR; a startup
 -- backfill (backfillResourceWorkspaceIDs) populates it from each
@@ -2082,6 +2218,20 @@ ALTER TABLE agent_tokens
 ALTER TABLE agent_tokens
 	ADD COLUMN IF NOT EXISTS last_attached_at TIMESTAMPTZ;
 
+-- Late-bound FK: bot_users.auto_registered_by_token -> agent_tokens(id).
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'bot_users_auto_registered_by_token_fkey'
+	) THEN
+		ALTER TABLE bot_users
+			ADD CONSTRAINT bot_users_auto_registered_by_token_fkey
+			FOREIGN KEY (auto_registered_by_token) REFERENCES agent_tokens(id) ON DELETE CASCADE;
+	END IF;
+END
+$$;
+
 -- ============================================================
 -- Host module (Phase 0). Design: doc/host-module-design.md
 -- ============================================================
@@ -2146,32 +2296,9 @@ CREATE INDEX IF NOT EXISTS idx_skill_runs_skill ON host_skill_runs(skill_id, sta
 CREATE INDEX IF NOT EXISTS idx_skill_runs_active
 	ON host_skill_runs(status) WHERE status IN ('starting', 'running');
 
--- projects: top-level container for an AI-driven product. One row =
--- "the thing being built". The chat-with-AI flow lives under it:
--- user description → decomposed features → selected features → tasks
--- (one task per selected feature, 1:1 to a chat thread when a bot
--- picks it up). Workspace-scoped from day one, no T6-style migration.
---
--- Status state machine:
---   draft    — user just created, no decompose yet
---   planning — features generated, user is selecting
---   building — tasks created, bot(s) working
---   beta     — first build out, in TF / OTA
---   shipped  — public beta or live
---   archived — done / shelved
-CREATE TABLE IF NOT EXISTS projects (
-	id TEXT PRIMARY KEY,
-	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-	creator_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-	name TEXT NOT NULL,
-	description TEXT NOT NULL DEFAULT '',
-	status TEXT NOT NULL DEFAULT 'draft',
-	template TEXT NOT NULL DEFAULT '',
-	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+-- projects CREATE was moved earlier in this batch (above the
+-- ALTER TABLE projects block) so the ALTERs and the foreign keys
+-- on iosdist_agent_builds / project_research_runs all see it.
 
 -- default_llm_config_id: the LLM picked at AI 拆解 time. Sub-task
 -- chats inherit this so a project planned with xAI doesn't suddenly
@@ -2230,6 +2357,23 @@ ALTER TABLE project_tasks
 CREATE INDEX IF NOT EXISTS idx_project_tasks_project ON project_tasks(project_id, ord);
 CREATE INDEX IF NOT EXISTS idx_project_tasks_status ON project_tasks(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_project_tasks_project_sprint ON project_tasks(project_id, sprint_number, ord);
+
+-- Late-bound FK: project_research_runs.task_id -> project_tasks(id).
+-- project_research_runs is CREATEd earlier in this batch (before
+-- project_tasks) so the inline REFERENCES was dropped to avoid a
+-- fresh-DB "relation project_tasks does not exist" failure.
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'project_research_runs_task_id_fkey'
+	) THEN
+		ALTER TABLE project_research_runs
+			ADD CONSTRAINT project_research_runs_task_id_fkey
+			FOREIGN KEY (task_id) REFERENCES project_tasks(id) ON DELETE SET NULL;
+	END IF;
+END
+$$;
 
 -- project_task_revisions: append-only audit of major task edits.
 -- Today only system_agent_sharpen-driven updates write here so users
