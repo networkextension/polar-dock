@@ -13,10 +13,31 @@ worker binary + UI pages. Mirrors how `iosdist` slotted in.
 
 ## Sprint goal
 
-Ship the source spec's §7 *Week 1-4 slice* — public track record + 
-Stripe subscription + email newsletter — as a working beta. Defer
-webhook / API-key / Quant tier (§7 Weeks 5-9) to a follow-up sprint
-once early-paying-user feedback validates demand.
+**Founder-first principle**: before any of the source spec's §7
+public-product slice, ship **P00-stock** — a private personal
+pipeline that ingests the founder's actual brokerage account, computes
+real performance vs QQQ, annotates the buy/sell points on charts,
+and runs a basic quantitative fit against the trade history. This
+is the "first user is myself" gate: the public product only makes
+sense once the founder's own track record is computable +
+visualizable end-to-end from real account data.
+
+P00 has **two data-ingestion paths** to defeat the Schwab developer-app
+approval lead time (the registration is known-painful):
+
+- **Path A — CSV export (zero-wait)**. Schwab lets account holders
+  download transaction + holdings history as CSV from the website.
+  P00 starts here so the analytics pipeline can be built + validated
+  this week, regardless of API approval status.
+- **Path B — Schwab Trader API (drop-in upgrade)**. Same internal
+  data model; the API just replaces the CSV importer with a live
+  HTTP fetcher. Land whenever the developer app is approved.
+
+Once P00 is running locally and the numbers / charts pass the gate,
+fast-follow with the source spec's §7 *Week 1-4 slice* — public
+track record + Stripe subscription + email newsletter — as a
+working beta. Defer webhook / API-key / Quant tier (§7 Weeks 5-9) to
+a follow-up sprint once early-paying-user feedback validates demand.
 
 This compresses the source spec's 9-week solo plan into a sprint by:
 
@@ -29,19 +50,157 @@ This compresses the source spec's 9-week solo plan into a sprint by:
 
 ## Phase plan
 
-Seven phases. P0-stock + P1-stock are the gates; everything else is
-parallelizable. **MVP for the sprint = P0 + P1 + P2.** P3-P5 are the
-quant-tier upgrade; P6 is compliance polish.
+Eight phases. **P00-stock is the gating personal-dogfood phase**;
+P0-stock + P1-stock are the public-product gates; everything else is
+parallelizable. **MVP for the sprint = P00 + P0 + P1 + P2.** P3-P5
+are the quant-tier upgrade; P6 is compliance polish.
 
 | Phase | Scope | Est LOC | Depends on | Risk |
 |---|---|---|---|---|
-| P0-stock | Schema (strategies, strategy_nav, signals, positions) + public track record API + chart UI | 500 Go + 400 TS | — | medium (TimescaleDB decision) |
+| **P00-stock** | **Personal pipeline: CSV-or-API ingest of Schwab account + vs-QQQ analysis + B/S annotation + basic quant fit** | **800 Go** | **—** | **high (founder must validate numbers vs Schwab statements)** |
+| P0-stock | Schema (strategies, strategy_nav, signals, positions) + public track record API + chart UI | 500 Go + 400 TS | P00 acceptance gate | medium (TimescaleDB decision) |
 | P1-stock | Subscriptions table + Stripe checkout + Stripe webhook + tier middleware | 600 Go + 250 TS | P0 | high (payments + tax) |
 | P2-stock | Member dashboard + signal API with tier-gated `publish_at` + email digest | 400 Go + 350 TS | P0 + P1 | medium (email deliverability) |
 | P3-stock | Daily strategy worker (cmd/stock-worker) + strategy interface + NAV recompute | 500 Go | P0 | medium (cron correctness, market holidays) |
 | P4-stock | Webhook delivery (HMAC sign, exponential retry) + Webhook config UI | 350 Go + 200 TS | P1 + P3 | low |
 | P5-stock | API-key issuance + read-only Quant-tier API + per-key rate-limit | 250 Go + 150 TS | P1 | low |
 | P6-stock | Compliance: ToS / privacy / risk disclosure pages + audit_logs + GDPR export | 200 Go + 300 TS | P0 + P1 + P2 | medium (legal review gate) |
+
+## Phase 00-stock — Personal pipeline (founder dogfood)
+
+**Audience: one user — the founder. No public surface, no Stripe, no
+workspace plumbing. Validates that the data + math + chart pipeline
+produces numbers the founder trusts on his own real account.**
+
+### Why this phase exists
+
+The source spec assumes a strategy already has a track record to
+publish. The founder's actual track record lives in Schwab, not in
+Polar. Until that data flows end-to-end into the same shape P0-stock
+will publish (`strategy_nav` + `signals` + `positions`), there's no
+ground truth to validate against. P00-stock builds the ETL +
+analytics that turns Schwab account history into the same shape, so
+P0-stock is just "expose it publicly" instead of "build it from
+scratch".
+
+### Two ingestion paths (CSV first, API later)
+
+| Path | Trigger | Source | When |
+|---|---|---|---|
+| A | always available | Schwab website → "Account History → Export" → CSV files for transactions + positions | start **today** — zero gating |
+| B | upgrades A | Schwab Trader API via developer app | land whenever the dev-app approval clears |
+
+Internal data model is identical for both paths. The `ingest`
+subcommand has two flavors (`ingest csv <path>` / `ingest api`) that
+write the same `trades` + `positions` tables. Path A unlocks the
+analytics work immediately; Path B is a swap-in once approved, with
+no schema churn.
+
+### Tasks
+
+| # | Task | File | Path |
+|---|---|---|---|
+| 00.1 | CSV importer: parse Schwab "Transactions" CSV export (handles current 2026 format + the 2024 pre-migration format if encountered) → normalize into `trades` rows: `(id, account, symbol, side, qty, price, commission, executed_at, kind)` | `internal/stock/ingest/csv_transactions.go` (new) | A |
+| 00.2 | CSV importer: parse Schwab "Positions" CSV export → snapshot rows: `(account, symbol, qty, avg_cost, market_value, as_of_at)` | `internal/stock/ingest/csv_positions.go` (new) | A |
+| 00.3 | Idempotent dedup: CSV imports keyed by `(account, symbol, executed_at, qty, price)` so re-running the same file is a no-op | both importers | A |
+| 00.4 | Market data ingest from a CSV-friendly source first (Yahoo Finance unofficial endpoint via `query1.finance.yahoo.com`, or Stooq.com daily CSV) — pull EOD OHLC for each held ticker + QQQ benchmark | `internal/stock/ingest/yahoo_prices.go` (new) | A |
+| 00.5 | Schwab developer app registration (manual, one-time): submit form on developer.schwab.com, callback URL via `https://zen.4950.store:2443/auth/schwab/callback`, track approval state in a checklist | external + `.env.example` | B |
+| 00.6 | Schwab OAuth flow (3-legged): `polar-stock auth login` opens browser → user logs into Schwab → returns to callback → exchanges code for tokens → saves to `~/.config/polar-stock/schwab-tokens.json` (chmod 600) | `internal/stock/schwab/oauth.go` (new) | B |
+| 00.7 | Refresh-token rotation: Schwab access token TTL 30 min, refresh token TTL 7 days; daemonize a tiny refresher that re-mints before expiry, fails loudly if refresh expired | same | B |
+| 00.8 | API transaction pull: `GET /accounts/{acct}/transactions` paged by date range; same `trades` normalization as Path A | `internal/stock/schwab/accounts.go` (new) | B |
+| 00.9 | API market-data pull: `GET /marketdata/v1/pricehistory` → same daily-OHLC schema as Path A's Yahoo fetcher | `internal/stock/schwab/marketdata.go` (new) | B |
+| 00.10 | Local store: SQLite at `~/.config/polar-stock/personal.db` (NOT Postgres — keep this phase fully separable from Polar's main DB; founder may run it on a different machine than the dock) | `internal/stock/store/sqlite.go` (new) | both |
+| 00.11 | NAV reconstruction: from trades + EOD prices → daily portfolio NAV, normalized to 1.0 at start of window; cost-basis FIFO (specific-lot later if FIFO diverges from Schwab statements) | `internal/stock/analysis/nav.go` (new) | both |
+| 00.12 | vs-QQQ analytics: time-weighted return, alpha vs QQQ buy-and-hold over same window, beta, Sharpe (vs risk-free + vs QQQ excess), max drawdown, win rate | `internal/stock/analysis/perf.go` (new) | both |
+| 00.13 | Per-ticker B/S annotation: for each ticker traded, generate a price chart with buy/sell markers + holding-period shading + cumulative-PnL ribbon | `internal/stock/charts/ticker_bs.go` (new) | both |
+| 00.14 | Portfolio NAV chart vs QQQ: dual-line, monthly grid, drawdown shading | `internal/stock/charts/nav_qqq.go` (new) | both |
+| 00.15 | Quant fit (basic): for each closed trade, features = `{entry_rsi_14, entry_momentum_20, sector, day_of_week, holding_days}`; target = `pnl_pct`; fit ordinary least squares + report coefficient table + R² | `internal/stock/analysis/fit.go` (new) | both |
+| 00.16 | Static HTML report: `polar-stock report --since=YYYY-MM-DD --to=YYYY-MM-DD` → writes `~/Desktop/polar-stock-report-<date>.html` with all charts inline (base64 PNG) + numbers table — single self-contained file, openable offline | `cmd/stock-personal/report.go` (new) | both |
+| 00.17 | CLI surface: one binary `polar-stock` with subcommands `ingest csv ...`, `ingest api`, `auth`, `accounts`, `sync`, `report`, `fit`, `serve` (optional local web preview on :7777) | `cmd/stock-personal/main.go` (new) | both |
+| 00.18 | Tests: trade-replay correctness (synthetic trades → known positions), NAV math (golden-output fixtures), perf metrics (synthetic returns w/ known Sharpe), fit math (synthetic regression w/ known coefficients), CSV-parser fixtures (one fixture per Schwab export schema variant) | `*_test.go` | both |
+
+### Day-1 critical path (no Schwab API needed)
+
+Tasks 00.1, 00.2, 00.3, 00.4, 00.10–00.18 can all start immediately
+using Schwab CSV exports + Yahoo prices. The API tasks (00.5–00.9)
+land as a separate follow-up commit once the developer app is
+approved. Founder's data is in the SQLite the same day — no waiting
+on Schwab paperwork.
+
+### Out of scope for P00-stock
+
+- No multi-user, no Stripe, no auth beyond Schwab OAuth (Path B only).
+- No realtime quotes — daily EOD only.
+- No options / futures / crypto handling — equities + ETFs only in
+  this phase. Add when the founder has options trades worth modeling.
+- No Polar dock integration — the personal binary writes its own
+  SQLite + HTML. Promotion to Polar tables happens in P0-stock.
+- No quant fit beyond OLS. ML / non-linear fits are a follow-up after
+  the founder confirms the basic linear features explain something.
+
+### Acceptance
+
+End-to-end smoke (must pass before P0-stock starts):
+
+1. **Path A available immediately**: founder exports CSV from
+   Schwab → `polar-stock ingest csv ~/Downloads/transactions.csv`
+   succeeds → `polar-stock ingest csv ~/Downloads/positions.csv`
+   succeeds → re-running both is idempotent.
+2. `polar-stock report --since=2025-05-14 --to=2026-05-14` generates
+   a self-contained HTML file. Opened in the browser:
+   - Portfolio NAV line tracks QQQ benchmark on the same axes;
+     drawdown shading aligns with the founder's memory of bad months.
+   - Per-ticker charts have B/S markers placed at the correct dates +
+     prices (spot-check 3 trades against the Schwab statement PDF).
+   - Numbers table: time-weighted return, alpha vs QQQ, Sharpe, MDD,
+     win rate, total trades — all populate, all in expected magnitudes.
+3. `polar-stock fit --since=...` outputs an OLS coefficient table.
+   Founder eyeballs whether any feature looks signal-bearing.
+4. **Path B optional**: once dev-app approved, `polar-stock auth login`
+   succeeds and `polar-stock ingest api` produces identical SQLite
+   state to a fresh CSV import for the same date range (golden diff
+   test).
+5. The founder uses the report at least once for a real decision.
+   **This is the validation gate**: if the founder doesn't trust the
+   numbers or doesn't find them useful, stop and refine P00-stock
+   instead of moving to P0-stock.
+
+### Promotion path → P0-stock
+
+After P00-stock validates:
+
+- The SQLite schema becomes the source for P0-stock's Postgres schema
+  (`trades`, `positions`, `nav` tables get migrated 1:1; `signals`
+  is the same shape).
+- The trade-replay + NAV recompute code moves from `internal/stock/`
+  to the dock module under `internal/app/dock/strategies/` and
+  becomes the `personal_v1` strategy.
+- The chart components move from static-PNG to Chart.js in `ui/src/`.
+- The OLS fit becomes the methodology page's "what the data says"
+  section.
+
+This is why P00-stock's data model is intentionally a superset of
+what P0-stock will need: zero rework on promotion.
+
+### Risks (this phase only)
+
+| Risk | Mitigation |
+|---|---|
+| Schwab developer app approval lead time (founder confirmed: registration is painful) | **Path A is the answer** — CSV exports unblock the entire analytics pipeline. Path B is purely an ergonomics upgrade for "I don't want to download CSVs every week" |
+| Schwab CSV export schema changes between releases | Version-tag the parser; CSV fixtures committed under `testdata/`; on schema drift, fail loudly + ask founder to commit a new fixture |
+| Yahoo Finance unofficial endpoint may rate-limit or break | Cache prices locally by `(symbol, date)`; on failure, fall back to Stooq.com daily CSV (also unofficial but stable for years) |
+| Cost-basis FIFO vs Schwab's actual specific-lot accounting | First version uses FIFO; if positions or PnL diverge from Schwab statements, add specific-lot tagging from the CSV "Lot" column (Schwab includes it on some export variants) |
+| Quant fit produces meaningless results on small N | Document that <50 closed trades = anecdote, not signal; show CI bands on coefficients |
+
+### Open questions for P00-stock
+
+- **Quant-fit language** — pure Go (`gonum/stat` + small helper) or a
+  Python sidecar (scikit-learn, statsmodels)? Recommend Go for
+  zero-deps; revisit if non-linear fits become useful.
+- **Report output target** — static HTML on disk (current proposal)
+  or auto-host on `zen.4950.store/personal/` behind admin auth so
+  the founder can view from any device? Static HTML is simpler; the
+  hosted option is one extra route in dock if wanted.
 
 ## Phase 0-stock — Public track record (foundation)
 
@@ -305,11 +464,11 @@ must explicitly approve before merging.
 2. **Pricing tiers** — exact prices not set. Source spec implies
    free / pro / quant. Suggest pro = $29/mo, quant = $99/mo, both
    yearly options at -20% — confirm with user before P1 PR opens.
-3. **Polygon vs Schwab data source** — source spec mentions both.
-   Polygon is simpler to integrate (HTTP/JSON, free tier). Schwab
-   requires OAuth + brokerage account; production-grade but heavy.
-   **Recommend: Polygon for P3, Schwab as P3.5 swap if order
-   execution lands (not in scope).**
+3. **Polygon vs Schwab data source** — **decided: Schwab is the
+   eventual primary source** (founder's real account lives there).
+   But Schwab developer-app approval is the painful gate; P00 starts
+   with the CSV-export path + Yahoo daily prices. No Polygon
+   integration unless Schwab market-data quotas become a real bottleneck.
 4. **Single strategy vs many at launch** — sprint MVP can ship with
    exactly one strategy populated (`momentum_v1`). Confirm the
    strategy logic + a 1-year backfill before P0 PR opens.
@@ -324,18 +483,32 @@ must explicitly approve before merging.
 | If user says... | Land |
 |---|---|
 | "design looks right, queue it" | This dev doc as a single PR (no code), tagged `next-sprint` |
-| "do P0-stock" | The P0-stock PR per §0 above |
+| "start P00-stock — CSV path only" | P00 Path-A tasks (00.1-00.4, 00.10-00.18) — analytics pipeline against CSV exports, no Schwab API |
+| "P00 CSV works, add the API" | P00 Path-B tasks (00.5-00.9) as a follow-up PR once developer app approved |
+| "P00 numbers check out, go P0" | P0-stock PR after the founder confirms the personal report passed §00 acceptance gate |
 | "skip the worker, manual signals only" | P0 + P1 + P2 with signals admin-inserted via SQL; P3-stock deferred indefinitely |
-| "ship the whole spring slice" | P0 + P1 + P2 as a single mega-PR (heavy review, but smaller surface area than 3 round trips) |
+| "ship the whole sprint slice" | P00 (Path A) first, then P0 + P1 + P2 as a single mega-PR |
 | "let's prove demand first — defer everything" | This doc waits in `next-sprint` with no PR; revisit after MCP-Skill P3 lands |
 
 ## Sprint sequencing recap (against current backlog)
 
 Current work in flight:
 1. PR #184 — MCP-Skill design + dev doc (review pending)
-2. Sprint after that — **THIS doc's P0-stock + P1-stock + P2-stock**
-3. After validation — P3-stock through P6-stock as parallel branches
+2. PR #185 — Stock dev plan (this doc) — merged 2026-05-14
+3. **Next code work — P00-stock Path A** (CSV ingest + analytics +
+   charts + fit). No Schwab API dependency; can start today.
+4. Parallel / async — submit the Schwab developer-app form; whenever
+   it clears, land P00-stock Path B as a small follow-up PR.
+5. After P00 acceptance gate passes — P0-stock + P1-stock + P2-stock
+   as the public-MVP slice.
+6. After ≥30 days of paying users — P3-stock through P6-stock as
+   parallel branches.
+
+**No critical-path blocker on Schwab API anymore**: P00 Path A
+sidesteps the registration. The CSV-export path is good enough to
+validate every analytics + chart decision in the doc.
 
 If the user's intent is "stop adding to Polar core, focus on Stock
-for a month", we can branch Stock onto its own subfolder (`internal/stock/`,
-`cmd/stock-worker/`) so it doesn't pollute dock's main lineage.
+for a month", branch Stock onto its own subfolder (`internal/stock/`,
+`cmd/stock-personal/` for P00, `cmd/stock-worker/` for P3) so it
+doesn't pollute dock's main lineage.
