@@ -2442,7 +2442,7 @@ curl -X POST http://localhost:3000/api/posts \
 
 ### 获取会话消息
 
-**GET** `/api/chats/:id/messages?limit=200&offset=0&llm_thread_id=21`
+**GET** `/api/chats/:id/messages?limit=200&offset=0&llm_thread_id=21&since=2026-03-24T10:00:00Z`
 
 权限要求：会话参与者
 
@@ -2451,6 +2451,10 @@ curl -X POST http://localhost:3000/api/posts \
 - 普通私聊可不传 `llm_thread_id`
 - AI 会话建议传 `llm_thread_id`，仅拉取当前话题消息
 - 该接口会同时返回当前激活话题
+- `since`（可选，RFC3339 / RFC3339Nano 时间戳）：仅返回 `COALESCE(updated_at, created_at) > since` 的消息，用于客户端做本地懒加载 + 增量拉取。
+  - 客户端在打开会话时先从本地缓存渲染，再以缓存中最大的 `updated_at`（或 `created_at`）作为 `since` 拉取增量
+  - 流式 AI 回复会重广播相同 `id`、推进 `updated_at`，因此即使离线期间整段流完，再上线时也能通过本次接口拿到最终快照
+  - `since` 早于第一条消息时等同于不带 `since`；时间格式不合法返回 `400`
 
 成功响应：
 ```json
