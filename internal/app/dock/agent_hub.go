@@ -75,6 +75,12 @@ type agentConn struct {
 	// ("kimi" / "claude" / "codex" / custom). Empty for tool-loop
 	// agents. UI uses this to render the bot status badge text.
 	tool string
+	// hostID is the resolved hosts.id for this connection's agent
+	// token, populated lazily on the first message that exercises the
+	// host module. Empty when the token was created via the legacy
+	// agent-tokens flow (no /api/hosts/register call). Cached here so
+	// the WS dispatch doesn't hit the DB on every frame.
+	hostID string
 	send       chan []byte
 	close      chan struct{}
 
