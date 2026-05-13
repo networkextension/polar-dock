@@ -23,6 +23,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"gin-auth-app/cmd/polar-agent/skills"
 )
 
 // fetchBotPreferredTool asks the dock what the bot's stored
@@ -291,6 +293,29 @@ func runAttach(args []string) int {
 		mode = "passthrough(" + spec.Name + ")"
 	}
 	log.Printf("attach bot=%s workdir=%s server=%s mode=%s", *bot, resolved, cfg.Server, mode)
+
+	// Register the coder skill so the WS handshake's skill.advertise
+	// payload reports the real tool list (kimi/claude/codex + any
+	// operator-defined entries from ~/.polar/tools.json) instead of
+	// the empty P0 stub. Dock-side UI on /hosts/:id reads this to
+	// show which coding tools this host makes available. P1b will
+	// wire the Start() dispatch path; for now this is metadata only.
+	specs, _, _ := loadToolsConfig()
+	toolNames := make([]string, 0, len(specs))
+	for _, s := range specs {
+		toolNames = append(toolNames, s.Name)
+	}
+	coderCfg := skills.CoderConfig{
+		Mode:    "tool-loop",
+		Tools:   toolNames,
+		Workdir: resolved,
+	}
+	if spec != nil {
+		coderCfg.Mode = "passthrough"
+		coderCfg.Tool = spec.Name
+	}
+	skills.Register(skills.NewCoderSkill(coderCfg))
+
 	if err := runAgentLoop(cfg, *bot, resolved, *verbose, spec); err != nil {
 		log.Printf("agent loop ended: %v", err)
 		return exitNet
