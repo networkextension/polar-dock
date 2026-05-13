@@ -610,9 +610,23 @@
   "llm": {
     "config_id": 3,
     "model": "gpt-4o-mini"
+  },
+  "usage": {
+    "prompt_tokens": 312,
+    "completion_tokens": 87,
+    "total_tokens": 399
   }
 }
 ```
+
+`usage` 字段说明（issue #170）：
+
+- 由上游 LLM 在返回体里给的 token 计数透传出来
+- 仅当 provider 在非流式响应里附带了 `usage` 块时存在：
+  - 有：OpenAI-compatible（OpenAI / DeepSeek / Kimi / Doubao chat / Qwen / 小米 MiMo / MiroMind）、Volces Responses
+  - 无：Anthropic Messages、Google Gemini、xAI Responses（这三家非流式响应不带 usage）
+- `total_tokens` 是 provider 直接给的；若 provider 仅给 prompt + completion，前端会算 `prompt + completion` 作为总数
+- 客户端应把 `usage` 视为可选字段——不存在时静默忽略，不要展示 0 或占位符
 
 常见失败响应：
 
@@ -2036,9 +2050,16 @@ curl -X POST http://localhost:3000/api/posts \
   "message": "草稿已生成",
   "content": "模型返回的帖子正文...",
   "bot": { "id": 3, "name": "代码高手" },
-  "llm": { "config_id": 11, "model": "gpt-4o-mini" }
+  "llm": { "config_id": 11, "model": "gpt-4o-mini" },
+  "usage": {
+    "prompt_tokens": 245,
+    "completion_tokens": 132,
+    "total_tokens": 377
+  }
 }
 ```
+
+`usage` 为可选字段。语义、provider 覆盖范围、消费方式与 `POST /api/markdown/assist-with-bot` 完全一致，详见该节。
 
 ### Bot 辅助回复草稿
 
@@ -2063,9 +2084,16 @@ curl -X POST http://localhost:3000/api/posts \
   "content": "模型返回的评论正文...",
   "post_id": 12,
   "bot": { "id": 3, "name": "代码高手" },
-  "llm": { "config_id": 11, "model": "gpt-4o-mini" }
+  "llm": { "config_id": 11, "model": "gpt-4o-mini" },
+  "usage": {
+    "prompt_tokens": 178,
+    "completion_tokens": 54,
+    "total_tokens": 232
+  }
 }
 ```
+
+`usage` 为可选字段；语义同 `POST /api/markdown/assist-with-bot`，不在此重复。
 
 ### iOS 对接提示（Posts）
 
