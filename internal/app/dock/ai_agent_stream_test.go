@@ -52,7 +52,7 @@ data: line2
 `))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, body, nil)
+	frames, errs := readSSEFrames(ctx, body, nil, streamIdleTimeout)
 	got := readAllFrames(t, frames, errs, 2*time.Second)
 
 	if len(got) != 3 {
@@ -94,7 +94,7 @@ func runOpenAIDecode(t *testing.T, body string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil, streamIdleTimeout)
 	var assembled strings.Builder
 	for {
 		select {
@@ -163,7 +163,7 @@ func runOpenAIDecodeWithUsage(t *testing.T, body string) (string, *aiUsage, erro
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil, streamIdleTimeout)
 	var (
 		assembled strings.Builder
 		usage     *aiUsage
@@ -319,7 +319,7 @@ func TestAnthropicStreamingTextDeltas(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil, streamIdleTimeout)
 	var assembled strings.Builder
 	stopped := false
 loop:
@@ -372,7 +372,7 @@ func TestXAIStreamingError(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil, streamIdleTimeout)
 	var (
 		assembled strings.Builder
 		gotErr    string
@@ -424,7 +424,7 @@ func runMiroMindDecode(t *testing.T, body string) (string, *aiUsage, error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil, streamIdleTimeout)
 	emit := func(s string, b *strings.Builder) {
 		if s != "" {
 			b.WriteString(s)
@@ -593,7 +593,7 @@ func runVolcesDecode(t *testing.T, body string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil, streamIdleTimeout)
 	var assembled strings.Builder
 	for {
 		select {
@@ -721,7 +721,7 @@ func runAnthropicDecode(t *testing.T, body string) (string, *aiUsage) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil, streamIdleTimeout)
 	var (
 		assembled    strings.Builder
 		inputTokens  int
@@ -855,7 +855,7 @@ func runGeminiDecode(t *testing.T, body string) (string, *aiUsage) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil, streamIdleTimeout)
 	var (
 		assembled strings.Builder
 		usage     *aiUsage
@@ -921,7 +921,7 @@ func runResponsesDecode(t *testing.T, body string) (string, *aiUsage) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil, streamIdleTimeout)
 	var (
 		assembled strings.Builder
 		usage     *aiUsage
@@ -1013,5 +1013,25 @@ func TestVolcesStreamingCapturesUsage(t *testing.T) {
 	}
 	if usage.TotalTokens != 15 {
 		t.Errorf("usage total: got %d, want 15 (input+output fallback)", usage.TotalTokens)
+	}
+}
+
+func TestProviderIdleTimeout(t *testing.T) {
+	cases := []struct {
+		provider aiProvider
+		want     time.Duration
+	}{
+		{aiProviderMiroMind, streamIdleTimeoutDeepResearch},
+		{aiProviderOpenAICompatible, streamIdleTimeout},
+		{aiProviderAnthropic, streamIdleTimeout},
+		{aiProviderGemini, streamIdleTimeout},
+		{aiProviderXAIResponses, streamIdleTimeout},
+		{aiProviderVolcesResponses, streamIdleTimeout},
+		{aiProvider("unknown"), streamIdleTimeout},
+	}
+	for _, tc := range cases {
+		if got := providerIdleTimeout(tc.provider); got != tc.want {
+			t.Errorf("providerIdleTimeout(%q) = %v, want %v", tc.provider, got, tc.want)
+		}
 	}
 }

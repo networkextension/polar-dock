@@ -38,8 +38,29 @@ const (
 	// streamIdleTimeout aborts the read loop when no chunk arrives for this long.
 	// Generous enough to tolerate cold-start of slow self-hosted models, tight
 	// enough that a stalled server is recovered from in human time.
-	streamIdleTimeout = 90 * time.Second
+	//
+	// Default applies to OpenAI / xAI / Anthropic / Gemini / Volces / Kimi /
+	// DeepSeek — providers that stream tokens steadily once generation starts.
+	// Deep-research / agentic-reasoning models (MiroMind/MiroThinker
+	// deepresearch tier) go silent for minutes during multi-step planning
+	// + tool/search loops before emitting any SSE frame, so they get
+	// streamIdleTimeoutDeepResearch via providerIdleTimeout below.
+	streamIdleTimeout              = 90 * time.Second
+	streamIdleTimeoutDeepResearch  = 10 * time.Minute
 )
+
+// providerIdleTimeout returns the per-provider idle-gap watchdog ceiling.
+// Returns streamIdleTimeout (90s) for normal token-streaming providers and
+// streamIdleTimeoutDeepResearch (10m) for providers whose stream legitimately
+// goes silent for minutes during planning.
+func providerIdleTimeout(provider aiProvider) time.Duration {
+	switch provider {
+	case aiProviderMiroMind:
+		return streamIdleTimeoutDeepResearch
+	default:
+		return streamIdleTimeout
+	}
+}
 
 // streamChunkCallback receives each non-empty text delta as it is decoded.
 type streamChunkCallback func(delta string)
@@ -101,8 +122,9 @@ type streamFrame struct {
 
 // readSSEFrames pulls SSE event blocks (delimited by a blank line) off r.
 // SSE comment lines (starting with ':') are skipped. The watchdog timer is
-// reset whenever a non-empty frame is delivered.
-func readSSEFrames(ctx context.Context, body io.Reader, watchdog *time.Timer) (<-chan streamFrame, <-chan error) {
+// reset whenever a non-empty frame is delivered. idleTimeout is the
+// per-provider ceiling used when resetting the watchdog.
+func readSSEFrames(ctx context.Context, body io.Reader, watchdog *time.Timer, idleTimeout time.Duration) (<-chan streamFrame, <-chan error) {
 	frames := make(chan streamFrame)
 	errs := make(chan error, 1)
 	go func() {
@@ -121,7 +143,7 @@ func readSSEFrames(ctx context.Context, body io.Reader, watchdog *time.Timer) (<
 			eventName = ""
 			dataBuf.Reset()
 			if watchdog != nil {
-				watchdog.Reset(streamIdleTimeout)
+				watchdog.Reset(idleTimeout)
 			}
 			select {
 			case frames <- frame:
@@ -143,7 +165,7 @@ func readSSEFrames(ctx context.Context, body io.Reader, watchdog *time.Timer) (<
 					// SSE comment (keep-alive). Reset watchdog so a stream
 					// that emits only pings doesn't trigger the idle timeout.
 					if watchdog != nil {
-						watchdog.Reset(streamIdleTimeout)
+						watchdog.Reset(idleTimeout)
 					}
 				case strings.HasPrefix(trimmed, "event:"):
 					eventName = strings.TrimSpace(trimmed[len("event:"):])
@@ -184,7 +206,8 @@ type streamSession struct {
 
 func (a *aiAgent) startStreamingRequest(ctx context.Context, providerLabel, reqURL, contentType string, body []byte, headers map[string]string, proxyURL string) (*streamSession, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
-	watchdog := time.AfterFunc(streamIdleTimeout, cancel)
+	idleTimeout := providerIdleTimeout(aiProvider(providerLabel))
+	watchdog := time.AfterFunc(idleTimeout, cancel)
 
 	req, err := http.NewRequestWithContext(streamCtx, http.MethodPost, reqURL, bytes.NewReader(body))
 	if err != nil {
@@ -218,7 +241,7 @@ func (a *aiAgent) startStreamingRequest(ctx context.Context, providerLabel, reqU
 		return nil, fmt.Errorf("%s api returned status %d: %s", providerLabel, resp.StatusCode, message)
 	}
 
-	frames, errs := readSSEFrames(streamCtx, resp.Body, watchdog)
+	frames, errs := readSSEFrames(streamCtx, resp.Body, watchdog, idleTimeout)
 	return &streamSession{
 		resp:     resp,
 		frames:   frames,
