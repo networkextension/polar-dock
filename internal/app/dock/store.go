@@ -830,8 +830,12 @@ ALTER TABLE markdown_entries
 -- is nullable: legacy entries before the migration are personal-only.
 -- visibility backfilled from is_public so the boolean stays a usable
 -- mirror until UI fully switches over.
+-- The FK to teams(id) is added AFTER teams is created below (search
+-- "markdown_entries_workspace_id_fkey") — declaring it inline here
+-- would break fresh-DB bootstrap because teams doesn't exist yet
+-- when this section runs.
 ALTER TABLE markdown_entries
-	ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id) ON DELETE SET NULL;
+	ADD COLUMN IF NOT EXISTS workspace_id TEXT;
 ALTER TABLE markdown_entries
 	ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
 UPDATE markdown_entries
@@ -1010,8 +1014,10 @@ CREATE TABLE IF NOT EXISTS teams (
 -- (markdown / post assist, agent auto-register research bot).
 -- Nullable; consumers fall back to "first available llm_configs row
 -- in this workspace" when unset.
+-- The FK to llm_configs(id) is added AFTER llm_configs is created
+-- below (search "teams_default_llm_config_id_fkey").
 ALTER TABLE teams
-	ADD COLUMN IF NOT EXISTS default_llm_config_id BIGINT REFERENCES llm_configs(id) ON DELETE SET NULL;
+	ADD COLUMN IF NOT EXISTS default_llm_config_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_teams_owner ON teams(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_teams_kind ON teams(kind);
 
@@ -1047,6 +1053,24 @@ CREATE TABLE IF NOT EXISTS team_invitations (
 CREATE INDEX IF NOT EXISTS idx_team_invitations_team ON team_invitations(team_id, status);
 CREATE INDEX IF NOT EXISTS idx_team_invitations_email ON team_invitations(LOWER(email), status);
 
+-- Late-bound FK: markdown_entries.workspace_id -> teams(id). The
+-- ALTER ADD COLUMN above ran before teams existed, so we defer the
+-- FK constraint to here. Idempotent via pg_constraint probe so
+-- existing DBs (where the column was created with REFERENCES inline
+-- by older code paths) are no-op.
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'markdown_entries_workspace_id_fkey'
+	) THEN
+		ALTER TABLE markdown_entries
+			ADD CONSTRAINT markdown_entries_workspace_id_fkey
+			FOREIGN KEY (workspace_id) REFERENCES teams(id) ON DELETE SET NULL;
+	END IF;
+END
+$$;
+
 CREATE TABLE IF NOT EXISTS llm_configs (
 	id BIGSERIAL PRIMARY KEY,
 	owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1058,6 +1082,21 @@ CREATE TABLE IF NOT EXISTS llm_configs (
 	created_at TIMESTAMPTZ NOT NULL,
 	updated_at TIMESTAMPTZ NOT NULL
 );
+
+-- Late-bound FK: teams.default_llm_config_id -> llm_configs(id). See
+-- the same pattern note on markdown_entries_workspace_id_fkey above.
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'teams_default_llm_config_id_fkey'
+	) THEN
+		ALTER TABLE teams
+			ADD CONSTRAINT teams_default_llm_config_id_fkey
+			FOREIGN KEY (default_llm_config_id) REFERENCES llm_configs(id) ON DELETE SET NULL;
+	END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS bot_users (
 	id BIGSERIAL PRIMARY KEY,
