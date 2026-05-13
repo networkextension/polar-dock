@@ -664,6 +664,7 @@ const en: Record<string, string> = {
   "nav.creation": "Creation",
   "nav.videoStudio": "Video Studio",
   "nav.iosDist": "iOS Distribution",
+  "nav.hosts": "Hosts",
 
   // Topbar / page titles
   "projects.title": "Projects",
@@ -1449,6 +1450,7 @@ const zhCN: Record<string, string> = {
   "nav.creation": "创作",
   "nav.videoStudio": "视频工作室",
   "nav.iosDist": "iOS 分发",
+  "nav.hosts": "主机",
 
   // Topbar / page titles
   "projects.title": "项目",
