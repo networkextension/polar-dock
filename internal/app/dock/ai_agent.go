@@ -200,7 +200,18 @@ type geminiGenerateContentResponse struct {
 	Candidates []struct {
 		Content geminiContent `json:"content"`
 	} `json:"candidates"`
-	Error json.RawMessage `json:"error,omitempty"`
+	// UsageMetadata is present on streamGenerateContent's terminal chunk
+	// (and sometimes earlier ones) and on non-streaming responses. Used
+	// by streamGemini to surface token counts via *aiUsage; nil when
+	// missing so downstream metrics record 0/0 instead of guessing.
+	UsageMetadata *geminiUsageMetadata `json:"usageMetadata,omitempty"`
+	Error         json.RawMessage      `json:"error,omitempty"`
+}
+
+type geminiUsageMetadata struct {
+	PromptTokenCount     int `json:"promptTokenCount"`
+	CandidatesTokenCount int `json:"candidatesTokenCount"`
+	TotalTokenCount      int `json:"totalTokenCount"`
 }
 
 type geminiContent struct {

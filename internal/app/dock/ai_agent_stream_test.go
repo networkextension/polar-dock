@@ -706,3 +706,312 @@ func TestVolcesStreamingPayloadShape(t *testing.T) {
 		t.Errorf("expected input array in Volces payload: %s", s)
 	}
 }
+
+// ---- usage-capture coverage for non-OpenAI streams (issue #170 follow-up) -------------------
+//
+// These tests parallel the per-provider decode loops in ai_agent_stream.go,
+// asserting that we now extract token usage from the event shapes each
+// provider actually emits. Decode loops here track the production code
+// in lockstep — if a real handler's usage path changes, the corresponding
+// test should mirror that change.
+
+// runAnthropicDecode mirrors streamAnthropic's usage-aware loop without
+// the HTTP/session scaffolding so we can feed canned bodies in.
+func runAnthropicDecode(t *testing.T, body string) (string, *aiUsage) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	var (
+		assembled    strings.Builder
+		inputTokens  int
+		outputTokens int
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return assembled.String(), finalizeAnthropicUsage(inputTokens, outputTokens)
+		case err := <-errs:
+			if err != nil {
+				return assembled.String(), finalizeAnthropicUsage(inputTokens, outputTokens)
+			}
+		case frame, ok := <-frames:
+			if !ok {
+				return assembled.String(), finalizeAnthropicUsage(inputTokens, outputTokens)
+			}
+			switch frame.event {
+			case "ping", "":
+				continue
+			case "message_stop":
+				return assembled.String(), finalizeAnthropicUsage(inputTokens, outputTokens)
+			case "message_start":
+				var env struct {
+					Message struct {
+						Usage struct {
+							InputTokens  int `json:"input_tokens"`
+							OutputTokens int `json:"output_tokens"`
+						} `json:"usage"`
+					} `json:"message"`
+				}
+				if err := jsonUnmarshalString(frame.data, &env); err == nil {
+					if env.Message.Usage.InputTokens > 0 {
+						inputTokens = env.Message.Usage.InputTokens
+					}
+					if env.Message.Usage.OutputTokens > outputTokens {
+						outputTokens = env.Message.Usage.OutputTokens
+					}
+				}
+			case "message_delta":
+				var env struct {
+					Usage struct {
+						InputTokens  int `json:"input_tokens"`
+						OutputTokens int `json:"output_tokens"`
+					} `json:"usage"`
+				}
+				if err := jsonUnmarshalString(frame.data, &env); err == nil {
+					if env.Usage.InputTokens > 0 {
+						inputTokens = env.Usage.InputTokens
+					}
+					if env.Usage.OutputTokens > outputTokens {
+						outputTokens = env.Usage.OutputTokens
+					}
+				}
+			case "content_block_delta":
+				var chunk anthropicStreamDelta
+				if err := jsonUnmarshalString(frame.data, &chunk); err != nil {
+					continue
+				}
+				deltaType, _ := chunk.Delta["type"].(string)
+				if deltaType != "text_delta" {
+					continue
+				}
+				text, _ := chunk.Delta["text"].(string)
+				assembled.WriteString(text)
+			}
+		}
+	}
+}
+
+func TestAnthropicStreamingCapturesUsage(t *testing.T) {
+	// message_start carries input_tokens + a placeholder output_tokens=1
+	// which message_delta will overwrite. Verifies the "max() wins"
+	// guard so we don't undercount.
+	body := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":35,"output_tokens":1}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+	got, usage := runAnthropicDecode(t, body)
+	if got != "hi world" {
+		t.Errorf("content: got %q want %q", got, "hi world")
+	}
+	if usage == nil {
+		t.Fatalf("usage: nil — expected non-nil from message_start + message_delta")
+	}
+	if usage.PromptTokens != 35 {
+		t.Errorf("prompt: got %d want 35", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 42 {
+		t.Errorf("completion: got %d want 42 (message_delta should beat message_start placeholder)", usage.CompletionTokens)
+	}
+	if usage.TotalTokens != 77 {
+		t.Errorf("total: got %d want 77", usage.TotalTokens)
+	}
+}
+
+func TestAnthropicStreamingNoUsageStaysNil(t *testing.T) {
+	// Defensive: if both envelopes are missing the usage block entirely
+	// (e.g. a proxy that strips fields) we should return nil rather than
+	// a "0/0 was observed" record.
+	body := strings.Join([]string{
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+	_, usage := runAnthropicDecode(t, body)
+	if usage != nil {
+		t.Errorf("usage: got %+v, want nil (provider didn't emit any usage block)", usage)
+	}
+}
+
+// runGeminiDecode mirrors streamGemini's usage capture: walks chunks
+// and remembers the most recent usageMetadata seen.
+func runGeminiDecode(t *testing.T, body string) (string, *aiUsage) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	var (
+		assembled strings.Builder
+		usage     *aiUsage
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return assembled.String(), usage
+		case err := <-errs:
+			if err != nil {
+				return assembled.String(), usage
+			}
+		case frame, ok := <-frames:
+			if !ok {
+				return assembled.String(), usage
+			}
+			if frame.data == "" {
+				continue
+			}
+			var chunk geminiGenerateContentResponse
+			if err := jsonUnmarshalString(frame.data, &chunk); err != nil {
+				continue
+			}
+			if chunk.UsageMetadata != nil {
+				m := chunk.UsageMetadata
+				usage = &aiUsage{
+					PromptTokens:     m.PromptTokenCount,
+					CompletionTokens: m.CandidatesTokenCount,
+					TotalTokens:      m.TotalTokenCount,
+				}
+			}
+			assembled.WriteString(extractGeminiResponseText(chunk))
+		}
+	}
+}
+
+func TestGeminiStreamingCapturesUsage(t *testing.T) {
+	// extractGeminiResponseText trims whitespace per-part, so fixtures
+	// here use atomic words to keep the assembled-text assertion
+	// deterministic and orthogonal to whitespace handling — this test
+	// only cares that usageMetadata is captured.
+	body := strings.Join([]string{
+		`data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}`,
+		``,
+		`data: {"candidates":[{"content":{"parts":[{"text":"world"}]}}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":4,"totalTokenCount":16}}`,
+		``,
+	}, "\n")
+	got, usage := runGeminiDecode(t, body)
+	if got != "helloworld" {
+		t.Errorf("content: got %q want %q", got, "helloworld")
+	}
+	if usage == nil {
+		t.Fatalf("usage: nil — terminal chunk's usageMetadata wasn't parsed")
+	}
+	if usage.PromptTokens != 12 || usage.CompletionTokens != 4 || usage.TotalTokens != 16 {
+		t.Errorf("usage: got %+v, want prompt=12 completion=4 total=16", usage)
+	}
+}
+
+// runResponsesDecode mirrors consumeResponsesStream's usage capture
+// (shared between streamXAI and streamVolces).
+func runResponsesDecode(t *testing.T, body string) (string, *aiUsage) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frames, errs := readSSEFrames(ctx, &stubReader{body: body}, nil)
+	var (
+		assembled strings.Builder
+		usage     *aiUsage
+	)
+	capture := func(snap *xAIResponseSnapshot) {
+		if snap == nil || snap.Usage == nil {
+			return
+		}
+		u := snap.Usage
+		total := u.TotalTokens
+		if total == 0 {
+			total = u.InputTokens + u.OutputTokens
+		}
+		usage = &aiUsage{PromptTokens: u.InputTokens, CompletionTokens: u.OutputTokens, TotalTokens: total}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return assembled.String(), usage
+		case err := <-errs:
+			if err != nil {
+				return assembled.String(), usage
+			}
+		case frame, ok := <-frames:
+			if !ok {
+				return assembled.String(), usage
+			}
+			if frame.data == "" {
+				continue
+			}
+			var chunk xAIStreamEvent
+			if err := jsonUnmarshalString(frame.data, &chunk); err != nil {
+				continue
+			}
+			switch chunk.Type {
+			case "response.completed":
+				capture(chunk.Response)
+				return assembled.String(), usage
+			case "response.output_text.delta":
+				assembled.WriteString(chunk.Delta)
+			default:
+				capture(chunk.Response)
+			}
+		}
+	}
+}
+
+func TestXAIStreamingCapturesUsage(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		``,
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		``,
+		`data: {"type":"response.output_text.delta","delta":" world"}`,
+		``,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}`,
+		``,
+	}, "\n")
+	got, usage := runResponsesDecode(t, body)
+	if got != "hello world" {
+		t.Errorf("content: got %q want %q", got, "hello world")
+	}
+	if usage == nil {
+		t.Fatalf("usage: nil — response.completed.response.usage wasn't parsed")
+	}
+	if usage.PromptTokens != 7 || usage.CompletionTokens != 3 || usage.TotalTokens != 10 {
+		t.Errorf("usage: got %+v, want prompt=7 completion=3 total=10", usage)
+	}
+}
+
+func TestVolcesStreamingCapturesUsage(t *testing.T) {
+	// Volces shares xAI's event shape but may omit total_tokens — verify
+	// the fallback computes total = input + output.
+	body := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"hi"}`,
+		``,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":11,"output_tokens":4}}}`,
+		``,
+	}, "\n")
+	got, usage := runResponsesDecode(t, body)
+	if got != "hi" {
+		t.Errorf("content: got %q want %q", got, "hi")
+	}
+	if usage == nil {
+		t.Fatalf("usage: nil")
+	}
+	if usage.PromptTokens != 11 || usage.CompletionTokens != 4 {
+		t.Errorf("usage: prompt=%d completion=%d, want 11/4", usage.PromptTokens, usage.CompletionTokens)
+	}
+	if usage.TotalTokens != 15 {
+		t.Errorf("usage total: got %d, want 15 (input+output fallback)", usage.TotalTokens)
+	}
+}
