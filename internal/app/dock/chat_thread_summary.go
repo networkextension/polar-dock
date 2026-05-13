@@ -199,7 +199,7 @@ func (s *Server) generateThreadSummary(threadID int64) (*ChatThreadSummary, erro
 		return nil, nil
 	}
 
-	messages, _, err := s.listChatMessages(threadID, nil, threadSummaryContextSize, 0)
+	messages, _, err := s.listChatMessages(threadID, nil, threadSummaryContextSize, 0, nil)
 	if err != nil {
 		return nil, err
 	}

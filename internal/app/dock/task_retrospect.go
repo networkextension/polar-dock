@@ -142,7 +142,7 @@ func (s *Server) generateTaskRetrospect(ctx context.Context, projectID, taskID, 
 	// alone.
 	var messages []ChatMessage
 	if task.ChatThreadID != nil {
-		msgs, _, err := s.listChatMessages(*task.ChatThreadID, task.LLMThreadID, 200, 0)
+		msgs, _, err := s.listChatMessages(*task.ChatThreadID, task.LLMThreadID, 200, 0, nil)
 		if err == nil {
 			messages = msgs
 		}

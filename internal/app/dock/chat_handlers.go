@@ -258,7 +258,21 @@ func (s *Server) handleChatMessages(c *gin.Context) {
 		offset = parsed
 	}
 
-	messages, hasMore, err := s.listChatMessages(threadID, llmThreadID, limit, offset)
+	var since *time.Time
+	if sinceStr := c.Query("since"); sinceStr != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, sinceStr)
+		if err != nil {
+			// Accept second-precision RFC3339 too.
+			parsed, err = time.Parse(time.RFC3339, sinceStr)
+		}
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+			return
+		}
+		since = &parsed
+	}
+
+	messages, hasMore, err := s.listChatMessages(threadID, llmThreadID, limit, offset, since)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return

@@ -6827,7 +6827,7 @@ func (s *Server) getChatSummary(userID string, threadID int64) (*ChatSummary, er
 	return &summary, nil
 }
 
-func (s *Server) listChatMessages(threadID int64, llmThreadID *int64, limit, offset int) ([]ChatMessage, bool, error) {
+func (s *Server) listChatMessages(threadID int64, llmThreadID *int64, limit, offset int, since *time.Time) ([]ChatMessage, bool, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -6840,12 +6840,19 @@ func (s *Server) listChatMessages(threadID int64, llmThreadID *int64, limit, off
 		  WHERE m.thread_id = $1`
 	args := []any{threadID}
 	if llmThreadID != nil {
-		query += ` AND m.llm_thread_id = $2 ORDER BY m.created_at ASC LIMIT $3 OFFSET $4`
-		args = append(args, *llmThreadID, limit+1, offset)
-	} else {
-		query += ` ORDER BY m.created_at ASC LIMIT $2 OFFSET $3`
-		args = append(args, limit+1, offset)
+		args = append(args, *llmThreadID)
+		query += fmt.Sprintf(` AND m.llm_thread_id = $%d`, len(args))
 	}
+	if since != nil {
+		// Falls back to created_at when updated_at is NULL (rows from before
+		// the updated_at column was added).
+		args = append(args, *since)
+		query += fmt.Sprintf(` AND COALESCE(m.updated_at, m.created_at) > $%d`, len(args))
+	}
+	args = append(args, limit+1)
+	query += fmt.Sprintf(` ORDER BY m.created_at ASC LIMIT $%d`, len(args))
+	args = append(args, offset)
+	query += fmt.Sprintf(` OFFSET $%d`, len(args))
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, false, err
