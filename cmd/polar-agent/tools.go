@@ -140,12 +140,24 @@ func loadToolsConfig() ([]toolSpec, string, error) {
 		defaultTool = strings.TrimSpace(override.DefaultTool)
 	}
 	for _, override := range override.Tools {
-		if strings.TrimSpace(override.Name) == "" {
+		name := strings.TrimSpace(override.Name)
+		if name == "" {
+			continue
+		}
+		// Empty Binary is rejected — the override would silently wipe
+		// the builtin's binary path and leave us calling exec.Command("")
+		// at attach time, which surfaces as the cryptic
+		// "start  : exec: no command" runtime error (issue #166).
+		// Loader-side guard turns it into a clear, actionable warning
+		// instead. Override authors must either keep the builtin (omit
+		// the override entry) or copy the binary value through.
+		if strings.TrimSpace(override.Binary) == "" {
+			log.Printf("[tools] ignoring override %q in %s: \"binary\" field is empty; copy the builtin's binary path or remove the override entry", name, path)
 			continue
 		}
 		replaced := false
 		for i, existing := range merged {
-			if existing.Name == override.Name {
+			if existing.Name == name {
 				merged[i] = override
 				replaced = true
 				break
