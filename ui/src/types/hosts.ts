@@ -88,3 +88,24 @@ export type HostSkillCredentialListResponse = ErrorResponse & {
   credentials?: HostSkillCredential[];
   encryption_active?: boolean;
 };
+
+// P2 (Shell skill) -------------------------------------------------------
+
+export type ShellOpenResponse = ErrorResponse & {
+  run_id?: number;
+  ws_url?: string;
+  host_id?: string;
+  opened_at?: string;
+};
+
+export type ShellSession = {
+  run_id: number;
+  host_id: string;
+  host_skill_id: number;
+  operator_user_id: string;
+  opened_at: string;
+};
+
+export type ShellSessionListResponse = ErrorResponse & {
+  sessions?: ShellSession[];
+};
