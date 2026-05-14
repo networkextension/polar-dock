@@ -278,8 +278,9 @@ func (s *Server) handleAgentWS(c *gin.Context) {
 		workdir:           strings.TrimSpace(c.Query("workdir")),
 		send:        make(chan []byte, 64),
 		close:       make(chan struct{}),
-		pending:     map[string]chan agentToolResult{},
-		chatPending: map[string]chan agentChatReply{},
+		pending:      map[string]chan agentToolResult{},
+		chatPending:  map[string]chan agentChatReply{},
+		skillPending: map[int64]chan skillEventFrame{},
 	}
 	if displaced := s.agentHub.register(ac); displaced != nil {
 		log.Printf("[agent ws] kicking previous connection bot=%s", botUserID)
@@ -432,6 +433,18 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 				}
 			}
 			log.Printf("[agent ws] skill.advertise host=%s skills=%d", ac.hostID, len(msg.Skills))
+		case "skill.event":
+			// Host module P1c.3: agent reports lifecycle events for a
+			// skill.start dispatch. Forward to the per-run channel
+			// registered by the dispatcher in generateReplyWithHostSkill;
+			// dropped silently when no consumer is waiting (legacy
+			// agent or already-finished run).
+			var ev skillEventFrame
+			if err := json.Unmarshal(raw, &ev); err != nil {
+				log.Printf("[agent ws] skill.event parse failed bot=%s: %v", ac.botUserID, err)
+				continue
+			}
+			ac.deliverSkillEvent(ev)
 		default:
 			log.Printf("[agent ws] unknown kind=%s bot=%s", head.Kind, ac.botUserID)
 		}

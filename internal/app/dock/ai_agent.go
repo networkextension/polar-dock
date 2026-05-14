@@ -722,6 +722,22 @@ func (a *aiAgent) generateReply(task aiAgentTask, runtimeConfig aiRuntimeConfig)
 		}
 	}
 
+	// Host module P1c.3: when this bot is bound to a host_skill row
+	// (bot_users.host_skill_id), the dispatch goes through the
+	// skill.start / skill.event protocol against the BOUND host —
+	// which may or may not be the host the bot's own attach token is
+	// on. Legacy bots with NULL host_skill_id fall through to the
+	// passthrough/tool-loop path below.
+	if a.server != nil && task.ResponderUserID != "" {
+		hostSkillID, err := a.server.getBotHostSkillID(task.ResponderUserID)
+		if err != nil {
+			log.Printf("[ai-agent] bot=%s getBotHostSkillID: %v (falling back to legacy path)", task.ResponderUserID, err)
+		} else if hostSkillID > 0 {
+			log.Printf("[ai-agent] bot=%s using host_skill dispatch skill_id=%d", task.ResponderUserID, hostSkillID)
+			return a.generateReplyWithHostSkill(task, hostSkillID)
+		}
+	}
+
 	// Phase 1.4: route to the right agent path when this bot has a
 	// polar-agent attached. Two flavors:
 	//   - kimi-cli passthrough — the agent has kimi-cli installed

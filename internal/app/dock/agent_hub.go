@@ -89,6 +89,15 @@ type agentConn struct {
 
 	chatPendingMu sync.Mutex
 	chatPending   map[string]chan agentChatReply
+
+	// skillPending is the per-run rendezvous for skill.event frames
+	// (host module P1c.3). Each map entry is one in-flight skill.start
+	// dispatch; the agent's skill.event frames keyed by run_id get
+	// pushed onto the channel. The channel is buffered so state/log
+	// events that arrive before the consumer drains don't block the WS
+	// read loop. The consumer cleans up the map entry on exit.
+	skillPendingMu sync.Mutex
+	skillPending   map[int64]chan skillEventFrame
 }
 
 func (c *agentConn) hasCapability(name string) bool {
@@ -318,6 +327,116 @@ func (h *agentHub) dispatchChatMessage(botUserID string, threadID int64, content
 		conn.chatPendingMu.Unlock()
 		return nil, errAgentTimeout
 	}
+}
+
+// ---- host module skill dispatch (P1c.3) -----------------------------------
+
+// skillStartEnvelope is the dock → agent dispatch frame for a host
+// skill execution. Mirror of cmd/polar-agent/loop.go's struct so the
+// agent can unmarshal directly.
+type skillStartEnvelope struct {
+	Kind      string         `json:"kind"` // "skill.start"
+	RunID     int64          `json:"run_id"`
+	SkillKind string         `json:"skill_kind"`
+	Config    map[string]any `json:"config"`
+}
+
+// skillEventFrame is the agent → dock event the dispatcher waits on.
+// EventKind is one of state/log/exit; Data carries kind-specific keys
+// (see skills.Event in cmd/polar-agent/skills/skill.go for the shape).
+type skillEventFrame struct {
+	Kind      string         `json:"kind"` // "skill.event"
+	RunID     int64          `json:"run_id"`
+	EventKind string         `json:"event_kind"`
+	Data      map[string]any `json:"data,omitempty"`
+}
+
+// trackSkillPending registers a per-run buffered channel that the WS
+// read loop will push every skill.event for that run_id onto. Caller
+// owns cleanup via untrackSkillPending — typically defer'd in
+// dispatchSkillStart so an exit-or-timeout-or-disconnect path always
+// releases the map entry.
+func (c *agentConn) trackSkillPending(runID int64) chan skillEventFrame {
+	ch := make(chan skillEventFrame, 16)
+	c.skillPendingMu.Lock()
+	c.skillPending[runID] = ch
+	c.skillPendingMu.Unlock()
+	return ch
+}
+
+func (c *agentConn) untrackSkillPending(runID int64) {
+	c.skillPendingMu.Lock()
+	delete(c.skillPending, runID)
+	c.skillPendingMu.Unlock()
+}
+
+// deliverSkillEvent routes one frame onto the matching run's channel.
+// Drops the frame (logs once) when the consumer is gone — the
+// alternative (block) would wedge the WS read loop indefinitely.
+func (c *agentConn) deliverSkillEvent(ev skillEventFrame) {
+	c.skillPendingMu.Lock()
+	ch, ok := c.skillPending[ev.RunID]
+	c.skillPendingMu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case ch <- ev:
+	default:
+		// Channel full — consumer is slow or absent. Drop silently;
+		// the consumer will get the next event we successfully push,
+		// and exit events are small.
+	}
+}
+
+// dispatchSkillStart sends a skill.start envelope to the agent on the
+// given hostID. Caller is responsible for trackSkillPending +
+// untrackSkillPending bracketing.
+func (h *agentHub) dispatchSkillStart(conn *agentConn, env skillStartEnvelope) error {
+	if conn == nil {
+		return errAgentNotAttached
+	}
+	payload, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	select {
+	case conn.send <- payload:
+		return nil
+	case <-conn.close:
+		return errAgentDisconnected
+	case <-time.After(5 * time.Second):
+		return errAgentSendTimeout
+	}
+}
+
+// lookupByHostID returns the live agentConn for a host's
+// agent_token_id. Returns nil when no agent is currently attached
+// for that host. Linear scan over byBot is fine — the typical box
+// runs <10 attached agents.
+func (h *agentHub) lookupByHostID(hostID string) *agentConn {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.byBot {
+		if c.hostID == hostID {
+			return c
+		}
+	}
+	return nil
+}
+
+// lookupByTokenID is the same scan but keyed on agent_token_id. Used
+// during the WS handshake to resolve host_id before hostID is cached
+// on the conn struct. Same linear-scan complexity reasoning.
+func (h *agentHub) lookupByTokenID(tokenID string) *agentConn {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.byBot {
+		if c.tokenID == tokenID {
+			return c
+		}
+	}
+	return nil
 }
 
 // agentResearchTask is the fire-and-forget envelope used to push a
