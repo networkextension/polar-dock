@@ -175,6 +175,10 @@ export type BotPayload = {
   llm_config_id: number;
   bot_kind?: "classic" | "passthrough";
   preferred_tool?: string;
+  // host_skill_id (P1d): bind bot replies to a host's skill. null
+  // (or omitted on create) = no binding, legacy path. number > 0 =
+  // dock routes the bot via skill.start dispatch on that host.
+  host_skill_id?: number | null;
 };
 
 export type BotUser = {
@@ -194,6 +198,9 @@ export type BotUser = {
   // in UI when bot is passthrough, helping the user remember which
   // polar-agent --tool= flag pairs with it. Backend doesn't enforce.
   preferred_tool: string;
+  // host_skill_id (P1d): non-null = bot is bound to a host's skill;
+  // dock routes through the host module's skill.start dispatch.
+  host_skill_id?: number | null;
   // is_auto_registered: created via POST /api/agent/auto-register
   // by a polar-agent docker container at startup. Operator can't
   // edit/delete from UI — managed by the agent token's lifecycle.

@@ -255,6 +255,56 @@ func (s *Server) ensureHostSkillFromAdvertise(hostID string, skill AdvertisedSki
 	return id, nil
 }
 
+// listHostSkillsForWorkspace returns every host_skills row across
+// every host in a workspace. Used by the bot edit page picker (P1d)
+// to enumerate "skills this bot can bind to". Joins through hosts to
+// scope; FK on host_skills.host_id makes the join cheap.
+func (s *Server) listHostSkillsForWorkspace(workspaceID string) ([]HostSkillWithHost, error) {
+	rows, err := s.db.Query(`
+		SELECT hs.id, hs.host_id, hs.kind, hs.name, hs.config_json::text,
+		       hs.enabled, hs.auto_start,
+		       hs.created_by, hs.created_at, hs.updated_at,
+		       h.slug, h.name
+		FROM host_skills hs
+		JOIN hosts h ON h.id = hs.host_id
+		WHERE h.workspace_id = $1
+		ORDER BY h.name, hs.kind`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HostSkillWithHost
+	for rows.Next() {
+		var (
+			hs         HostSkill
+			configText string
+			hostSlug   string
+			hostName   string
+		)
+		if err := rows.Scan(&hs.ID, &hs.HostID, &hs.Kind, &hs.Name, &configText,
+			&hs.Enabled, &hs.AutoStart, &hs.CreatedBy, &hs.CreatedAt, &hs.UpdatedAt,
+			&hostSlug, &hostName); err != nil {
+			return nil, err
+		}
+		hs.ConfigJSON = json.RawMessage(configText)
+		out = append(out, HostSkillWithHost{
+			HostSkill: hs,
+			HostSlug:  hostSlug,
+			HostName:  hostName,
+		})
+	}
+	return out, rows.Err()
+}
+
+// HostSkillWithHost embeds a HostSkill plus a couple of denormalized
+// fields from the parent host so the FE picker doesn't have to fetch
+// hosts separately.
+type HostSkillWithHost struct {
+	HostSkill
+	HostSlug string `json:"host_slug"`
+	HostName string `json:"host_name"`
+}
+
 // listHostSkills returns every host_skills row for a host, ordered by
 // kind. Used by the host detail UI to show "skills currently materialized
 // from advertise + their config_json".

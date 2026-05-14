@@ -813,6 +813,9 @@ func (s *Server) registerRoutes() {
 		api.GET("/hosts", s.AuthMiddleware(), s.handleHostList)
 		api.GET("/hosts/:id", s.AuthMiddleware(), s.handleHostDetail)
 		api.DELETE("/hosts/:id", s.AuthMiddleware(), s.handleHostDelete)
+		// P1d: list endpoints used by the UI surfaces.
+		api.GET("/host-skills", s.AuthMiddleware(), s.handleHostSkillsListWorkspace)
+		api.GET("/hosts/:id/skills", s.AuthMiddleware(), s.handleHostSkillsListForHost)
 		// P1c.4: per-skill credential vault. Admin-only; never surfaces
 		// raw plaintext on read.
 		api.GET("/hosts/:id/skills/:skillId/credentials", s.AuthMiddleware(), s.handleHostSkillCredentialsList)
