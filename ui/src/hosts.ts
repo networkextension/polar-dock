@@ -13,11 +13,20 @@
 // doc/host-module-dev.md the foundation lands first.
 
 import { fetchCurrentUser, logout } from "./api/session.js";
-import { deleteHost, enrollHost, fetchHost, fetchHosts } from "./api/hosts.js";
+import {
+  deleteHost,
+  deleteHostSkillCredential,
+  enrollHost,
+  fetchHost,
+  fetchHostSkillCredentials,
+  fetchHostSkillsForHost,
+  fetchHosts,
+  putHostSkillCredential,
+} from "./api/hosts.js";
 import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
-import type { Host } from "./types/hosts.js";
+import type { Host, HostSkill, HostSkillCredential } from "./types/hosts.js";
 
 initStoredTheme();
 bindThemeSync();
@@ -52,6 +61,11 @@ const logoutBtn = byId<HTMLButtonElement>("logoutBtn");
 let hosts: Host[] = [];
 let activeHostId: string | null = null;
 let activeHost: Host | null = null;
+// P1d: persistent host_skill rows + per-skill credential lists,
+// populated when a host is opened. Keyed by host_skill_id.
+let activeHostSkills: HostSkill[] = [];
+const credentialsBySkill: Map<number, HostSkillCredential[]> = new Map();
+let credentialEncryptionActive = false;
 
 // ── helpers ─────────────────────────────────────────────────────────────
 function escapeHTML(s: string): string {
@@ -158,29 +172,135 @@ function renderHostDetail(host: Host): void {
   hostsOSArch.textContent = `${host.os || "?"}/${host.arch || "?"}`;
   hostsSlug.textContent = host.slug;
 
-  const skills = host.advertised_skills || [];
-  if (!skills.length) {
-    hostsSkillsList.innerHTML = `<div class="chat-empty">agent 还没上报任何 skill（可能是旧版 polar-agent，升级后会自动上报）。</div>`;
-  } else {
-    hostsSkillsList.innerHTML = skills
-      .map((s) => {
-        const caps = s.capabilities ? Object.keys(s.capabilities).join(", ") : "";
-        return `
-          <div class="video-studio-project-item" style="cursor:default;">
-            <div style="flex:1; min-width:0;">
-              <div style="font-weight:500;">${escapeHTML(s.kind)}${s.version ? ` <span style="font-size:11px; color:var(--text-muted,#888);">v${escapeHTML(s.version)}</span>` : ""}</div>
-              ${caps ? `<div style="font-size:11px; color:var(--text-muted,#888); margin-top:2px;">${escapeHTML(caps)}</div>` : ""}
-            </div>
-            <button type="button" class="btn-inline" disabled title="启用功能在 Phase 1+ 落地" style="opacity:.5;">启用</button>
-          </div>`;
-      })
-      .join("");
-  }
+  // P1d: render persistent host_skills (auto-shimmed from advertise)
+  // with inline credential forms. Loads async; show a placeholder
+  // while the network call lands.
+  hostsSkillsList.innerHTML = `<div class="chat-empty">加载 skills...</div>`;
+  void loadHostSkillsForDetail(host.id);
 
   hostsLastSeen.textContent = host.last_seen_at ? formatRelative(host.last_seen_at) + " （" + new Date(host.last_seen_at).toLocaleString() + "）" : "—";
   hostsLastSeenIP.textContent = host.last_seen_ip ? `IP: ${host.last_seen_ip}` : "IP: —";
 
   hostsDeleteBtn.hidden = false;
+}
+
+async function loadHostSkillsForDetail(hostID: string): Promise<void> {
+  const { response, data } = await fetchHostSkillsForHost(hostID);
+  if (!response.ok) {
+    hostsSkillsList.innerHTML = `<div class="chat-empty">加载 skills 失败：${escapeHTML(data.error || response.statusText)}</div>`;
+    return;
+  }
+  activeHostSkills = data.skills || [];
+  // Fetch credentials for each skill in parallel — small N, fan-out
+  // is fine.
+  credentialsBySkill.clear();
+  credentialEncryptionActive = false;
+  await Promise.all(activeHostSkills.map(async (sk) => {
+    const result = await fetchHostSkillCredentials(hostID, sk.id);
+    if (result.response.ok) {
+      credentialsBySkill.set(sk.id, result.data.credentials || []);
+      if (result.data.encryption_active) {
+        credentialEncryptionActive = true;
+      }
+    }
+  }));
+  renderHostSkillsWithCredentials(hostID);
+}
+
+function renderHostSkillsWithCredentials(hostID: string): void {
+  if (!activeHostSkills.length) {
+    hostsSkillsList.innerHTML = `<div class="chat-empty">尚未上报 skill。等 polar-agent 重新 attach 一次就会自动登记。</div>`;
+    return;
+  }
+  const encryptionBadge = credentialEncryptionActive
+    ? `<span style="font-size:10px; padding:2px 6px; background:rgba(34,197,94,.12); color:#16a34a; border-radius:4px;">🔒 加密</span>`
+    : `<span style="font-size:10px; padding:2px 6px; background:rgba(245,158,11,.12); color:#d97706; border-radius:4px;">⚠️ 未加密 (POLAR_CREDENTIAL_KEY 未设置)</span>`;
+  hostsSkillsList.innerHTML = activeHostSkills.map((sk) => renderSkillCard(hostID, sk, encryptionBadge)).join("");
+  attachSkillCardListeners(hostID);
+}
+
+function renderSkillCard(hostID: string, sk: HostSkill, encryptionBadge: string): string {
+  const creds = credentialsBySkill.get(sk.id) || [];
+  const tools = Array.isArray((sk.config_json as Record<string, unknown>).tools)
+    ? ((sk.config_json as Record<string, unknown>).tools as string[]).join(", ")
+    : "";
+  const mode = String((sk.config_json as Record<string, unknown>).mode || "");
+  const subtitle = [mode, tools && `tools: ${tools}`].filter(Boolean).join(" · ");
+
+  const credRows = creds.length
+    ? creds.map((c) => `
+        <div data-cred-key="${escapeHTML(c.key)}" style="display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--surface-muted,#f7f7f9); border-radius:6px; font-size:12px;">
+          <span style="font-family:monospace; font-weight:500;">${escapeHTML(c.key)}</span>
+          <span style="font-family:monospace; color:var(--text-muted,#888);">${escapeHTML(c.masked_value)}</span>
+          ${c.encrypted ? "" : `<span style="font-size:10px; color:#d97706;">明文</span>`}
+          <span style="flex:1;"></span>
+          <button type="button" class="btn-inline" data-cred-delete="${escapeHTML(c.key)}" data-skill-id="${sk.id}" style="font-size:11px; color:#c33;">删除</button>
+        </div>`).join("")
+    : `<div style="font-size:11px; color:var(--text-muted,#888); padding:4px 0;">尚未配置 API key</div>`;
+
+  return `
+    <div data-skill-id="${sk.id}" style="border:1px solid var(--surface-border,#e5e7eb); border-radius:8px; padding:12px; margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <strong>${escapeHTML(sk.kind)}</strong>
+        <span style="font-size:11px; color:var(--text-muted,#888); font-family:monospace;">id=${sk.id}</span>
+        ${subtitle ? `<span style="font-size:11px; color:var(--text-muted,#888);">— ${escapeHTML(subtitle)}</span>` : ""}
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <span style="font-size:11px; font-weight:500;">Credentials</span>
+        ${encryptionBadge}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        ${credRows}
+      </div>
+      <form data-skill-cred-form="${sk.id}" style="display:flex; gap:6px; margin-top:8px;">
+        <input type="text" class="input" data-cred-key-input style="flex:1; font-family:monospace; font-size:12px;" placeholder="ANTHROPIC_API_KEY" maxlength="100" required />
+        <input type="password" class="input" data-cred-value-input style="flex:2; font-family:monospace; font-size:12px;" placeholder="sk-..." maxlength="500" required />
+        <button type="submit" class="btn-inline btn-secondary" style="font-size:12px;">保存</button>
+      </form>
+    </div>
+  `;
+}
+
+function attachSkillCardListeners(hostID: string): void {
+  hostsSkillsList.querySelectorAll<HTMLFormElement>("form[data-skill-cred-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const skillID = Number(form.dataset.skillCredForm || 0);
+      const keyInput = form.querySelector<HTMLInputElement>("[data-cred-key-input]");
+      const valueInput = form.querySelector<HTMLInputElement>("[data-cred-value-input]");
+      if (!keyInput || !valueInput || !skillID) return;
+      const key = keyInput.value.trim();
+      const value = valueInput.value;
+      if (!key || !value) return;
+      const submitBtn = form.querySelector<HTMLButtonElement>("button[type=submit]");
+      if (submitBtn) submitBtn.disabled = true;
+      const { response, data } = await putHostSkillCredential(hostID, skillID, key, value);
+      if (submitBtn) submitBtn.disabled = false;
+      if (!response.ok) {
+        alert(`保存失败：${data.error || response.statusText}`);
+        return;
+      }
+      keyInput.value = "";
+      valueInput.value = "";
+      await loadHostSkillsForDetail(hostID);
+    });
+  });
+  hostsSkillsList.querySelectorAll<HTMLButtonElement>("button[data-cred-delete]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const key = btn.dataset.credDelete || "";
+      const skillID = Number(btn.dataset.skillId || 0);
+      if (!key || !skillID) return;
+      if (!confirm(`删除 credential "${key}"?`)) return;
+      btn.disabled = true;
+      const { response, data } = await deleteHostSkillCredential(hostID, skillID, key);
+      if (!response.ok) {
+        alert(`删除失败：${data.error || response.statusText}`);
+        btn.disabled = false;
+        return;
+      }
+      await loadHostSkillsForDetail(hostID);
+    });
+  });
 }
 
 async function loadHosts(): Promise<void> {

@@ -305,6 +305,11 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 		LLMConfigID   int64  `json:"llm_config_id"`
 		BotKind       string `json:"bot_kind"`
 		PreferredTool string `json:"preferred_tool"`
+		// HostSkillID (P1d): pointer so the FE can distinguish
+		// "field omitted → don't touch" from "explicit null → unbind"
+		// from "non-zero → bind". Validated server-side against the
+		// workspace.
+		HostSkillID *int64 `json:"host_skill_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
@@ -323,14 +328,19 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Classic Bot 必须选择 LLM 配置"})
 		return
 	}
-	item, err := s.updateBotUser(workspaceID, id, UpdateBotUserInput{
+	input := UpdateBotUserInput{
 		Name:          name,
 		Description:   strings.TrimSpace(req.Description),
 		SystemPrompt:  strings.TrimSpace(req.SystemPrompt),
 		LLMConfigID:   req.LLMConfigID,
 		BotKind:       kind,
 		PreferredTool: strings.TrimSpace(req.PreferredTool),
-	}, time.Now())
+	}
+	if req.HostSkillID != nil {
+		input.HostSkillIDSet = true
+		input.HostSkillID = *req.HostSkillID
+	}
+	item, err := s.updateBotUser(workspaceID, id, input, time.Now())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return

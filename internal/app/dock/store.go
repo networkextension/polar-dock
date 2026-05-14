@@ -451,8 +451,14 @@ type BotUser struct {
 	// edit/delete it from the UI; revoking the agent token removes
 	// the row via FK CASCADE.
 	IsAutoRegistered bool      `json:"is_auto_registered"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	// HostSkillID (P1d): non-nil means dock routes this bot through
+	// the host module's skill.start dispatch instead of the legacy
+	// passthrough/tool-loop path. Pointer so JSON can serialize null
+	// when unbound, and the FE can distinguish "no binding set" from
+	// "binding set to 0".
+	HostSkillID *int64    `json:"host_skill_id,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // Bot kind constants. Defined string literals (not iota) since they
@@ -3388,7 +3394,7 @@ func decodePackTunnelJSON(raw []byte, dest any) error {
 // every bot_users read. Joined with llm_configs via LEFT JOIN
 // (passthrough bots may not have an llm_config_id), so c.name is
 // scanned through sql.NullString.
-const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.created_at, b.updated_at`
+const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.host_skill_id, b.created_at, b.updated_at`
 
 // scanBotUser reads one row from a query that selected
 // botUserSelectColumns. nullable scan targets handle passthrough
@@ -3397,11 +3403,13 @@ func scanBotUser(scanFn func(...any) error) (*BotUser, error) {
 	var item BotUser
 	var llmConfigID sql.NullInt64
 	var configName sql.NullString
+	var hostSkillID sql.NullInt64
 	err := scanFn(
 		&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.BotUserID,
 		&item.Name, &item.Description, &item.SystemPrompt,
 		&llmConfigID, &configName,
 		&item.BotKind, &item.PreferredTool, &item.IsAutoRegistered,
+		&hostSkillID,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
@@ -3412,6 +3420,10 @@ func scanBotUser(scanFn func(...any) error) (*BotUser, error) {
 	}
 	if configName.Valid {
 		item.ConfigName = configName.String
+	}
+	if hostSkillID.Valid {
+		v := hostSkillID.Int64
+		item.HostSkillID = &v
 	}
 	return &item, nil
 }
@@ -3835,7 +3847,9 @@ func (s *Server) listAutoRegisteredBotsForToken(tokenID string) ([]BotUser, erro
 
 // UpdateBotUserInput mirrors CreateBotUserInput for the edit path.
 // Each field is required (no partial patches); the caller is the
-// bots-page edit form which submits the full row anyway.
+// bots-page edit form which submits the full row anyway. HostSkillID
+// uses a pointer so the handler can express tri-state: not provided
+// (don't touch), explicit null (unbind), or non-zero int (bind).
 type UpdateBotUserInput struct {
 	Name          string
 	Description   string
@@ -3843,6 +3857,14 @@ type UpdateBotUserInput struct {
 	LLMConfigID   int64
 	BotKind       string
 	PreferredTool string
+	// HostSkillIDSet: when true, the writer uses HostSkillID below
+	// to set the column (0 = NULL; >0 = the value). When false, the
+	// update preserves whatever's already in the row. This matches
+	// the form pattern where unchecking "bind to skill" clears it
+	// while non-form callers (e.g. legacy update paths) shouldn't
+	// accidentally clear an existing binding.
+	HostSkillIDSet bool
+	HostSkillID    int64
 }
 
 func (s *Server) updateBotUser(workspaceID string, id int64, in UpdateBotUserInput, now time.Time) (*BotUser, error) {
@@ -3899,6 +3921,36 @@ func (s *Server) updateBotUser(workspaceID string, id int64, in UpdateBotUserInp
 		id, workspaceID, in.Name, in.Description, in.SystemPrompt, llmConfigArg, in.BotKind, in.PreferredTool, now,
 	); err != nil {
 		return nil, err
+	}
+	if in.HostSkillIDSet {
+		// Validate the skill belongs to a host in this workspace
+		// before binding — prevents cross-workspace leakage. NULL
+		// (unbind) skips the check.
+		if in.HostSkillID > 0 {
+			var owningWorkspace string
+			err = tx.QueryRow(`
+				SELECT h.workspace_id
+				FROM host_skills hs
+				JOIN hosts h ON h.id = hs.host_id
+				WHERE hs.id = $1`,
+				in.HostSkillID,
+			).Scan(&owningWorkspace)
+			if err != nil || owningWorkspace != workspaceID {
+				return nil, fmt.Errorf("host_skill_id %d not found in workspace", in.HostSkillID)
+			}
+		}
+		var hostSkillArg any
+		if in.HostSkillID > 0 {
+			hostSkillArg = in.HostSkillID
+		} else {
+			hostSkillArg = nil
+		}
+		if _, err = tx.Exec(
+			`UPDATE bot_users SET host_skill_id = $3 WHERE id = $1 AND workspace_id = $2`,
+			id, workspaceID, hostSkillArg,
+		); err != nil {
+			return nil, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err

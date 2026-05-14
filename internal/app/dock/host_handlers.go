@@ -157,6 +157,52 @@ func (s *Server) handleHostDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"host": host})
 }
 
+// handleHostSkillsListWorkspace returns every host_skill row for the
+// active workspace — used by the bot edit page's binding picker
+// (P1d). Workspace member auth (read-only); admin not required.
+func (s *Server) handleHostSkillsListWorkspace(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	skills, err := s.listHostSkillsForWorkspace(workspaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"skills": skills})
+}
+
+// handleHostSkillsListForHost returns host_skill rows for one host,
+// used by the host detail page so the UI can render a skill card per
+// row (with the per-skill credentials below it).
+func (s *Server) handleHostSkillsListForHost(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	hostID := strings.TrimSpace(c.Param("id"))
+	if hostID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 host id"})
+		return
+	}
+	host, err := s.getHostByID(hostID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if host == nil || host.WorkspaceID != workspaceID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "host 不存在或不在当前工作区"})
+		return
+	}
+	skills, err := s.listHostSkills(hostID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"skills": skills})
+}
+
 func (s *Server) handleHostDelete(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {

@@ -10,6 +10,7 @@ import {
   updateBotUser,
   updateLLMConfig,
 } from "./api/dashboard.js";
+import { fetchHostSkillsForWorkspace } from "./api/hosts.js";
 import { fetchAgentBotStatus } from "./api/projects.js";
 import { logout, fetchCurrentUser } from "./api/session.js";
 import { byId } from "./lib/dom.js";
@@ -19,6 +20,7 @@ import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import { t } from "./lib/i18n.js";
 import { renderMarkdown } from "./lib/marked.js";
 import type { BotPayload, BotUser, LLMConfig, LLMConfigPayload } from "./types/dashboard.js";
+import type { HostSkillWithHost } from "./types/hosts.js";
 
 // ── LLM Config DOM ──────────────────────────────────────────────────────────
 const llmConfigForm = byId<HTMLFormElement>("llmConfigForm");
@@ -45,6 +47,7 @@ const botUserConfigSelect = byId<HTMLSelectElement>("botUserConfigSelect");
 const botUserConfigBlock = byId<HTMLElement>("botUserConfigBlock");
 const botUserPreferredToolBlock = byId<HTMLElement>("botUserPreferredToolBlock");
 const botUserPreferredToolSelect = byId<HTMLSelectElement>("botUserPreferredToolSelect");
+const botUserHostSkillSelect = byId<HTMLSelectElement>("botUserHostSkillSelect");
 const botKindClassicRadio = byId<HTMLInputElement>("botKindClassic");
 const botKindPassthroughRadio = byId<HTMLInputElement>("botKindPassthrough");
 const botUserDescriptionInput = byId<HTMLTextAreaElement>("botUserDescriptionInput");
@@ -66,6 +69,7 @@ let expandedBotId: number | null = null;
 let currentLLMConfigs: LLMConfig[] = [];
 let currentAvailableLLMConfigs: LLMConfig[] = [];
 let currentBotUsers: BotUser[] = [];
+let currentHostSkills: HostSkillWithHost[] = [];
 
 function populateLLMProviderPresets(): void {
   llmProviderPresetSelect.innerHTML = LLM_PROVIDER_PRESETS
@@ -153,6 +157,21 @@ function resetBotUserForm(): void {
   applyBotKindUI();
   botUserStatus.textContent = "";
   botUserSubmitBtn.textContent = t("dashboard.saveBotBtn");
+}
+
+function syncBotHostSkillOptions(skills: HostSkillWithHost[]): void {
+  const currentValue = editingBotUserId ? botUserHostSkillSelect.value : "";
+  const placeholder = `<option value="">（不绑定 — 使用 Bot 自身的 LLM / 本地 polar-agent）</option>`;
+  const options = skills
+    .map((sk) => {
+      const label = `${sk.host_name || sk.host_slug} · ${sk.kind}${sk.name && sk.name !== sk.kind ? ` (${sk.name})` : ""}`;
+      return `<option value="${sk.id}">${label}</option>`;
+    })
+    .join("");
+  botUserHostSkillSelect.innerHTML = placeholder + options;
+  if (currentValue) {
+    botUserHostSkillSelect.value = currentValue;
+  }
 }
 
 function syncBotConfigOptions(configs: LLMConfig[]): void {
@@ -296,10 +315,11 @@ function formatUptime(sec: number): string {
 }
 
 async function loadData(): Promise<void> {
-  const [ownResult, availableResult, botResult] = await Promise.all([
+  const [ownResult, availableResult, botResult, hostSkillsResult] = await Promise.all([
     fetchLLMConfigs(),
     fetchAvailableLLMConfigs(),
     fetchBotUsers(),
+    fetchHostSkillsForWorkspace(),
   ]);
 
   if (ownResult.response.ok) {
@@ -316,6 +336,13 @@ async function loadData(): Promise<void> {
     currentAvailableLLMConfigs = [];
   }
   syncBotConfigOptions(currentAvailableLLMConfigs);
+
+  if (hostSkillsResult.response.ok) {
+    currentHostSkills = hostSkillsResult.data.skills || [];
+  } else {
+    currentHostSkills = [];
+  }
+  syncBotHostSkillOptions(currentHostSkills);
 
   if (botResult.response.ok) {
     currentBotUsers = botResult.data.bots || [];
@@ -477,6 +504,8 @@ botKindPassthroughRadio.addEventListener("change", applyBotKindUI);
 botUserForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const kind = currentBotKind();
+  const hostSkillRaw = botUserHostSkillSelect.value;
+  const hostSkillID: number | null = hostSkillRaw ? Number(hostSkillRaw) : null;
   const payload: BotPayload = {
     name: botUserNameInput.value.trim(),
     description: botUserDescriptionInput.value.trim(),
@@ -484,6 +513,7 @@ botUserForm.addEventListener("submit", async (event) => {
     llm_config_id: kind === "classic" ? Number(botUserConfigSelect.value || 0) : 0,
     bot_kind: kind,
     preferred_tool: kind === "passthrough" ? botUserPreferredToolSelect.value : "",
+    host_skill_id: hostSkillID,
   };
   if (!payload.name) {
     botUserStatus.textContent = t("dashboard.botMissingFields");
@@ -544,6 +574,7 @@ botUserList.addEventListener("click", async (event) => {
     } else {
       botKindClassicRadio.checked = true;
     }
+    botUserHostSkillSelect.value = bot.host_skill_id ? String(bot.host_skill_id) : "";
     applyBotKindUI();
     botUserSubmitBtn.textContent = t("dashboard.updateBot");
     botUserStatus.textContent = "";

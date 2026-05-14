@@ -41,3 +41,50 @@ export type HostEnrollResponse = ErrorResponse & {
   host_name?: string;
   install_hint?: string;
 };
+
+// P1d additions ----------------------------------------------------------
+
+export type HostSkill = {
+  id: number;
+  host_id: string;
+  kind: string;
+  name: string;
+  config_json: Record<string, unknown>;
+  enabled: boolean;
+  auto_start: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HostSkillWithHost = HostSkill & {
+  host_slug: string;
+  host_name: string;
+};
+
+export type HostSkillListResponse = ErrorResponse & {
+  skills?: HostSkill[];
+};
+
+export type HostSkillsWithHostListResponse = ErrorResponse & {
+  skills?: HostSkillWithHost[];
+};
+
+// P1c.4: credential vault. The raw `value` is NEVER returned from
+// the server — only masked_value + the encrypted bit.
+export type HostSkillCredential = {
+  id: number;
+  host_skill_id: number;
+  key: string;
+  masked_value: string;
+  encrypted: boolean;
+  last_used_at?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HostSkillCredentialListResponse = ErrorResponse & {
+  credentials?: HostSkillCredential[];
+  encryption_active?: boolean;
+};

@@ -176,6 +176,21 @@
                     </div>
                   </div>
 
+                  <!-- P1d: host_skill binding picker. Available to both
+                       classic and passthrough bots; sets bot.host_skill_id
+                       on save. When non-null, dock dispatches via the
+                       host module's skill.start protocol instead of the
+                       legacy paths. -->
+                  <div id="botUserHostSkillBlock">
+                    <label class="form-label" for="botUserHostSkillSelect">绑定主机能力 <span style="color:var(--text-muted,#888); font-weight:normal;">（可选）</span></label>
+                    <select id="botUserHostSkillSelect" class="input">
+                      <option value="">（不绑定 — 使用 Bot 自身的 LLM / 本地 polar-agent）</option>
+                    </select>
+                    <div style="font-size:11px; color:var(--text-muted,#888); margin:4px 0 8px 0;">
+                      ⓘ 绑定后，Bot 的对话会走对应主机的 <code>skill.start</code> 分发，由该主机上的 polar-agent 执行编码工具并返回结果。
+                    </div>
+                  </div>
+
                   <label class="form-label" for="botUserDescriptionInput" data-i18n="dashboard.botDescriptionLabel">Bot description</label>
                   <textarea id="botUserDescriptionInput" class="input textarea" rows="3" maxlength="500" data-i18n-placeholder="dashboard.botDescriptionPlaceholder" placeholder="Tell users what this Bot is good at"></textarea>
 

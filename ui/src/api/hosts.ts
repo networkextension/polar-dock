@@ -1,4 +1,4 @@
-// Typed fetch wrappers for /api/hosts/* — Phase 0.
+// Typed fetch wrappers for /api/hosts/* and /api/host-skills.
 
 import { requestJson } from "./http.js";
 import type {
@@ -7,6 +7,12 @@ import type {
   HostEnrollPayload,
   HostEnrollResponse,
   HostListResponse,
+  HostSkill,
+  HostSkillCredential,
+  HostSkillCredentialListResponse,
+  HostSkillListResponse,
+  HostSkillWithHost,
+  HostSkillsWithHostListResponse,
 } from "../types/hosts.js";
 
 export async function fetchHosts() {
@@ -30,5 +36,41 @@ export async function deleteHost(id: string) {
   });
 }
 
+// P1d: workspace-scoped list of host_skill rows. Used by the bot
+// edit page's binding picker.
+export async function fetchHostSkillsForWorkspace() {
+  return requestJson<HostSkillsWithHostListResponse>("/api/host-skills");
+}
+
+// P1d: per-host skill list. Used by the host detail page to render
+// skill cards with their credential forms below.
+export async function fetchHostSkillsForHost(hostID: string) {
+  return requestJson<HostSkillListResponse>(`/api/hosts/${encodeURIComponent(hostID)}/skills`);
+}
+
+// P1c.4: credential vault on a single host_skill.
+export async function fetchHostSkillCredentials(hostID: string, skillID: number) {
+  return requestJson<HostSkillCredentialListResponse>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/${skillID}/credentials`,
+  );
+}
+
+export async function putHostSkillCredential(hostID: string, skillID: number, key: string, value: string) {
+  return requestJson<{ credential?: HostSkillCredential; error?: string }>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/${skillID}/credentials/${encodeURIComponent(key)}`,
+    {
+      method: "PUT",
+      body: { value },
+    },
+  );
+}
+
+export async function deleteHostSkillCredential(hostID: string, skillID: number, key: string) {
+  return requestJson<{ ok: boolean; error?: string }>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/${skillID}/credentials/${encodeURIComponent(key)}`,
+    { method: "DELETE" },
+  );
+}
+
 // Re-export the Host type for convenience.
-export type { Host };
+export type { Host, HostSkill, HostSkillCredential, HostSkillWithHost };
