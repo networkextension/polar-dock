@@ -85,6 +85,11 @@ type Server struct {
 	// cleartext with a flag so the UI can warn.
 	iosdistResourceKey []byte
 
+	// polarCredentialKey is the host_skill_credentials vault key
+	// (P1c.4). Same AES-GCM shape as iosdistResourceKey, separate key
+	// so the security domains are isolated.
+	polarCredentialKey []byte
+
 	// iosdistZsignPath is the resolved path to the zsign binary, set
 	// once at server boot via exec.LookPath. When empty, the sign
 	// endpoint returns a 503 with a helpful "install zsign" message
@@ -143,6 +148,18 @@ func NewServer(cfg Config) (*Server, error) {
 		log.Printf("iosdist: resource encryption enabled (32-byte AES-GCM key)")
 	} else {
 		log.Printf("iosdist: IOSDIST_RESOURCE_KEY not set — .p12 passwords will be stored in plaintext")
+	}
+
+	if cfg.PolarCredentialKey != "" {
+		key, err := decodeIOSDistResourceKey(cfg.PolarCredentialKey)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("invalid POLAR_CREDENTIAL_KEY: %w", err)
+		}
+		server.polarCredentialKey = key
+		log.Printf("coder credentials: vault encryption enabled (32-byte AES-GCM key)")
+	} else {
+		log.Printf("coder credentials: POLAR_CREDENTIAL_KEY not set — host_skill_credentials stored in plaintext")
 	}
 
 	workDir, err := os.Getwd()
@@ -796,6 +813,11 @@ func (s *Server) registerRoutes() {
 		api.GET("/hosts", s.AuthMiddleware(), s.handleHostList)
 		api.GET("/hosts/:id", s.AuthMiddleware(), s.handleHostDetail)
 		api.DELETE("/hosts/:id", s.AuthMiddleware(), s.handleHostDelete)
+		// P1c.4: per-skill credential vault. Admin-only; never surfaces
+		// raw plaintext on read.
+		api.GET("/hosts/:id/skills/:skillId/credentials", s.AuthMiddleware(), s.handleHostSkillCredentialsList)
+		api.PUT("/hosts/:id/skills/:skillId/credentials/:key", s.AuthMiddleware(), s.handleHostSkillCredentialsPut)
+		api.DELETE("/hosts/:id/skills/:skillId/credentials/:key", s.AuthMiddleware(), s.handleHostSkillCredentialsDelete)
 		// projects (workspace-scoped product container with AI
 		// requirement decomposition + plan generation).
 		api.GET("/projects", s.AuthMiddleware(), s.handleProjectList)

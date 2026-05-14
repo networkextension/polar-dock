@@ -94,6 +94,9 @@ func main() {
 		// iOS distribution
 		IOSDistResourceKey: os.Getenv("IOSDIST_RESOURCE_KEY"),
 
+		// Host module credential vault (P1c.4)
+		PolarCredentialKey: os.Getenv("POLAR_CREDENTIAL_KEY"),
+
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 	}
