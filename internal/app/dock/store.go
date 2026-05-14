@@ -2278,6 +2278,35 @@ CREATE TABLE IF NOT EXISTS host_skills (
 	updated_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_host_skills_host ON host_skills(host_id);
+-- P1b: at most one host_skills row per (host, kind). The auto-shim
+-- that materializes rows from skill.advertise upserts on this index;
+-- without it, repeated advertises would multiply rows. Operator
+-- can still have e.g. one coder + one shell + one proxy row per
+-- host, just not two coder rows.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_host_skills_host_kind
+	ON host_skills(host_id, kind);
+
+-- P1b: bot_users.host_skill_id — when set, the bot's reply path is
+-- dispatched via that host's skill (host_skills + host_skill_runs)
+-- instead of the legacy polar-agent attach passthrough. NULL =
+-- legacy path (current behavior). FK is added below via late-bound
+-- DO block because host_skills is CREATEd later in this batch (bot_users
+-- is at the top, ALTERs run in order).
+ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS host_skill_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_bot_users_host_skill
+	ON bot_users(host_skill_id) WHERE host_skill_id IS NOT NULL;
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'bot_users_host_skill_id_fkey'
+	) THEN
+		ALTER TABLE bot_users
+			ADD CONSTRAINT bot_users_host_skill_id_fkey
+			FOREIGN KEY (host_skill_id) REFERENCES host_skills(id) ON DELETE SET NULL;
+	END IF;
+END
+$$;
 
 -- host_skill_runs: each start/stop attempt of a host_skill. Same P0
 -- caveat: schema only, no handlers yet.
