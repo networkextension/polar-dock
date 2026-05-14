@@ -238,13 +238,17 @@ function renderSkillCard(hostID: string, sk: HostSkill, encryptionBadge: string)
         </div>`).join("")
     : `<div style="font-size:11px; color:var(--text-muted,#888); padding:4px 0;">尚未配置 API key</div>`;
 
-  return `
-    <div data-skill-id="${sk.id}" style="border:1px solid var(--surface-border,#e5e7eb); border-radius:8px; padding:12px; margin-bottom:10px;">
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <strong>${escapeHTML(sk.kind)}</strong>
-        <span style="font-size:11px; color:var(--text-muted,#888); font-family:monospace;">id=${sk.id}</span>
-        ${subtitle ? `<span style="font-size:11px; color:var(--text-muted,#888);">— ${escapeHTML(subtitle)}</span>` : ""}
-      </div>
+  // P2: Shell skill gets an "Open shell" button instead of the
+  // credentials form (it doesn't use API keys). Other skill kinds
+  // get the credential vault UI.
+  const isShell = sk.kind === "shell";
+  const headerExtras = isShell
+    ? `<button type="button" class="btn-inline btn-secondary" data-shell-open="${sk.id}" style="margin-left:auto; font-size:12px;">▶ Open shell</button>`
+    : "";
+
+  const body = isShell
+    ? `<div style="font-size:11px; color:var(--text-muted,#888); padding:4px 0;">Shell skill 通过 pty 实时打开 host 上的 bash。每个 host 最多 4 个并发会话。</div>`
+    : `
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
         <span style="font-size:11px; font-weight:500;">Credentials</span>
         ${encryptionBadge}
@@ -256,7 +260,17 @@ function renderSkillCard(hostID: string, sk: HostSkill, encryptionBadge: string)
         <input type="text" class="input" data-cred-key-input style="flex:1; font-family:monospace; font-size:12px;" placeholder="ANTHROPIC_API_KEY" maxlength="100" required />
         <input type="password" class="input" data-cred-value-input style="flex:2; font-family:monospace; font-size:12px;" placeholder="sk-..." maxlength="500" required />
         <button type="submit" class="btn-inline btn-secondary" style="font-size:12px;">保存</button>
-      </form>
+      </form>`;
+
+  return `
+    <div data-skill-id="${sk.id}" style="border:1px solid var(--surface-border,#e5e7eb); border-radius:8px; padding:12px; margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <strong>${escapeHTML(sk.kind)}</strong>
+        <span style="font-size:11px; color:var(--text-muted,#888); font-family:monospace;">id=${sk.id}</span>
+        ${subtitle ? `<span style="font-size:11px; color:var(--text-muted,#888);">— ${escapeHTML(subtitle)}</span>` : ""}
+        ${headerExtras}
+      </div>
+      ${body}
     </div>
   `;
 }
@@ -299,6 +313,37 @@ function attachSkillCardListeners(hostID: string): void {
         return;
       }
       await loadHostSkillsForDetail(hostID);
+    });
+  });
+  // P2 (Shell): "Open shell" button lazy-loads the xterm bundle.
+  hostsSkillsList.querySelectorAll<HTMLButtonElement>("button[data-shell-open]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const skillID = Number(btn.dataset.shellOpen || 0);
+      if (!skillID) return;
+      btn.disabled = true;
+      try {
+        // Lazy-load the xterm bundle. Dock serves these from
+        // /scripts/hosts-shell.js (esbuild splits each top-level
+        // ui/src/*.ts as its own entry). The URL path isn't a
+        // TypeScript module, so we ts-ignore the import + cast.
+        // @ts-ignore — runtime URL path, not a TS module
+        const mod = (await import("/scripts/hosts-shell.js")) as {
+          openShellModal: (opts: {
+            hostId: string;
+            hostSkillId: number;
+            hostName?: string;
+          }) => Promise<void>;
+        };
+        await mod.openShellModal({
+          hostId: hostID,
+          hostSkillId: skillID,
+          hostName: activeHost?.name,
+        });
+      } catch (err) {
+        alert(`Open shell failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        btn.disabled = false;
+      }
     });
   });
 }

@@ -72,5 +72,36 @@ export async function deleteHostSkillCredential(hostID: string, skillID: number,
   );
 }
 
+// P2 (Shell skill) -------------------------------------------------------
+
+import type {
+  ShellOpenResponse,
+  ShellSessionListResponse,
+} from "../types/hosts.js";
+
+export async function openHostShell(
+  hostID: string,
+  skillID: number,
+  body: { rows?: number; cols?: number; cwd?: string } = {},
+) {
+  return requestJson<ShellOpenResponse>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/${skillID}/shell/open`,
+    { method: "POST", body },
+  );
+}
+
+export async function listHostShellSessions(hostID: string) {
+  return requestJson<ShellSessionListResponse>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/shell/sessions`,
+  );
+}
+
+export async function kickHostShellSession(hostID: string, runID: number) {
+  return requestJson<{ ok: boolean; error?: string }>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/shell/sessions/${runID}`,
+    { method: "DELETE" },
+  );
+}
+
 // Re-export the Host type for convenience.
 export type { Host, HostSkill, HostSkillCredential, HostSkillWithHost };
