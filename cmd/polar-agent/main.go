@@ -131,6 +131,11 @@ func main() {
 		os.Exit(runAttach(args))
 	case "auto-register":
 		os.Exit(runAutoRegister(args))
+	case "register":
+		// Host module register — one-shot consume-enroll-token flow.
+		os.Exit(runRegister(args))
+	case "self-test":
+		os.Exit(runSelfTest(args))
 	case "submit-build":
 		os.Exit(runSubmitBuild(args))
 	case "research":
@@ -151,7 +156,10 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `polar-agent — local executor for Polar bot users
 
 Usage:
-  polar-agent login   --server=<url> --token=<raw>     # write ~/.polar/agent.toml
+  polar-agent login    --server=<url> --token=<raw>     # write ~/.polar/agent.toml from an existing agent_token
+  polar-agent register --server=<url> --token=<enroll>  # consume one-time enroll token from /hosts.html; auto-saves agent.toml
+                                                        # add --start to immediately exec attach
+  polar-agent self-test                                 # smoke: WS handshake + skill.advertise round-trip against the registered host
   polar-agent status                                    # show config + last verify
   polar-agent attach  --bot=<bot_id> --workdir=<path>             # tool-call loop mode
   polar-agent attach  --bot=<bot_id> --workdir=<path> --tool=auto  # ask dock for bot's preferred_tool

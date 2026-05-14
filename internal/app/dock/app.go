@@ -90,6 +90,12 @@ type Server struct {
 	// so the security domains are isolated.
 	polarCredentialKey []byte
 
+	// polarAllowLocalBootstrap (P1e): when true, POST
+	// /api/hosts/local-bootstrap accepts no-auth requests from the
+	// loopback interface and provisions a host + agent_token. Disabled
+	// by default for safety.
+	polarAllowLocalBootstrap bool
+
 	// iosdistZsignPath is the resolved path to the zsign binary, set
 	// once at server boot via exec.LookPath. When empty, the sign
 	// endpoint returns a 503 with a helpful "install zsign" message
@@ -160,6 +166,11 @@ func NewServer(cfg Config) (*Server, error) {
 		log.Printf("coder credentials: vault encryption enabled (32-byte AES-GCM key)")
 	} else {
 		log.Printf("coder credentials: POLAR_CREDENTIAL_KEY not set — host_skill_credentials stored in plaintext")
+	}
+
+	server.polarAllowLocalBootstrap = cfg.PolarAllowLocalBootstrap
+	if cfg.PolarAllowLocalBootstrap {
+		log.Printf("host module: local-bootstrap endpoint ENABLED (loopback-only, no auth)")
 	}
 
 	workDir, err := os.Getwd()
@@ -810,6 +821,10 @@ func (s *Server) registerRoutes() {
 		// landed CRUD + enrollment; skill enable/start lands in P1+.
 		api.POST("/hosts/enroll", s.AuthMiddleware(), s.handleHostEnroll)
 		api.POST("/hosts/register", s.handleHostRegister) // bearer = enroll token, no session
+		// P1e: loopback-only co-located bootstrap. Opt-in via
+		// POLAR_ALLOW_LOCAL_BOOTSTRAP=true; the handler also rejects
+		// requests with proxy headers or non-loopback RemoteAddr.
+		api.POST("/hosts/local-bootstrap", s.handleHostLocalBootstrap)
 		api.GET("/hosts", s.AuthMiddleware(), s.handleHostList)
 		api.GET("/hosts/:id", s.AuthMiddleware(), s.handleHostDetail)
 		api.DELETE("/hosts/:id", s.AuthMiddleware(), s.handleHostDelete)

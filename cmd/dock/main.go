@@ -97,6 +97,9 @@ func main() {
 		// Host module credential vault (P1c.4)
 		PolarCredentialKey: os.Getenv("POLAR_CREDENTIAL_KEY"),
 
+		// Host module co-located bootstrap (P1e). Opt-in.
+		PolarAllowLocalBootstrap: os.Getenv("POLAR_ALLOW_LOCAL_BOOTSTRAP") == "true",
+
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 	}

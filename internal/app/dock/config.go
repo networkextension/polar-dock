@@ -110,6 +110,15 @@ type Config struct {
 	// the UI.
 	PolarCredentialKey string
 
+	// PolarAllowLocalBootstrap (P1e): enables the
+	// POST /api/hosts/local-bootstrap shortcut for co-located deploys
+	// where polar-dock + polar-agent run on the same machine. The
+	// handler only honors requests arriving on the loopback interface
+	// with no proxy headers — but the endpoint is opt-in so a stock
+	// remote-only deploy doesn't expose it at all. Set via
+	// POLAR_ALLOW_LOCAL_BOOTSTRAP=true on the dock launch env.
+	PolarAllowLocalBootstrap bool
+
 	// MetricsToken gates GET /metrics. When unset the endpoint returns
 	// 404 (fail-closed); when set, the request must carry
 	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's
