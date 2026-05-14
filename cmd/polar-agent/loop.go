@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,6 +18,78 @@ import (
 
 	"gin-auth-app/cmd/polar-agent/skills"
 )
+
+// activeRuns tracks Run handles currently draining inside the
+// skill.start goroutine. P1c only needed write-once (events pumped
+// out), but P2 adds bidirectional envelopes (skill.stdin /
+// skill.resize / skill.stop) that need to find the Run by run_id.
+// Map is process-global because the agent has one WS connection at a
+// time and a small number of concurrent runs.
+type runRegistry struct {
+	mu   sync.Mutex
+	byID map[int64]skills.Run
+}
+
+var activeRuns = &runRegistry{byID: map[int64]skills.Run{}}
+
+func (r *runRegistry) put(runID int64, run skills.Run) {
+	r.mu.Lock()
+	r.byID[runID] = run
+	r.mu.Unlock()
+}
+
+func (r *runRegistry) get(runID int64) (skills.Run, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.byID[runID]
+	return run, ok
+}
+
+func (r *runRegistry) delete(runID int64) {
+	r.mu.Lock()
+	delete(r.byID, runID)
+	r.mu.Unlock()
+}
+
+// stopAll signals every active Run to exit. Called from the WS read
+// loop when the connection to dock drops — without this, an
+// orphaned shell could keep running on the host with no operator
+// holding the other end. Returns synchronously after issuing stops;
+// each Run's own Stop is idempotent + best-effort.
+func (r *runRegistry) stopAll(reason string) {
+	r.mu.Lock()
+	runs := make([]skills.Run, 0, len(r.byID))
+	for _, run := range r.byID {
+		runs = append(runs, run)
+	}
+	r.mu.Unlock()
+	for _, run := range runs {
+		_ = run.Stop(reason)
+	}
+}
+
+// skillStdinEnvelope, skillResizeEnvelope, skillStopEnvelope mirror
+// the dock-side dispatch helpers in internal/app/dock/agent_hub.go.
+// Single-direction (dock → agent); responses flow back as
+// skill.event frames via the existing Run.Events() pump.
+type skillStdinEnvelope struct {
+	Kind     string `json:"kind"` // "skill.stdin"
+	RunID    int64  `json:"run_id"`
+	BytesB64 string `json:"bytes_b64"`
+}
+
+type skillResizeEnvelope struct {
+	Kind  string `json:"kind"` // "skill.resize"
+	RunID int64  `json:"run_id"`
+	Rows  uint16 `json:"rows"`
+	Cols  uint16 `json:"cols"`
+}
+
+type skillStopEnvelope struct {
+	Kind   string `json:"kind"` // "skill.stop"
+	RunID  int64  `json:"run_id"`
+	Reason string `json:"reason"`
+}
 
 // hostName returns os.Hostname() with errors swallowed — the host
 // info is non-critical metadata for the dock-side agent list.
@@ -131,6 +204,10 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 	exec := newExecutor(workdir, verbose)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// P2: on WS disconnect, stop every in-flight Run (bash sessions,
+	// future daemon-style skills). Without this an orphan bash could
+	// keep running with no operator holding the other end.
+	defer activeRuns.stopAll("agent_disconnect")
 
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -292,10 +369,73 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 					})
 					return
 				}
+				// P2 (Shell): register the Run handle so skill.stdin /
+				// skill.resize / skill.stop envelopes can find it.
+				// Coder Runs don't satisfy RunInput/RunResizer; that's
+				// fine — those envelopes will type-assert and skip.
+				activeRuns.put(e.RunID, run)
+				defer activeRuns.delete(e.RunID)
 				for ev := range run.Events() {
 					sendSkillEvent(send, e.RunID, ev.Kind, ev.Data)
 				}
 			}(env, skill)
+		case "skill.stdin":
+			// P2 (Shell): dock forwards a chunk of stdin bytes from
+			// the operator's browser. Type-assert to RunInput; silently
+			// drop for Runs that don't implement it.
+			var env skillStdinEnvelope
+			if err := json.Unmarshal(raw, &env); err != nil {
+				log.Printf("skill.stdin parse: %v", err)
+				continue
+			}
+			run, ok := activeRuns.get(env.RunID)
+			if !ok {
+				continue
+			}
+			input, ok := run.(skills.RunInput)
+			if !ok {
+				continue
+			}
+			data, err := base64.StdEncoding.DecodeString(env.BytesB64)
+			if err != nil {
+				log.Printf("skill.stdin run=%d base64 decode: %v", env.RunID, err)
+				continue
+			}
+			if err := input.WriteInput(data); err != nil {
+				log.Printf("skill.stdin run=%d WriteInput: %v", env.RunID, err)
+			}
+		case "skill.resize":
+			// P2 (Shell): operator's xterm resized. Type-assert to
+			// RunResizer; non-resizable Runs ignore.
+			var env skillResizeEnvelope
+			if err := json.Unmarshal(raw, &env); err != nil {
+				log.Printf("skill.resize parse: %v", err)
+				continue
+			}
+			run, ok := activeRuns.get(env.RunID)
+			if !ok {
+				continue
+			}
+			resizer, ok := run.(skills.RunResizer)
+			if !ok {
+				continue
+			}
+			if err := resizer.Resize(env.Rows, env.Cols); err != nil {
+				log.Printf("skill.resize run=%d: %v", env.RunID, err)
+			}
+		case "skill.stop":
+			// P2: explicit shutdown (browser closed, kicked by admin,
+			// or operator stop button). Run.Stop is idempotent.
+			var env skillStopEnvelope
+			if err := json.Unmarshal(raw, &env); err != nil {
+				log.Printf("skill.stop parse: %v", err)
+				continue
+			}
+			run, ok := activeRuns.get(env.RunID)
+			if !ok {
+				continue
+			}
+			_ = run.Stop(env.Reason)
 		case "ping":
 			// app-level ping (websocket protocol pings handled above)
 		default:

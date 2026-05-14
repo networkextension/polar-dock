@@ -11,6 +11,7 @@ package dock
 // round-trip.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -98,6 +99,15 @@ type agentConn struct {
 	// read loop. The consumer cleans up the map entry on exit.
 	skillPendingMu sync.Mutex
 	skillPending   map[int64]chan skillEventFrame
+
+	// skillStdoutPending (P2 Shell): separate per-run byte channel for
+	// `skill.event event_kind=stdout` frames. Decoupled from
+	// skillPending so a slow xterm reader doesn't backpressure the
+	// agent's lifecycle events. Larger buffer (256) — interactive
+	// shell output is bursty. Overflow drops bytes with a logged
+	// counter rather than blocking the WS read pump.
+	skillStdoutMu      sync.Mutex
+	skillStdoutPending map[int64]chan []byte
 }
 
 func (c *agentConn) hasCapability(name string) bool {
@@ -386,6 +396,117 @@ func (c *agentConn) deliverSkillEvent(ev skillEventFrame) {
 		// Channel full — consumer is slow or absent. Drop silently;
 		// the consumer will get the next event we successfully push,
 		// and exit events are small.
+	}
+}
+
+// trackSkillStdout / untrackSkillStdout / deliverSkillStdout — P2.
+// Mirrors trackSkillPending but for byte streams (bigger buffer,
+// drops on full instead of blocking, separate map so lifecycle
+// events don't get stuck behind a slow xterm consumer).
+func (c *agentConn) trackSkillStdout(runID int64) chan []byte {
+	ch := make(chan []byte, 256)
+	c.skillStdoutMu.Lock()
+	c.skillStdoutPending[runID] = ch
+	c.skillStdoutMu.Unlock()
+	return ch
+}
+
+func (c *agentConn) untrackSkillStdout(runID int64) {
+	c.skillStdoutMu.Lock()
+	delete(c.skillStdoutPending, runID)
+	c.skillStdoutMu.Unlock()
+}
+
+func (c *agentConn) deliverSkillStdout(runID int64, chunk []byte) {
+	c.skillStdoutMu.Lock()
+	ch, ok := c.skillStdoutPending[runID]
+	c.skillStdoutMu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case ch <- chunk:
+	default:
+		// Channel full — drop bytes. The bridge logs an overflow
+		// counter; xterm tolerates dropouts under adversarial load
+		// better than the WS read loop tolerates being wedged.
+	}
+}
+
+// dispatchSkillStdin (P2 Shell): send a stdin byte chunk to the agent.
+// Caller provides raw bytes; we base64-wrap in the JSON envelope.
+func (h *agentHub) dispatchSkillStdin(conn *agentConn, runID int64, data []byte) error {
+	if conn == nil {
+		return errAgentNotAttached
+	}
+	frame := map[string]any{
+		"kind":      "skill.stdin",
+		"run_id":    runID,
+		"bytes_b64": base64.StdEncoding.EncodeToString(data),
+	}
+	payload, err := json.Marshal(frame)
+	if err != nil {
+		return err
+	}
+	select {
+	case conn.send <- payload:
+		return nil
+	case <-conn.close:
+		return errAgentDisconnected
+	case <-time.After(5 * time.Second):
+		return errAgentSendTimeout
+	}
+}
+
+// dispatchSkillResize (P2 Shell): forward a TIOCSWINSZ to the agent's
+// pty via skill.resize.
+func (h *agentHub) dispatchSkillResize(conn *agentConn, runID int64, rows, cols uint16) error {
+	if conn == nil {
+		return errAgentNotAttached
+	}
+	frame := map[string]any{
+		"kind":   "skill.resize",
+		"run_id": runID,
+		"rows":   rows,
+		"cols":   cols,
+	}
+	payload, err := json.Marshal(frame)
+	if err != nil {
+		return err
+	}
+	select {
+	case conn.send <- payload:
+		return nil
+	case <-conn.close:
+		return errAgentDisconnected
+	case <-time.After(5 * time.Second):
+		return errAgentSendTimeout
+	}
+}
+
+// dispatchSkillStop (P2 Shell): explicit Run termination. The
+// browser-closed defer in the bridge calls this so bash gets
+// SIGTERM'd even on an abrupt disconnect.
+func (h *agentHub) dispatchSkillStop(conn *agentConn, runID int64, reason string) error {
+	if conn == nil {
+		return errAgentNotAttached
+	}
+	frame := map[string]any{
+		"kind":   "skill.stop",
+		"run_id": runID,
+		"reason": reason,
+	}
+	payload, err := json.Marshal(frame)
+	if err != nil {
+		return err
+	}
+	select {
+	case conn.send <- payload:
+		return nil
+	case <-conn.close:
+		return errAgentDisconnected
+	case <-time.After(5 * time.Second):
+		return errAgentSendTimeout
 	}
 }
 

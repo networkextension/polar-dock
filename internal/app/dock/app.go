@@ -96,6 +96,10 @@ type Server struct {
 	// by default for safety.
 	polarAllowLocalBootstrap bool
 
+	// Host module Shell (P2). Kill-switch + concurrency registry.
+	polarDisableShellSkill bool
+	shellSessions          *shellSessionRegistry
+
 	// iosdistZsignPath is the resolved path to the zsign binary, set
 	// once at server boot via exec.LookPath. When empty, the sign
 	// endpoint returns a 503 with a helpful "install zsign" message
@@ -171,6 +175,20 @@ func NewServer(cfg Config) (*Server, error) {
 	server.polarAllowLocalBootstrap = cfg.PolarAllowLocalBootstrap
 	if cfg.PolarAllowLocalBootstrap {
 		log.Printf("host module: local-bootstrap endpoint ENABLED (loopback-only, no auth)")
+	}
+
+	// P2 Shell: kill-switch + concurrency cap (per-host hard-coded 4;
+	// per-dock from env, default 32).
+	server.polarDisableShellSkill = cfg.PolarDisableShellSkill
+	globalShellMax := cfg.PolarMaxShellSessions
+	if globalShellMax <= 0 {
+		globalShellMax = 32
+	}
+	server.shellSessions = newShellSessionRegistry(globalShellMax)
+	if cfg.PolarDisableShellSkill {
+		log.Printf("host module: Shell skill DISABLED (POLAR_DISABLE_SHELL_SKILL=true)")
+	} else {
+		log.Printf("host module: Shell skill enabled (per-host cap=4, global cap=%d)", globalShellMax)
 	}
 
 	workDir, err := os.Getwd()
@@ -580,6 +598,10 @@ func (s *Server) registerRoutes() {
 	})
 	s.router.GET("/ws/chat", s.handleChatWS)
 	s.router.GET("/ws/agent", s.handleAgentWS)
+	// P2 (Shell): byte-bridge WS between browser xterm and the
+	// agent's pty. Auth + admin check inline because gin middleware
+	// can't run cleanly across an upgrade.
+	s.router.GET("/ws/host/:id/shell/:run_id", s.AuthMiddleware(), s.handleHostShellWS)
 
 	// Prometheus exposition. Gated inside handleMetrics by METRICS_TOKEN —
 	// 404 if unset, 401 if mismatched. Lives outside /api so the scrape
@@ -836,6 +858,10 @@ func (s *Server) registerRoutes() {
 		api.GET("/hosts/:id/skills/:skillId/credentials", s.AuthMiddleware(), s.handleHostSkillCredentialsList)
 		api.PUT("/hosts/:id/skills/:skillId/credentials/:key", s.AuthMiddleware(), s.handleHostSkillCredentialsPut)
 		api.DELETE("/hosts/:id/skills/:skillId/credentials/:key", s.AuthMiddleware(), s.handleHostSkillCredentialsDelete)
+		// P2 (Shell): open / sessions / kick. Admin-only.
+		api.POST("/hosts/:id/skills/:skillId/shell/open", s.AuthMiddleware(), s.handleHostShellOpen)
+		api.GET("/hosts/:id/skills/shell/sessions", s.AuthMiddleware(), s.handleHostShellSessions)
+		api.DELETE("/hosts/:id/skills/shell/sessions/:run_id", s.AuthMiddleware(), s.handleHostShellKick)
 		// projects (workspace-scoped product container with AI
 		// requirement decomposition + plan generation).
 		api.GET("/projects", s.AuthMiddleware(), s.handleProjectList)

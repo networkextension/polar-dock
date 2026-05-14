@@ -324,6 +324,15 @@ func runAttach(args []string) int {
 	runner := makeCoderRunner(specs, *verbose)
 	skills.Register(skills.NewCoderSkill(coderCfg, runner))
 
+	// P2: Shell skill. Unix-only (NewShellSkill returns nil on
+	// Windows). Operator can disable per-host via
+	// POLAR_AGENT_SHELL_DISABLED=true even if the agent is unix.
+	if os.Getenv("POLAR_AGENT_SHELL_DISABLED") != "true" {
+		if shellSk := skills.NewShellSkill(resolved); shellSk != nil {
+			skills.Register(shellSk)
+		}
+	}
+
 	if err := runAgentLoop(cfg, *bot, resolved, *verbose, spec); err != nil {
 		log.Printf("agent loop ended: %v", err)
 		return exitNet

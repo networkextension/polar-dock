@@ -100,6 +100,11 @@ func main() {
 		// Host module co-located bootstrap (P1e). Opt-in.
 		PolarAllowLocalBootstrap: os.Getenv("POLAR_ALLOW_LOCAL_BOOTSTRAP") == "true",
 
+		// Host module Shell skill (P2). Default enabled; kill-switch
+		// + per-dock concurrency cap.
+		PolarDisableShellSkill: os.Getenv("POLAR_DISABLE_SHELL_SKILL") == "true",
+		PolarMaxShellSessions:  parseEnvInt("POLAR_MAX_SHELL_SESSIONS", 32),
+
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 	}
@@ -124,6 +129,19 @@ func envOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func parseEnvInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		log.Printf("invalid %s=%q, using fallback %d", key, value, fallback)
+		return fallback
+	}
+	return parsed
 }
 
 func envBoolDefault(key string, fallback bool) bool {

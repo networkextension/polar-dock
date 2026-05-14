@@ -119,6 +119,17 @@ type Config struct {
 	// POLAR_ALLOW_LOCAL_BOOTSTRAP=true on the dock launch env.
 	PolarAllowLocalBootstrap bool
 
+	// PolarDisableShellSkill (P2): kill-switch for the Shell skill's
+	// dock-side endpoints + WS upgrade. Default false (shell enabled
+	// for admins). Set true on compliance-sensitive deploys to refuse
+	// new shell sessions without rebuilding polar-dock.
+	PolarDisableShellSkill bool
+
+	// PolarMaxShellSessions (P2): global ceiling on concurrent shell
+	// sessions across all hosts in this dock. Each host also has a
+	// per-host cap of 4 sessions (hardcoded). Default 32.
+	PolarMaxShellSessions int
+
 	// MetricsToken gates GET /metrics. When unset the endpoint returns
 	// 404 (fail-closed); when set, the request must carry
 	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's

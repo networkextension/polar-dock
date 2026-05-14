@@ -14,6 +14,7 @@ package dock
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -44,6 +45,34 @@ func (s *Server) createHostSkillRun(skillID int64, now time.Time) (int64, error)
 		VALUES ($1, $2, 'starting')
 		RETURNING id`,
 		skillID, now,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("insert host_skill_run: %w", err)
+	}
+	return id, nil
+}
+
+// createHostSkillRunWithMeta is the P2 variant — populates meta_json
+// at insert time (operator_user_id + arbitrary metadata for the
+// skill kind). Used by the Shell skill's open endpoint; future
+// daemon-style skills (proxy/wireguard) reuse the same.
+func (s *Server) createHostSkillRunWithMeta(skillID int64, meta map[string]any, now time.Time) (int64, error) {
+	if skillID <= 0 {
+		return 0, errors.New("skill_id required")
+	}
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return 0, fmt.Errorf("marshal meta: %w", err)
+	}
+	var id int64
+	err = s.db.QueryRow(`
+		INSERT INTO host_skill_runs (skill_id, started_at, status, meta_json)
+		VALUES ($1, $2, 'starting', $3::jsonb)
+		RETURNING id`,
+		skillID, now, string(metaJSON),
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert host_skill_run: %w", err)
