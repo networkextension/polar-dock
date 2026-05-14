@@ -75,6 +75,10 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		Cwd            string            `json:"cwd"`
 		Env            map[string]string `json:"env"`
 		IdleTimeoutSec int               `json:"idle_timeout_sec"`
+		// P5 (Nanokdp): when the bound skill kind is nanokdp, these
+		// supersede the shell-specific fields above.
+		DevicePath string `json:"device_path"`
+		Baud       int    `json:"baud"`
 	}
 	_ = c.ShouldBindJSON(&req) // body is optional; agent fills defaults
 
@@ -114,8 +118,10 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		return
 	}
 
-	// Build skill.start config blob. Agent's shell.go fills sane
-	// defaults for any omitted field.
+	// Build skill.start config blob. Agent's shell.go / nanokdp.go
+	// fill sane defaults for any omitted field. The dispatch kind
+	// comes from the host_skills row (not hardcoded) so Nanokdp +
+	// future byte-streaming skills route through this same endpoint.
 	startCfg := map[string]any{}
 	if req.Rows > 0 {
 		startCfg["rows"] = req.Rows
@@ -132,11 +138,28 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	if req.IdleTimeoutSec > 0 {
 		startCfg["idle_timeout_sec"] = req.IdleTimeoutSec
 	}
+	// P5: pass through device_path + baud when the bound skill is
+	// nanokdp. The req struct above doesn't yet have these fields;
+	// see the next handler revision.
+	if strings.TrimSpace(req.DevicePath) != "" {
+		startCfg["device_path"] = req.DevicePath
+	}
+	if req.Baud > 0 {
+		startCfg["baud"] = req.Baud
+	}
+
+	// Resolve the host_skill row's kind so we dispatch as whatever
+	// the operator bound (shell / nanokdp / future byte-streaming).
+	info, err := s.getHostSkillForDispatch(skillID)
+	if err != nil || info == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "resolve host_skill kind"})
+		return
+	}
 
 	env := skillStartEnvelope{
 		Kind:      "skill.start",
 		RunID:     runID,
-		SkillKind: "shell",
+		SkillKind: info.Kind,
 		Config:    startCfg,
 	}
 	if err := s.agentHub.dispatchSkillStart(conn, env); err != nil {

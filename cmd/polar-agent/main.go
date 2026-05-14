@@ -354,6 +354,16 @@ func runAttach(args []string) int {
 		}
 	}
 
+	// P5: Nanokdp skill (serial console with ? command routing).
+	// Unix-only. Needs read/write on a serial device, typically
+	// /dev/tty.usbserial-* or /dev/ttyUSB0. Disable via
+	// POLAR_AGENT_NANOKDP_DISABLED=true.
+	if os.Getenv("POLAR_AGENT_NANOKDP_DISABLED") != "true" {
+		if nkSk := skills.NewNanokdpSkill(); nkSk != nil {
+			skills.Register(nkSk)
+		}
+	}
+
 	if err := runAgentLoop(cfg, *bot, resolved, *verbose, spec); err != nil {
 		log.Printf("agent loop ended: %v", err)
 		return exitNet
