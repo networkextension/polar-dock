@@ -295,11 +295,10 @@ func runAttach(args []string) int {
 	log.Printf("attach bot=%s workdir=%s server=%s mode=%s", *bot, resolved, cfg.Server, mode)
 
 	// Register the coder skill so the WS handshake's skill.advertise
-	// payload reports the real tool list (kimi/claude/codex + any
-	// operator-defined entries from ~/.polar/tools.json) instead of
-	// the empty P0 stub. Dock-side UI on /hosts/:id reads this to
-	// show which coding tools this host makes available. P1b will
-	// wire the Start() dispatch path; for now this is metadata only.
+	// payload reports the real tool list, AND so skill.start envelopes
+	// (P1c) can be dispatched into invokeTool. The runner closure
+	// captures the resolved tool specs so the skills package stays
+	// free of toolSpec / invokeTool dependencies.
 	specs, _, _ := loadToolsConfig()
 	toolNames := make([]string, 0, len(specs))
 	for _, s := range specs {
@@ -314,7 +313,8 @@ func runAttach(args []string) int {
 		coderCfg.Mode = "passthrough"
 		coderCfg.Tool = spec.Name
 	}
-	skills.Register(skills.NewCoderSkill(coderCfg))
+	runner := makeCoderRunner(specs, *verbose)
+	skills.Register(skills.NewCoderSkill(coderCfg, runner))
 
 	if err := runAgentLoop(cfg, *bot, resolved, *verbose, spec); err != nil {
 		log.Printf("agent loop ended: %v", err)

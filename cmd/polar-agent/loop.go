@@ -263,11 +263,76 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 					log.Printf("[research] run=%d error: %v", e.ResearchRunID, err)
 				}
 			}(env)
+		case "skill.start":
+			// Host module P1c: dock dispatches a skill.start envelope
+			// for any bot bound to a host_skill row. The skill's
+			// registered Start() returns a Run whose Events() we pump
+			// back to dock as skill.event frames keyed by run_id.
+			var env skillStartEnvelope
+			if err := json.Unmarshal(raw, &env); err != nil {
+				log.Printf("skill.start parse: %v", err)
+				continue
+			}
+			skill, ok := skills.Default().Get(skills.SkillKind(env.SkillKind))
+			if !ok {
+				log.Printf("skill.start run=%d: kind=%q not registered", env.RunID, env.SkillKind)
+				sendSkillEvent(send, env.RunID, skills.EventExit, map[string]any{
+					"ok":    false,
+					"error": "skill kind not registered on this agent: " + env.SkillKind,
+				})
+				continue
+			}
+			go func(e skillStartEnvelope, s skills.Skill) {
+				run, err := s.Start(ctx, e.RunID, e.Config)
+				if err != nil {
+					log.Printf("skill.start run=%d kind=%s start error: %v", e.RunID, e.SkillKind, err)
+					sendSkillEvent(send, e.RunID, skills.EventExit, map[string]any{
+						"ok":    false,
+						"error": err.Error(),
+					})
+					return
+				}
+				for ev := range run.Events() {
+					sendSkillEvent(send, e.RunID, ev.Kind, ev.Data)
+				}
+			}(env, skill)
 		case "ping":
 			// app-level ping (websocket protocol pings handled above)
 		default:
 			log.Printf("unknown kind=%s", head.Kind)
 		}
+	}
+}
+
+// skillStartEnvelope is the dock → agent dispatch frame for the
+// Host module's skill subsystem. `config` is forwarded verbatim into
+// Skill.Start; each skill kind owns the schema of its own config blob.
+type skillStartEnvelope struct {
+	Kind      string          `json:"kind"`
+	RunID     int64           `json:"run_id"`
+	SkillKind string          `json:"skill_kind"`
+	Config    json.RawMessage `json:"config"`
+}
+
+// sendSkillEvent marshals a skill.event frame and writes it via the
+// caller's serialized send func. Failures log + drop rather than
+// propagating: the runner goroutine has no good way to surface a write
+// error, and the WS read loop will catch a dead socket on its next
+// ReadMessage call anyway.
+func sendSkillEvent(send func([]byte) error, runID int64, kind skills.EventKind, data map[string]any) {
+	frame := map[string]any{
+		"kind":       "skill.event",
+		"run_id":     runID,
+		"event_kind": string(kind),
+		"data":       data,
+	}
+	b, err := json.Marshal(frame)
+	if err != nil {
+		log.Printf("skill.event run=%d marshal: %v", runID, err)
+		return
+	}
+	if err := send(b); err != nil {
+		log.Printf("skill.event run=%d write: %v", runID, err)
 	}
 }
 
