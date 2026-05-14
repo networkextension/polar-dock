@@ -14,6 +14,7 @@ package dock
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -278,9 +279,10 @@ func (s *Server) handleAgentWS(c *gin.Context) {
 		workdir:           strings.TrimSpace(c.Query("workdir")),
 		send:        make(chan []byte, 64),
 		close:       make(chan struct{}),
-		pending:      map[string]chan agentToolResult{},
-		chatPending:  map[string]chan agentChatReply{},
-		skillPending: map[int64]chan skillEventFrame{},
+		pending:            map[string]chan agentToolResult{},
+		chatPending:        map[string]chan agentChatReply{},
+		skillPending:       map[int64]chan skillEventFrame{},
+		skillStdoutPending: map[int64]chan []byte{},
 	}
 	if displaced := s.agentHub.register(ac); displaced != nil {
 		log.Printf("[agent ws] kicking previous connection bot=%s", botUserID)
@@ -442,6 +444,21 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 			var ev skillEventFrame
 			if err := json.Unmarshal(raw, &ev); err != nil {
 				log.Printf("[agent ws] skill.event parse failed bot=%s: %v", ac.botUserID, err)
+				continue
+			}
+			// P2 (Shell): stdout chunks route to the byte channel
+			// instead of the lifecycle channel. Decoupling means a
+			// slow xterm reader doesn't backpressure state/log/exit
+			// events for this or any other run.
+			if ev.EventKind == "stdout" {
+				if b64, _ := ev.Data["bytes_b64"].(string); b64 != "" {
+					chunk, err := base64.StdEncoding.DecodeString(b64)
+					if err == nil {
+						ac.deliverSkillStdout(ev.RunID, chunk)
+					} else {
+						log.Printf("[agent ws] skill.event stdout base64 decode run=%d: %v", ev.RunID, err)
+					}
+				}
 				continue
 			}
 			ac.deliverSkillEvent(ev)

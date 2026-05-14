@@ -95,8 +95,23 @@ const (
 	EventState  EventKind = "state"  // status, listen_addr, error_message
 	EventLog    EventKind = "log"    // free-form text line
 	EventMetric EventKind = "metric" // bytes/s, active_connections, etc.
+	EventStdout EventKind = "stdout" // P2 (Shell): pty byte chunks, data.bytes_b64
 	EventExit   EventKind = "exit"   // final event before Run terminates
 )
+
+// RunInput is satisfied by Runs that accept stdin byte chunks
+// (Shell skill). The agent's loop.go type-asserts to this before
+// honoring a skill.stdin envelope; non-stdin Runs (Coder) silently
+// don't implement it and skill.stdin to them is a no-op.
+type RunInput interface {
+	WriteInput(data []byte) error
+}
+
+// RunResizer is satisfied by Runs that respond to TTY size changes
+// (Shell skill). Same type-assert pattern as RunInput.
+type RunResizer interface {
+	Resize(rows, cols uint16) error
+}
 
 // Registry is the agent-wide map of registered skills, keyed by Kind.
 // Populated at init time by each skill file's init() function.

@@ -2330,6 +2330,11 @@ CREATE TABLE IF NOT EXISTS host_skill_runs (
 CREATE INDEX IF NOT EXISTS idx_skill_runs_skill ON host_skill_runs(skill_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_skill_runs_active
 	ON host_skill_runs(status) WHERE status IN ('starting', 'running');
+-- P2 (Shell): per-run JSONB blob for skill-specific metadata not worth
+-- a dedicated column. Today: operator_user_id, initial_cwd. Forward-
+-- compatible for proxy/wireguard/nanokdp daemons. Additive + idempotent.
+ALTER TABLE host_skill_runs
+	ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 -- host_skill_credentials: P1c.4 — encrypted API keys / tokens the
 -- agent injects as env vars at skill.start time. One row per
