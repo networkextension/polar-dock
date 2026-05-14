@@ -2325,6 +2325,29 @@ CREATE INDEX IF NOT EXISTS idx_skill_runs_skill ON host_skill_runs(skill_id, sta
 CREATE INDEX IF NOT EXISTS idx_skill_runs_active
 	ON host_skill_runs(status) WHERE status IN ('starting', 'running');
 
+-- host_skill_credentials: P1c.4 — encrypted API keys / tokens the
+-- agent injects as env vars at skill.start time. One row per
+-- (host_skill_id, key). value_cipher is AES-256-GCM base64 (nonce
+-- prefix); value_plaintext is the fallback when POLAR_CREDENTIAL_KEY
+-- is not configured — the UI surfaces an "unencrypted" badge so the
+-- operator can fix the deployment. last_used_at lets the UI show
+-- "last injected at" without exposing the raw value.
+CREATE TABLE IF NOT EXISTS host_skill_credentials (
+	id BIGSERIAL PRIMARY KEY,
+	host_skill_id BIGINT NOT NULL REFERENCES host_skills(id) ON DELETE CASCADE,
+	key TEXT NOT NULL,
+	value_cipher TEXT NOT NULL DEFAULT '',
+	value_plaintext TEXT NOT NULL DEFAULT '',
+	encrypted BOOLEAN NOT NULL DEFAULT FALSE,
+	last_used_at TIMESTAMPTZ,
+	created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_at TIMESTAMPTZ NOT NULL,
+	updated_at TIMESTAMPTZ NOT NULL,
+	UNIQUE (host_skill_id, key)
+);
+CREATE INDEX IF NOT EXISTS idx_host_skill_credentials_skill
+	ON host_skill_credentials(host_skill_id);
+
 -- projects CREATE was moved earlier in this batch (above the
 -- ALTER TABLE projects block) so the ALTERs and the foreign keys
 -- on iosdist_agent_builds / project_research_runs all see it.

@@ -101,6 +101,15 @@ type Config struct {
 	// knows to set the key before going to production.
 	IOSDistResourceKey string
 
+	// Host module credential vault (P1c.4): 32-byte hex AES-GCM key
+	// used to encrypt API keys / tokens stored in host_skill_credentials
+	// (per-coder-skill secrets injected as env vars at skill.start).
+	// Separate from IOSDIST_RESOURCE_KEY so the security domains stay
+	// independent — operator can rotate one without the other. Unset =
+	// credentials stored in plaintext with an "unencrypted" badge in
+	// the UI.
+	PolarCredentialKey string
+
 	// MetricsToken gates GET /metrics. When unset the endpoint returns
 	// 404 (fail-closed); when set, the request must carry
 	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's

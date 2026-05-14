@@ -106,6 +106,25 @@ on demand.
 - Killing the agent process: subsequent bot reply marks the skill_run
   failed cleanly (same recovery pattern as streaming).
 
+### Auth model — hybrid (P1c.4 + manual on-host)
+
+The coder CLIs (claude / codex / kimi-cli) have two auth modes:
+
+| Tier | How | Polar's role |
+|---|---|---|
+| **API key** (pay-per-token) | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `MOONSHOT_API_KEY` env var | **Polar manages**: paste once into `/hosts/:id` skill config form; dock encrypts via `POLAR_CREDENTIAL_KEY` (AES-256-GCM) into `host_skill_credentials`; agent injects as env at `skill.start` time |
+| **OAuth / login** (Claude Pro, ChatGPT Plus subscription) | `claude login` / `codex login` opens a browser; credentials persist in `~/.claude/credentials.json` etc. | **Operator manages**: ssh to the host once, run `claude login` per CLI. polar-agent inherits the on-disk creds when it spawns the CLI subprocess |
+
+The vault endpoints (P1c.4) are `GET/PUT/DELETE /api/hosts/:id/skills/:skillId/credentials[/:key]`, admin-only, never surface raw plaintext on read. When `POLAR_CREDENTIAL_KEY` is not set on the dock box, credentials store plaintext + the UI badges them "unencrypted" so operators fix the deployment before going to production. Decryption happens server-side only at dispatch time (P1c.3); the raw value never crosses an API boundary back to a browser.
+
+Generate the credential key:
+
+```bash
+openssl rand -hex 32   # 64-char hex output → POLAR_CREDENTIAL_KEY
+```
+
+Then set it in the polar-dock launch env (parallel to `IOSDIST_RESOURCE_KEY`).
+
 ## Phase 2 — Shell skill
 
 A "live shell to chat" capability. Operator at chat keyboard, host's
