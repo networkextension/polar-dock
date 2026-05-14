@@ -274,12 +274,40 @@ doc/
 └── (per-phase) host-skill-<kind>.md   # added with each phase PR
 ```
 
+## Registration topology (P0 → P1e)
+
+Polar supports **two** registration shapes depending on where dock + agent run:
+
+| Topology | Use when | Flow | Auth |
+|---|---|---|---|
+| **1:1 co-located** | dock + agent on the same machine (dev box, single-node deploy) | `polar-agent register --local` hits `http://127.0.0.1:8080/api/hosts/local-bootstrap` directly — no nginx | **Loopback bind + no proxy headers**. Server rejects requests whose `c.Request.RemoteAddr` isn't `127.0.0.1` / `::1`, or that carry `X-Forwarded-For` / `X-Real-IP` / `Forwarded`. Opt-in via `POLAR_ALLOW_LOCAL_BOOTSTRAP=true` on the dock launch env (`~/polar-dock.env`); a stock remote-only deploy doesn't register the route. |
+| **1:N remote** | many polar-agents distributed; central dock | Admin opens `/hosts.html` → "Add Host" → copies one-time enroll token; operator runs `polar-agent register --token=<enroll> --server=https://dock-host` on the target machine | The one-time enroll token (TTL 1h, single-use) is the bearer on `POST /api/hosts/register`. Server consumes it + mints a permanent agent_token in the response. |
+
+Both modes save `~/.polar/agent.toml` with the URL the agent should use for `attach`. **Local mode saves `http://127.0.0.1:8080` (direct dock)** so WS attach also bypasses nginx — fewer hops on the local round-trip. Remote mode saves whatever `--server` was passed (typically the public TLS URL).
+
+### Picking a mode
+
+- Single Mac (or single Linux box) running dock + your own agent + your own UI? → **local**.
+- Internal cluster, dev machines, CI runners all connecting back to a central dock? → **remote** for each agent.
+- Mixed (one local agent on the dock box + N remote)? → use both. The dock box uses `--local`; remotes use `--token`.
+
+### How `--local` security works (in 3 lines)
+
+```go
+host, _, _ := net.SplitHostPort(c.Request.RemoteAddr)
+if !isLoopbackAddr(host) { return 403 }            // 127.0.0.1 / ::1 only
+for hdr in {X-Forwarded-For, X-Real-IP, Forwarded} { if hdr present { return 403 } }
+```
+
+We use `c.Request.RemoteAddr` (raw socket peer), **not** `c.ClientIP()` — the gin helper consults `X-Forwarded-For` and would defeat the loopback guard.
+
 ## API surface (planned, P0 first)
 
 ```
 # Hosts
-POST   /api/hosts/enroll                          # body: {workspace_id, name} → {token, expires_at}
-POST   /api/hosts/register                        # agent uses this with the enroll token → creates host
+POST   /api/hosts/enroll                          # body: {workspace_id, name} → {token, expires_at}        (1:N: admin mints)
+POST   /api/hosts/register                        # agent uses this with the enroll token → creates host    (1:N: agent consumes)
+POST   /api/hosts/local-bootstrap                 # loopback-only, no auth → host + permanent agent_token   (1:1 co-located)
 GET    /api/hosts                                 # list (workspace-scoped)
 GET    /api/hosts/:id                             # detail (advertised + enabled skills)
 PUT    /api/hosts/:id                             # rename, slug
@@ -322,25 +350,48 @@ No dock-side changes. No schema changes. No new HTTP routes.
 
 ## Local dev story
 
+Two patterns, matching the registration table above.
+
+### Pattern A — co-located bootstrap (recommended for single-box dev)
+
 ```bash
-# Build agent w/ all skills + dock
+# Build dock + agent
 go build -o bin/polar-dock ./cmd/dock
 go build -o bin/polar-agent ./cmd/polar-agent
 
-# Run dock against local PG
+# Run dock with the bootstrap endpoint enabled
 POSTGRES_DSN="postgres://ideamesh:test123456@localhost:5432/ideamesh?sslmode=disable" \
   METRICS_TOKEN=devtoken \
+  POLAR_ALLOW_LOCAL_BOOTSTRAP=true \
   ./bin/polar-dock
 
-# Enroll a "local" host (curl the enroll API or via the UI)
-TOKEN=$(curl -X POST localhost:8080/api/hosts/enroll ...)
-
-# Run agent locally pretending to be a remote host
-./bin/polar-agent register --token=$TOKEN --name=devbox
-./bin/polar-agent attach    # uses stored credentials
+# One command — no token paste:
+./bin/polar-agent register --local --name=$(hostname)
+./bin/polar-agent attach --workdir=.
 ```
 
-After P1, the legacy `attach --bot --tool` still works for backward
+`register --local` writes `agent.toml` with `server=http://127.0.0.1:8080` so the subsequent attach connects directly to dock loopback (skips nginx + TLS for the local round-trip).
+
+### Pattern B — remote / multi-machine
+
+```bash
+# 1. Admin (on the dock box, via web UI):
+#    open https://central-dock/hosts.html → "Add Host" → copy one-time token
+
+# 2. Operator (on the target host machine):
+./bin/polar-agent register --server=https://central-dock --token=<one-time-enroll-token>
+./bin/polar-agent attach --workdir=.
+```
+
+Same `attach` step in both; the difference is purely the bootstrap.
+
+### Smoke after register
+
+```bash
+./bin/polar-agent self-test        # whoami + WS handshake + skill.advertise round-trip
+```
+
+After P1c.3, the legacy `attach --bot --tool` still works for backward
 compat. After P6, only the new flow remains.
 
 ## Risk register
