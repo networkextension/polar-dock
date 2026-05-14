@@ -344,6 +344,16 @@ func runAttach(args []string) int {
 		}
 	}
 
+	// P4: WireGuard skill (wg-quick). Unix-only. Needs root to
+	// manage the kernel interface — see comments in
+	// cmd/polar-agent/skills/wireguard.go for privilege model.
+	// Disable via POLAR_AGENT_WIREGUARD_DISABLED=true.
+	if os.Getenv("POLAR_AGENT_WIREGUARD_DISABLED") != "true" {
+		if wgSk := skills.NewWireGuardSkill(); wgSk != nil {
+			skills.Register(wgSk)
+		}
+	}
+
 	if err := runAgentLoop(cfg, *bot, resolved, *verbose, spec); err != nil {
 		log.Printf("agent loop ended: %v", err)
 		return exitNet
