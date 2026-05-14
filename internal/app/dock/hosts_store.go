@@ -57,6 +57,23 @@ type AdvertisedSkill struct {
 	Capabilities map[string]any `json:"capabilities,omitempty"`
 }
 
+// HostSkill is the persistent counterpart to AdvertisedSkill — the
+// host_skills row materialized by the auto-shim when an agent
+// advertises a skill kind, and later mutated by the operator via UI
+// (enable/disable, config edits).
+type HostSkill struct {
+	ID         int64           `json:"id"`
+	HostID     string          `json:"host_id"`
+	Kind       string          `json:"kind"`
+	Name       string          `json:"name"`
+	ConfigJSON json.RawMessage `json:"config_json"`
+	Enabled    bool            `json:"enabled"`
+	AutoStart  bool            `json:"auto_start"`
+	CreatedBy  string          `json:"created_by"`
+	CreatedAt  time.Time       `json:"created_at"`
+	UpdatedAt  time.Time       `json:"updated_at"`
+}
+
 // pendingEnrollmentMarker is the coder_config JSON shape we use to
 // mark an agent_tokens row as "minted but not yet consumed by an
 // agent". Cleared by consumeEnrollmentToken on first successful use.
@@ -166,6 +183,104 @@ func (s *Server) updateHostAdvertisedSkills(hostID string, skills []AdvertisedSk
 		hostID, string(payload), now, strings.TrimSpace(remoteIP),
 	)
 	return err
+}
+
+// ensureHostSkillFromAdvertise materializes a host_skills row for an
+// agent-advertised skill kind, upserting on (host_id, kind). Returns
+// the row's id so the auto-shim can later bind it to a bot via
+// bot_users.host_skill_id. Called from the WS dispatch right after
+// updateHostAdvertisedSkills so the dock-side host_skills table tracks
+// every advertised skill kind, ready for explicit operator enable in
+// the UI.
+//
+// created_by resolves through the host's agent_token to the enroller's
+// user_id — auto-created rows are credited to the user who registered
+// the host (the closest thing we have to a "system user" without
+// inventing one). config_json snapshots the agent's advertised
+// capabilities so the UI can show "this skill exposes tools X, Y, Z".
+func (s *Server) ensureHostSkillFromAdvertise(hostID string, skill AdvertisedSkill, now time.Time) (int64, error) {
+	if strings.TrimSpace(hostID) == "" {
+		return 0, errors.New("host_id is required")
+	}
+	kind := strings.TrimSpace(skill.Kind)
+	if kind == "" {
+		return 0, errors.New("skill.kind is required")
+	}
+	caps := skill.Capabilities
+	if caps == nil {
+		caps = map[string]any{}
+	}
+	configJSON, err := json.Marshal(caps)
+	if err != nil {
+		return 0, fmt.Errorf("marshal capabilities: %w", err)
+	}
+	// Friendly display name auto-derived from kind. Operator can
+	// rename via UI later (lands with the skill config form PR).
+	name := kind
+
+	// Resolve created_by from agent_tokens.user_id via hosts.agent_token_id.
+	// If the host has no agent_token_id (defensive: shouldn't happen in
+	// practice since register() always sets it), fall back to the
+	// workspace owner.
+	var createdBy string
+	err = s.db.QueryRow(`
+		SELECT COALESCE(
+			(SELECT at.user_id FROM agent_tokens at
+			 JOIN hosts h ON h.agent_token_id = at.id
+			 WHERE h.id = $1),
+			(SELECT t.owner_user_id FROM teams t
+			 JOIN hosts h ON h.workspace_id = t.id
+			 WHERE h.id = $1)
+		)`, hostID).Scan(&createdBy)
+	if err != nil {
+		return 0, fmt.Errorf("resolve created_by for host=%s: %w", hostID, err)
+	}
+	if createdBy == "" {
+		return 0, fmt.Errorf("could not resolve a user_id for host=%s — neither agent_token nor workspace owner", hostID)
+	}
+
+	var id int64
+	err = s.db.QueryRow(`
+		INSERT INTO host_skills (host_id, kind, name, config_json, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4::jsonb, $5, $6, $6)
+		ON CONFLICT (host_id, kind) DO UPDATE
+			SET config_json = EXCLUDED.config_json,
+			    updated_at  = EXCLUDED.updated_at
+		RETURNING id`,
+		hostID, kind, name, string(configJSON), createdBy, now,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("upsert host_skills (host=%s, kind=%s): %w", hostID, kind, err)
+	}
+	return id, nil
+}
+
+// listHostSkills returns every host_skills row for a host, ordered by
+// kind. Used by the host detail UI to show "skills currently materialized
+// from advertise + their config_json".
+func (s *Server) listHostSkills(hostID string) ([]HostSkill, error) {
+	rows, err := s.db.Query(`
+		SELECT id, host_id, kind, name, config_json::text, enabled, auto_start,
+		       created_by, created_at, updated_at
+		FROM host_skills
+		WHERE host_id = $1
+		ORDER BY kind`, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HostSkill
+	for rows.Next() {
+		var hs HostSkill
+		var configText string
+		if err := rows.Scan(&hs.ID, &hs.HostID, &hs.Kind, &hs.Name, &configText,
+			&hs.Enabled, &hs.AutoStart, &hs.CreatedBy, &hs.CreatedAt, &hs.UpdatedAt); err != nil {
+			return nil, err
+		}
+		hs.ConfigJSON = json.RawMessage(configText)
+		out = append(out, hs)
+	}
+	return out, rows.Err()
 }
 
 // touchHostLastSeen is the no-skills heartbeat — called on every WS

@@ -417,9 +417,19 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 				ac.hostID = host.ID
 			}
 			remoteIP := remoteIPForRequest(ac.requestRemoteAddr)
-			if err := s.updateHostAdvertisedSkills(ac.hostID, msg.Skills, remoteIP, time.Now().UTC()); err != nil {
+			now := time.Now().UTC()
+			if err := s.updateHostAdvertisedSkills(ac.hostID, msg.Skills, remoteIP, now); err != nil {
 				log.Printf("[agent ws] persist advertised skills host=%s: %v", ac.hostID, err)
 				continue
+			}
+			// P1b auto-shim: materialize a host_skills row per advertised
+			// kind so operators can bind bots to specific host skills
+			// without first running a manual "enable" UI step. Per-skill
+			// upsert; failure of one doesn't drop the others.
+			for _, sk := range msg.Skills {
+				if _, err := s.ensureHostSkillFromAdvertise(ac.hostID, sk, now); err != nil {
+					log.Printf("[agent ws] ensure host_skill host=%s kind=%s: %v", ac.hostID, sk.Kind, err)
+				}
 			}
 			log.Printf("[agent ws] skill.advertise host=%s skills=%d", ac.hostID, len(msg.Skills))
 		default:

@@ -84,6 +84,42 @@ func TestAdvertisedSkillMarshalShape(t *testing.T) {
 	}
 }
 
+func TestHostSkillMarshalShape(t *testing.T) {
+	// HostSkill is what /api/hosts/:id will surface in P1c for the
+	// skill config form. Lock the JSON shape so the TS UI bindings
+	// (ui/src/types/hosts.ts) can rely on it.
+	createdAt := time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC)
+	hs := HostSkill{
+		ID:         42,
+		HostID:     "h_abc",
+		Kind:       "coder",
+		Name:       "coder",
+		ConfigJSON: json.RawMessage(`{"mode":"tool-loop","tools":["kimi","claude"]}`),
+		Enabled:    true,
+		AutoStart:  true,
+		CreatedBy:  "u_op",
+		CreatedAt:  createdAt,
+		UpdatedAt:  createdAt,
+	}
+	raw, err := json.Marshal(hs)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, needle := range []string{
+		`"id":42`,
+		`"host_id":"h_abc"`,
+		`"kind":"coder"`,
+		`"config_json":{"mode":"tool-loop","tools":["kimi","claude"]}`,
+		`"enabled":true`,
+		`"auto_start":true`,
+		`"created_by":"u_op"`,
+	} {
+		if !strings.Contains(string(raw), needle) {
+			t.Errorf("missing %q in serialized payload: %s", needle, raw)
+		}
+	}
+}
+
 func TestSlugSanitizeRegexBehavior(t *testing.T) {
 	// uniqueHostSlugInWorkspace hits the DB so we can't fully exercise
 	// it without a connection; but the slug sanitization is the
