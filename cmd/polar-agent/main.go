@@ -333,6 +333,17 @@ func runAttach(args []string) int {
 		}
 	}
 
+	// P3: Proxy skill (sing-box). Unix-only. Operator can disable
+	// via POLAR_AGENT_PROXY_DISABLED=true. The capability advertise
+	// includes installed:true/false depending on whether sing-box is
+	// on PATH; dock-side UI uses that to render an install hint if
+	// the binary is missing.
+	if os.Getenv("POLAR_AGENT_PROXY_DISABLED") != "true" {
+		if proxySk := skills.NewProxySkill(); proxySk != nil {
+			skills.Register(proxySk)
+		}
+	}
+
 	if err := runAgentLoop(cfg, *bot, resolved, *verbose, spec); err != nil {
 		log.Printf("agent loop ended: %v", err)
 		return exitNet
