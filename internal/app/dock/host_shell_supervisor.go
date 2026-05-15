@@ -95,6 +95,11 @@ func (s *Server) runShellSupervisor(conn *agentConn, runID int64, first chan<- s
 			// First stdout also implies a working PTY — not all skills
 			// emit a state=running event before bytes start flowing.
 			signalFirst(false, "")
+			// Backscroll: keep the last N bytes so a reattaching
+			// bridge can replay the most recent screen state.
+			if sess, _ := s.shellSessions.get(runID); sess != nil {
+				sess.backscroll.write(chunk)
+			}
 			s.shellSessions.forwardStdout(runID, chunk)
 		case <-conn.close:
 			cleanup("ended", "agent_disconnect")
