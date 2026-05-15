@@ -201,17 +201,12 @@ class ConsolePane {
 
   private async connect(hostId: string, skillId: number, shell?: string): Promise<void> {
     const host = hosts.find((h) => h.id === hostId);
-    const fit = new FitAddon();
-    const proposed: { rows: number; cols: number; shell?: string } = { rows: 30, cols: 100 };
-    if (shell) proposed.shell = shell;
-    const { response, data } = await openHostShell(hostId, skillId, proposed);
-    if (!response.ok || !data.ws_url) {
-      throw new Error(data.error || `HTTP ${response.status}`);
-    }
-    this.currentHostId = hostId;
-    this.currentSkillId = skillId;
 
-    // Tear down the picker and put a fresh terminal in.
+    // Mount the terminal + fit it BEFORE calling /shell/open, so the
+    // agent's PTY starts the right size for this pane. Otherwise the
+    // initial 24×80 default fills with bash startup output, fit later
+    // grows the viewport, and the cursor lands at the bottom of an
+    // oversized terminal — top half ends up blank.
     this.bodyEl.innerHTML = `<div class="console-pane-term" data-pane-term></div>`;
     const termEl = this.bodyEl.querySelector<HTMLElement>("[data-pane-term]")!;
     const term = new Terminal({
@@ -219,13 +214,32 @@ class ConsolePane {
       fontSize: 12,
       cursorBlink: true,
       convertEol: false,
+      scrollback: 5000,
       theme: { background: "#0f172a", foreground: "#e2e8f0" },
     });
     const linksAddon = new WebLinksAddon();
+    const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(linksAddon);
     term.open(termEl);
-    setTimeout(() => fit.fit(), 0);
+    try {
+      fit.fit();
+    } catch {
+      /* container not laid out yet — first ResizeObserver tick will retry */
+    }
+
+    const proposed: { rows: number; cols: number; shell?: string } = {
+      rows: term.rows || 30,
+      cols: term.cols || 100,
+    };
+    if (shell) proposed.shell = shell;
+    const { response, data } = await openHostShell(hostId, skillId, proposed);
+    if (!response.ok || !data.ws_url) {
+      term.dispose();
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    this.currentHostId = hostId;
+    this.currentSkillId = skillId;
     term.focus();
 
     this.term = term;
@@ -252,7 +266,12 @@ class ConsolePane {
     });
     ws.addEventListener("message", (ev) => {
       if (typeof ev.data === "string") return;
-      term.write(new Uint8Array(ev.data));
+      term.write(new Uint8Array(ev.data), () => {
+        // Auto-scroll-to-bottom on each batch — xterm normally does
+        // this, but if the operator scrolled up and the layout shifted
+        // (pane resize), the viewport can stick at a stale offset.
+        term.scrollToBottom();
+      });
     });
     ws.addEventListener("close", (ev) => {
       term.writeln(`\r\n\x1b[2m[console] closed (code=${ev.code})\x1b[0m`);
