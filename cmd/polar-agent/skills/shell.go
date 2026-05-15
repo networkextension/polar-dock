@@ -72,7 +72,17 @@ type ShellConfig struct {
 	Cwd            string            `json:"cwd,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 	IdleTimeoutSec int               `json:"idle_timeout_sec,omitempty"`
+	// Shell is the operator's preferred interpreter: "bash", "zsh",
+	// or "sh". Empty / "auto" / unknown values fall back to the
+	// agent's default (bash > zsh > sh). Whitelisted on purpose so
+	// the picker can't smuggle an arbitrary executable path.
+	Shell string `json:"shell,omitempty"`
 }
+
+// shellAllowed is the whitelist of shells the picker may request.
+// `sh` is included so minimal containers still work; anything outside
+// this set falls back to the agent's auto-detect.
+var shellAllowed = map[string]bool{"bash": true, "zsh": true, "sh": true}
 
 type shellSkill struct {
 	defaultWorkdir string
@@ -168,16 +178,26 @@ func (s *shellSkill) Start(ctx context.Context, runID int64, config json.RawMess
 		cwd = s.defaultWorkdir
 	}
 
-	// Pick a shell: bash if available, else sh. Fall back covers
-	// Alpine containers / minimal images.
-	shellPath, _ := exec.LookPath("bash")
-	shellName := "bash"
-	if shellPath == "" {
-		shellPath, _ = exec.LookPath("sh")
-		shellName = "sh"
+	// Pick a shell. Operator preference first (whitelisted), then
+	// fall back to bash > zsh > sh (sh covers Alpine / minimal
+	// images). An unsupported / missing preference silently falls
+	// back rather than erroring — the WS connection stays useful.
+	shellPath, shellName := "", ""
+	if pref := strings.ToLower(strings.TrimSpace(cfg.Shell)); pref != "" && shellAllowed[pref] {
+		if p, err := exec.LookPath(pref); err == nil {
+			shellPath, shellName = p, pref
+		}
 	}
 	if shellPath == "" {
-		return nil, errors.New("no usable shell (bash, sh) on PATH")
+		for _, candidate := range []string{"bash", "zsh", "sh"} {
+			if p, err := exec.LookPath(candidate); err == nil {
+				shellPath, shellName = p, candidate
+				break
+			}
+		}
+	}
+	if shellPath == "" {
+		return nil, errors.New("no usable shell (bash, zsh, sh) on PATH")
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
