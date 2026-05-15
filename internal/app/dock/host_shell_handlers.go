@@ -179,7 +179,16 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	if strings.HasPrefix(strings.ToLower(c.GetHeader("X-Forwarded-Proto")), "https") || c.Request.TLS != nil {
 		scheme = "wss"
 	}
-	wsURL := scheme + "://" + c.Request.Host + "/ws/host/" + hostID + "/shell/" + strconv.FormatInt(runID, 10)
+	// Prefer X-Forwarded-Host when present — it preserves the port the
+	// browser sees verbatim. nginx's $host variable strips the port (so
+	// a non-default-port deploy like :8888 would otherwise round-trip
+	// as just the bare hostname, sending the browser to port 80 and
+	// closing with WS code 1006).
+	wsHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
+	if wsHost == "" {
+		wsHost = c.Request.Host
+	}
+	wsURL := scheme + "://" + wsHost + "/ws/host/" + hostID + "/shell/" + strconv.FormatInt(runID, 10)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"run_id":     runID,
