@@ -68,6 +68,34 @@ func (s *Server) resolveHostSkillAdmin(c *gin.Context) (int64, bool) {
 	return skillID, true
 }
 
+// handleHostSkillRename — PATCH /api/hosts/:id/skills/:skillId  body: {"name":"..."}
+// Lets an admin rename the auto-generated "vnc" / "shell" / etc. label
+// to something human ("Office Mac" / "Build Box"). The DB id stays as
+// the auto-increment serial; only the display name changes.
+func (s *Server) handleHostSkillRename(c *gin.Context) {
+	skillID, ok := s.resolveHostSkillAdmin(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效请求体"})
+		return
+	}
+	if err := s.updateHostSkillName(skillID, req.Name, time.Now().UTC()); err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			c.JSON(http.StatusNotFound, gin.H{"error": "skill 不存在"})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "name": strings.TrimSpace(req.Name)})
+}
+
 func (s *Server) handleHostSkillCredentialsList(c *gin.Context) {
 	skillID, ok := s.resolveHostSkillAdmin(c)
 	if !ok {

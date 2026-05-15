@@ -29,6 +29,7 @@ const (
 	KindWireGuard SkillKind = "wireguard"
 	KindNanoKDP   SkillKind = "nanokdp"
 	KindMCPServer SkillKind = "mcp-server"
+	KindVNC       SkillKind = "vnc"
 )
 
 // Skill is the per-kind contract. Implementations live in their own

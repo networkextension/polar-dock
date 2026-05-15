@@ -5,6 +5,11 @@ import type { ErrorResponse } from "./dashboard.js";
 export type ConsolePaneConfig = {
   host_id: string;
   host_skill_id: number;
+  // kind: skill type the pane was started against. Optional for
+  // backward compatibility — layouts saved before VNC support omit
+  // this field; the pane defaults to "shell" on restore. The persisted
+  // form lives in jsonb so adding the field is non-breaking.
+  kind?: string;
 };
 
 export type ConsoleLayout = {

@@ -130,6 +130,16 @@ type Config struct {
 	// per-host cap of 4 sessions (hardcoded). Default 32.
 	PolarMaxShellSessions int
 
+	// PolarDisableVNCSkill: kill-switch for the VNC skill's dock-side
+	// endpoints + WS upgrade. Default false (vnc enabled for admins).
+	// Set true on deploys that should not expose VNC bridges (the
+	// agent skill can also be opted out via POLAR_AGENT_VNC_DISABLED).
+	PolarDisableVNCSkill bool
+
+	// PolarMaxVNCSessions: global ceiling on concurrent VNC sessions
+	// across all hosts. Per-host cap is hard-coded at 2. Default 16.
+	PolarMaxVNCSessions int
+
 	// MetricsToken gates GET /metrics. When unset the endpoint returns
 	// 404 (fail-closed); when set, the request must carry
 	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's

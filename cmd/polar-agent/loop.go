@@ -350,6 +350,7 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 				log.Printf("skill.start parse: %v", err)
 				continue
 			}
+			log.Printf("[agent] skill.start received run=%d kind=%s", env.RunID, env.SkillKind)
 			skill, ok := skills.Default().Get(skills.SkillKind(env.SkillKind))
 			if !ok {
 				log.Printf("skill.start run=%d: kind=%q not registered", env.RunID, env.SkillKind)
@@ -360,6 +361,7 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 				continue
 			}
 			go func(e skillStartEnvelope, s skills.Skill) {
+				log.Printf("[agent] skill.Start invoking run=%d kind=%s config=%s", e.RunID, e.SkillKind, truncate(string(e.Config), 200))
 				run, err := s.Start(ctx, e.RunID, e.Config)
 				if err != nil {
 					log.Printf("skill.start run=%d kind=%s start error: %v", e.RunID, e.SkillKind, err)
@@ -373,11 +375,13 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 				// skill.resize / skill.stop envelopes can find it.
 				// Coder Runs don't satisfy RunInput/RunResizer; that's
 				// fine — those envelopes will type-assert and skip.
+				log.Printf("[agent] skill.Start ok run=%d kind=%s — pumping events", e.RunID, e.SkillKind)
 				activeRuns.put(e.RunID, run)
 				defer activeRuns.delete(e.RunID)
 				for ev := range run.Events() {
 					sendSkillEvent(send, e.RunID, ev.Kind, ev.Data)
 				}
+				log.Printf("[agent] skill.Start exited run=%d kind=%s", e.RunID, e.SkillKind)
 			}(env, skill)
 		case "skill.stdin":
 			// P2 (Shell): dock forwards a chunk of stdin bytes from

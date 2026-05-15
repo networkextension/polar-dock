@@ -61,6 +61,8 @@
         gap: 12px;
         color: #94a3b8;
         font-size: 12px;
+        background: #0f172a;
+        z-index: 2;
       }
       .console-pane-empty select {
         max-width: 280px;
@@ -70,12 +72,41 @@
         inset: 0;
       }
       /* xterm renders a hidden <textarea> for IME input + screen readers
-         at the cursor position. With our pane styles it occasionally
-         flashes visible until first layout. Force it invisible defensively. */
+         at the cursor position. Belt-and-suspenders reset — the global
+         rule in styles.css already excludes .xterm-helper-textarea via
+         :not(), but defending here means any future stray rule that
+         hits "textarea" can't push the terminal rows off-screen. See
+         doc/webmux_review2.md for the original blast-radius write-up. */
       .console-pane-term .xterm-helper-textarea {
+        position: absolute !important;
+        width: auto !important;
+        height: auto !important;
+        min-height: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        background: transparent !important;
+        resize: none !important;
         opacity: 0 !important;
         pointer-events: none;
-        resize: none;
+      }
+      /* Keep .xterm-helpers out of normal layout flow so a bloated
+         helper-textarea (if any other CSS still hits it) can't push
+         .xterm-rows down. NO visibility:hidden here — the textarea
+         is a child of helpers and must remain focusable for keyboard
+         input + cursor blink. */
+      .console-pane-term .xterm-helpers {
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+      /* The width-cache element xterm uses to measure font glyph
+         widths is `position: static` + ~14px high by default and
+         can be safely hidden — it doesn't receive input. */
+      .console-pane-term .xterm-width-cache-measure-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        visibility: hidden;
       }
       .console-toolbar {
         display: flex;
@@ -124,33 +155,12 @@
         </div>
       </aside>
 
-      <div class="lp-main" style="overflow:hidden;">
-        <div class="console-toolbar">
-          <strong style="font-size:13px;">Console</strong>
-          <span style="font-size:11px; color:#94a3b8;">多终端并排工作区</span>
-          <span style="flex:1;"></span>
-          <label style="font-size:12px;">布局
-            <select id="consoleLayoutSelect" style="margin-left:4px;">
-              <option value="1">1 pane</option>
-              <option value="2">2 panes</option>
-              <option value="3">3 panes</option>
-              <option value="4" selected>2×2</option>
-              <option value="6">2×3</option>
-              <option value="9">3×3</option>
-            </select>
-          </label>
-          <label style="font-size:12px;">已保存
-            <select id="consoleSavedSelect" style="margin-left:4px; min-width:140px;">
-              <option value="">— 未保存的布局 —</option>
-            </select>
-          </label>
-          <button id="consoleSaveBtn" class="btn-inline btn-secondary" type="button" title="保存当前布局">💾 保存</button>
-          <button id="consoleDeleteBtn" class="btn-inline btn-secondary" type="button" disabled title="删除选中的已保存布局">🗑</button>
-          <button id="consoleCloseAllBtn" class="btn-inline btn-secondary" type="button">关闭全部</button>
-          <a class="lp-topbar-back" href="/hosts.html">主机</a>
-        </div>
-
-        <div id="consoleGrid" class="console-grid" data-cols="2"></div>
+      <div class="lp-main" style="overflow:hidden; display:flex; flex-direction:column;">
+        <!-- React (see src/console.tsx + components/console/*) owns
+             everything below — the toolbar + the pane grid. The page
+             chrome (sidebar, brand, theme) is shared HTML hydrated
+             imperatively in the entry script. -->
+        <div id="consoleRoot" style="display:flex; flex-direction:column; flex:1; min-height:0;"></div>
       </div>
     </div>
 

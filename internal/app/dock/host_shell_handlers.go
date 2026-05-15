@@ -69,29 +69,17 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	}
 	hostID := strings.TrimSpace(c.Param("id"))
 
-	// Reattach shortcut: if this operator already has an active session
-	// on this (host, host_skill), return its run_id instead of dispatching
-	// a fresh skill.start. Lets refresh / re-pick land back on the live
-	// PTY rather than spawning N detached shells per operator.
-	if existing := s.shellSessions.findActiveFor(hostID, skillID, operatorUserID); existing != nil {
-		scheme := "ws"
-		if strings.HasPrefix(strings.ToLower(c.GetHeader("X-Forwarded-Proto")), "https") || c.Request.TLS != nil {
-			scheme = "wss"
-		}
-		wsHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
-		if wsHost == "" {
-			wsHost = c.Request.Host
-		}
-		wsURL := scheme + "://" + wsHost + "/ws/host/" + hostID + "/shell/" + strconv.FormatInt(existing.RunID, 10)
-		c.JSON(http.StatusOK, gin.H{
-			"run_id":     existing.RunID,
-			"ws_url":     wsURL,
-			"host_id":    hostID,
-			"opened_at":  existing.OpenedAt,
-			"reattached": true,
-		})
-		return
-	}
+	// Each /shell/open mints a fresh PTY. Multi-pane = multi-terminal:
+	// pane A runs `top`, B runs `xcodebuild`, C runs `df`, D runs
+	// `macmon` — independent processes, independent buffers, no
+	// shared keystrokes. tmux WINDOW semantics, not tmux-attach.
+	//
+	// Refresh / saved-layout reattach is handled UI-side: the React
+	// console queries listHostShellSessions on bootstrap, gets a list
+	// of live (run_id, host_skill_id), creates panes pre-bound to
+	// those run_ids, and the Pane component skips /shell/open and
+	// connects WS directly to /ws/host/:id/shell/:run_id. No dedup
+	// needed at this endpoint.
 
 	var req struct {
 		Rows           uint16            `json:"rows"`
@@ -193,7 +181,17 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		SkillKind: info.Kind,
 		Config:    startCfg,
 	}
+
+	// CRITICAL: track the event + stdout channels BEFORE dispatching
+	// skill.start. The agent starts bash and writes the prompt to PTY
+	// within microseconds of receiving the dispatch; if the channels
+	// aren't tracked yet, deliverSkillStdout silently drops those
+	// bytes and the browser sees an empty WS forever.
+	eventCh, stdoutCh := s.trackShellChannels(conn, runID)
+
 	if err := s.agentHub.dispatchSkillStart(conn, env); err != nil {
+		conn.untrackSkillPending(runID)
+		conn.untrackSkillStdout(runID)
 		_ = s.finalizeHostSkillRun(runID, "failed", "dispatch: "+err.Error(), time.Now().UTC())
 		c.JSON(http.StatusBadGateway, gin.H{"error": "dispatch skill.start: " + err.Error()})
 		return
@@ -214,11 +212,13 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	}
 	if err := s.shellSessions.insert(sess); err != nil {
 		_ = s.agentHub.dispatchSkillStop(conn, runID, "registry_full")
+		conn.untrackSkillPending(runID)
+		conn.untrackSkillStdout(runID)
 		_ = s.finalizeHostSkillRun(runID, "failed", "registry: "+err.Error(), time.Now().UTC())
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 		return
 	}
-	first := s.startShellSupervisor(conn, runID)
+	first := s.startShellSupervisor(conn, runID, eventCh, stdoutCh)
 	// Wait briefly for the agent to confirm the run started (or fail
 	// fast). Avoids the race where the browser's WS upgrade arrives
 	// AFTER the supervisor has already removed the session because the
