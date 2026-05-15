@@ -127,13 +127,21 @@ func isLoopbackAddr(addr string) bool {
 }
 
 // pickLocalBootstrapOwner returns (userID, workspaceID) for the
-// first admin in the system + their primary workspace. The primary
-// workspace is the lowest-id row in teams that the user owns; for a
-// fresh deploy there's exactly one (their personal team).
+// first real admin in the system + their primary workspace. The
+// primary workspace is the lowest-id row in teams that the user
+// owns; for a fresh deploy there's exactly one (their personal
+// team).
+//
+// Skips the seeded `system` admin: it's a service identity used by
+// internal jobs (audit logs, default workspace owner for templated
+// content) and has no real operator behind it. If local-bootstrap
+// picks `system`, the resulting host lives in a workspace nobody
+// browses to and the UI host list looks empty.
 func (s *Server) pickLocalBootstrapOwner() (string, string, error) {
 	var userID string
 	err := s.db.QueryRow(`
-		SELECT id FROM users WHERE role = 'admin'
+		SELECT id FROM users
+		WHERE role = 'admin' AND id <> 'system'
 		ORDER BY created_at ASC
 		LIMIT 1`,
 	).Scan(&userID)
