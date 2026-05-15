@@ -29,7 +29,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -70,32 +69,17 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	}
 	hostID := strings.TrimSpace(c.Param("id"))
 
-	// tmux-attach semantics: if this operator already has a live shell
-	// run on this (host, host_skill), return it instead of minting a
-	// new PTY. "Open" = attach to the existing console; × = kill it
-	// (closeFully calls DELETE /sessions/:run_id which dispatches
-	// skill.stop). Refresh path also lands here via the picker → /open.
-	if existing := s.shellSessions.findActiveFor(hostID, skillID, operatorUserID); existing != nil {
-		log.Printf("[shell-h] /shell/open run=%d REATTACH host=%s skill=%d operator=%s",
-			existing.RunID, hostID, skillID, operatorUserID)
-		scheme := "ws"
-		if strings.HasPrefix(strings.ToLower(c.GetHeader("X-Forwarded-Proto")), "https") || c.Request.TLS != nil {
-			scheme = "wss"
-		}
-		wsHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
-		if wsHost == "" {
-			wsHost = c.Request.Host
-		}
-		wsURL := scheme + "://" + wsHost + "/ws/host/" + hostID + "/shell/" + strconv.FormatInt(existing.RunID, 10)
-		c.JSON(http.StatusOK, gin.H{
-			"run_id":     existing.RunID,
-			"ws_url":     wsURL,
-			"host_id":    hostID,
-			"opened_at":  existing.OpenedAt,
-			"reattached": true,
-		})
-		return
-	}
+	// Each /shell/open mints a fresh PTY. Multi-pane = multi-terminal:
+	// pane A runs `top`, B runs `xcodebuild`, C runs `df`, D runs
+	// `macmon` — independent processes, independent buffers, no
+	// shared keystrokes. tmux WINDOW semantics, not tmux-attach.
+	//
+	// Refresh / saved-layout reattach is handled UI-side: the React
+	// console queries listHostShellSessions on bootstrap, gets a list
+	// of live (run_id, host_skill_id), creates panes pre-bound to
+	// those run_ids, and the Pane component skips /shell/open and
+	// connects WS directly to /ws/host/:id/shell/:run_id. No dedup
+	// needed at this endpoint.
 
 	var req struct {
 		Rows           uint16            `json:"rows"`
