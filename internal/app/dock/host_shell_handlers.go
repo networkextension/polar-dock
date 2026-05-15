@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -69,11 +70,14 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	}
 	hostID := strings.TrimSpace(c.Param("id"))
 
-	// Reattach shortcut: if this operator already has an active session
-	// on this (host, host_skill), return its run_id instead of dispatching
-	// a fresh skill.start. Lets refresh / re-pick land back on the live
-	// PTY rather than spawning N detached shells per operator.
+	// tmux-attach semantics: if this operator already has a live shell
+	// run on this (host, host_skill), return it instead of minting a
+	// new PTY. "Open" = attach to the existing console; × = kill it
+	// (closeFully calls DELETE /sessions/:run_id which dispatches
+	// skill.stop). Refresh path also lands here via the picker → /open.
 	if existing := s.shellSessions.findActiveFor(hostID, skillID, operatorUserID); existing != nil {
+		log.Printf("[shell-h] /shell/open run=%d REATTACH host=%s skill=%d operator=%s",
+			existing.RunID, hostID, skillID, operatorUserID)
 		scheme := "ws"
 		if strings.HasPrefix(strings.ToLower(c.GetHeader("X-Forwarded-Proto")), "https") || c.Request.TLS != nil {
 			scheme = "wss"
@@ -193,7 +197,17 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		SkillKind: info.Kind,
 		Config:    startCfg,
 	}
+
+	// CRITICAL: track the event + stdout channels BEFORE dispatching
+	// skill.start. The agent starts bash and writes the prompt to PTY
+	// within microseconds of receiving the dispatch; if the channels
+	// aren't tracked yet, deliverSkillStdout silently drops those
+	// bytes and the browser sees an empty WS forever.
+	eventCh, stdoutCh := s.trackShellChannels(conn, runID)
+
 	if err := s.agentHub.dispatchSkillStart(conn, env); err != nil {
+		conn.untrackSkillPending(runID)
+		conn.untrackSkillStdout(runID)
 		_ = s.finalizeHostSkillRun(runID, "failed", "dispatch: "+err.Error(), time.Now().UTC())
 		c.JSON(http.StatusBadGateway, gin.H{"error": "dispatch skill.start: " + err.Error()})
 		return
@@ -214,11 +228,13 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	}
 	if err := s.shellSessions.insert(sess); err != nil {
 		_ = s.agentHub.dispatchSkillStop(conn, runID, "registry_full")
+		conn.untrackSkillPending(runID)
+		conn.untrackSkillStdout(runID)
 		_ = s.finalizeHostSkillRun(runID, "failed", "registry: "+err.Error(), time.Now().UTC())
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 		return
 	}
-	first := s.startShellSupervisor(conn, runID)
+	first := s.startShellSupervisor(conn, runID, eventCh, stdoutCh)
 	// Wait briefly for the agent to confirm the run started (or fail
 	// fast). Avoids the race where the browser's WS upgrade arrives
 	// AFTER the supervisor has already removed the session because the

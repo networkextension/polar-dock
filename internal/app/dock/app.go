@@ -100,6 +100,14 @@ type Server struct {
 	polarDisableShellSkill bool
 	shellSessions          *shellSessionRegistry
 
+	// Host module VNC. Kill-switch + concurrency registry. Same shape
+	// as the Shell skill above; separate registry since per-host caps
+	// + bridge semantics differ (VNC has no backscroll replay, lower
+	// per-host cap, evicts bridge on backpressure rather than dropping
+	// frames mid-stream).
+	polarDisableVNCSkill bool
+	vncSessions          *vncSessionRegistry
+
 	// iosdistZsignPath is the resolved path to the zsign binary, set
 	// once at server boot via exec.LookPath. When empty, the sign
 	// endpoint returns a 503 with a helpful "install zsign" message
@@ -189,6 +197,20 @@ func NewServer(cfg Config) (*Server, error) {
 		log.Printf("host module: Shell skill DISABLED (POLAR_DISABLE_SHELL_SKILL=true)")
 	} else {
 		log.Printf("host module: Shell skill enabled (per-host cap=4, global cap=%d)", globalShellMax)
+	}
+
+	// VNC skill registry. Per-host cap is hard-coded at 2 (vs shell's
+	// 4) — VNC pushes full framebuffer streams, two sessions is plenty.
+	server.polarDisableVNCSkill = cfg.PolarDisableVNCSkill
+	globalVNCMax := cfg.PolarMaxVNCSessions
+	if globalVNCMax <= 0 {
+		globalVNCMax = 16
+	}
+	server.vncSessions = newVNCSessionRegistry(globalVNCMax)
+	if cfg.PolarDisableVNCSkill {
+		log.Printf("host module: VNC skill DISABLED (POLAR_DISABLE_VNC_SKILL=true)")
+	} else {
+		log.Printf("host module: VNC skill enabled (per-host cap=2, global cap=%d)", globalVNCMax)
 	}
 
 	workDir, err := os.Getwd()
@@ -602,6 +624,9 @@ func (s *Server) registerRoutes() {
 	// agent's pty. Auth + admin check inline because gin middleware
 	// can't run cleanly across an upgrade.
 	s.router.GET("/ws/host/:id/shell/:run_id", s.AuthMiddleware(), s.handleHostShellWS)
+	// VNC byte-bridge WS — same shape as the shell bridge but binary
+	// in both directions (noVNC ↔ agent TCP relay).
+	s.router.GET("/ws/host/:id/vnc/:run_id", s.AuthMiddleware(), s.handleHostVNCWS)
 
 	// Prometheus exposition. Gated inside handleMetrics by METRICS_TOKEN —
 	// 404 if unset, 401 if mismatched. Lives outside /api so the scrape
@@ -853,6 +878,8 @@ func (s *Server) registerRoutes() {
 		// P1d: list endpoints used by the UI surfaces.
 		api.GET("/host-skills", s.AuthMiddleware(), s.handleHostSkillsListWorkspace)
 		api.GET("/hosts/:id/skills", s.AuthMiddleware(), s.handleHostSkillsListForHost)
+		// Rename a host_skill row's display name (does not change kind / id).
+		api.PATCH("/hosts/:id/skills/:skillId", s.AuthMiddleware(), s.handleHostSkillRename)
 		// P1c.4: per-skill credential vault. Admin-only; never surfaces
 		// raw plaintext on read.
 		api.GET("/hosts/:id/skills/:skillId/credentials", s.AuthMiddleware(), s.handleHostSkillCredentialsList)
@@ -862,6 +889,12 @@ func (s *Server) registerRoutes() {
 		api.POST("/hosts/:id/skills/:skillId/shell/open", s.AuthMiddleware(), s.handleHostShellOpen)
 		api.GET("/hosts/:id/skills/shell/sessions", s.AuthMiddleware(), s.handleHostShellSessions)
 		api.DELETE("/hosts/:id/skills/shell/sessions/:run_id", s.AuthMiddleware(), s.handleHostShellKick)
+		// VNC: open / sessions / kick. Admin-only. Wire shape mirrors
+		// the Shell endpoints; binary RFB stream bridges via /ws/host/
+		// :id/vnc/:run_id.
+		api.POST("/hosts/:id/skills/:skillId/vnc/open", s.AuthMiddleware(), s.handleHostVNCOpen)
+		api.GET("/hosts/:id/skills/vnc/sessions", s.AuthMiddleware(), s.handleHostVNCSessions)
+		api.DELETE("/hosts/:id/skills/vnc/sessions/:run_id", s.AuthMiddleware(), s.handleHostVNCKick)
 		// /console.html named layouts (per workspace + per user).
 		api.GET("/console/layouts", s.AuthMiddleware(), s.handleConsoleLayoutList)
 		api.POST("/console/layouts", s.AuthMiddleware(), s.handleConsoleLayoutCreate)

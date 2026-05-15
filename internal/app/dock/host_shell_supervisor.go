@@ -26,25 +26,32 @@ type shellStartSignal struct {
 	reason string
 }
 
-// startShellSupervisor spawns the supervisor goroutine for runID. It
-// must be called exactly once per shell run, right after the session
-// is inserted into the registry. The returned channel fires once with
-// the agent's first state (running / exit) so /shell/open can detect
-// early failures.
-func (s *Server) startShellSupervisor(conn *agentConn, runID int64) <-chan shellStartSignal {
+// trackShellChannels MUST be called BEFORE dispatchSkillStart so that
+// the agent's first stdout / state event has a destination channel to
+// land in. Without this barrier, agent emits bytes immediately on PTY
+// start, deliverSkillStdout sees no registered channel, drops silently,
+// and the browser sees zero bytes through the WS. Old findActiveFor
+// reattach path masked this race (no fresh dispatch); now that every
+// /shell/open mints a new run, the race fires every time.
+func (s *Server) trackShellChannels(conn *agentConn, runID int64) (chan skillEventFrame, chan []byte) {
+	eventCh := conn.trackSkillPending(runID)
+	stdoutCh := conn.trackSkillStdout(runID)
+	return eventCh, stdoutCh
+}
+
+// startShellSupervisor spawns the supervisor goroutine for runID using
+// pre-tracked channels. Caller is responsible for tracking BEFORE
+// dispatching skill.start (see trackShellChannels). The returned
+// channel fires once with the agent's first state (running / exit) so
+// /shell/open can detect early failures.
+func (s *Server) startShellSupervisor(conn *agentConn, runID int64, eventCh chan skillEventFrame, stdoutCh chan []byte) <-chan shellStartSignal {
 	first := make(chan shellStartSignal, 1)
-	go s.runShellSupervisor(conn, runID, first)
+	go s.runShellSupervisor(conn, runID, eventCh, stdoutCh, first)
 	return first
 }
 
-func (s *Server) runShellSupervisor(conn *agentConn, runID int64, first chan<- shellStartSignal) {
-	// Own both channels for the run's lifetime — the bridge no longer
-	// calls track/untrack directly, eliminating the race where a
-	// detaching old bridge would untrack the new bridge's freshly-
-	// installed channel.
-	eventCh := conn.trackSkillPending(runID)
+func (s *Server) runShellSupervisor(conn *agentConn, runID int64, eventCh chan skillEventFrame, stdoutCh chan []byte, first chan<- shellStartSignal) {
 	defer conn.untrackSkillPending(runID)
-	stdoutCh := conn.trackSkillStdout(runID)
 	defer conn.untrackSkillStdout(runID)
 
 	signalFirst := func(failed bool, reason string) {

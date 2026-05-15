@@ -178,14 +178,30 @@ func (s *shellSkill) Start(ctx context.Context, runID int64, config json.RawMess
 		cwd = s.defaultWorkdir
 	}
 
-	// Pick a shell. Operator preference first (whitelisted), then
-	// fall back to bash > zsh > sh (sh covers Alpine / minimal
-	// images). An unsupported / missing preference silently falls
-	// back rather than erroring — the WS connection stays useful.
+	// Pick a shell, in priority order:
+	//   1) Operator preference (cfg.Shell, whitelisted) — explicit win
+	//   2) $SHELL env var (the user's actual default shell). Matters
+	//      a lot on macOS where SHELL=/bin/zsh: bash -i wouldn't source
+	//      ~/.zshrc, so brew shellenv / PATH / aliases the operator
+	//      configured for their daily shell would be invisible, and
+	//      `clear` / other commands installed via brew end up "not found".
+	//      Using $SHELL means the rich rc file actually loads.
+	//   3) Hardcoded fallback (bash > zsh > sh) for environments that
+	//      somehow have no SHELL set (containers, minimal Alpine).
 	shellPath, shellName := "", ""
 	if pref := strings.ToLower(strings.TrimSpace(cfg.Shell)); pref != "" && shellAllowed[pref] {
 		if p, err := exec.LookPath(pref); err == nil {
 			shellPath, shellName = p, pref
+		}
+	}
+	if shellPath == "" {
+		if envShell := strings.TrimSpace(os.Getenv("SHELL")); envShell != "" {
+			base := strings.ToLower(filepath.Base(envShell))
+			if shellAllowed[base] {
+				if _, err := os.Stat(envShell); err == nil {
+					shellPath, shellName = envShell, base
+				}
+			}
 		}
 	}
 	if shellPath == "" {
@@ -201,6 +217,13 @@ func (s *shellSkill) Start(ctx context.Context, runID int64, config json.RawMess
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
+	// `-i` (interactive only, NOT login). `-il` was tried but bash/zsh
+	// login files on some user envs hang or break input flow at
+	// session start (likely an interactive-prompt sourced from
+	// .bash_profile / .zprofile that fights xterm). Keep `-i`; rely
+	// on launchd plist EnvironmentVariables for PATH, and let
+	// operators source .bashrc themselves from the pane if they need
+	// brew shellenv / NVM / etc.
 	cmd := exec.CommandContext(runCtx, shellPath, "-i")
 	if cwd != "" {
 		cmd.Dir = cwd
@@ -254,6 +277,7 @@ func (s *shellSkill) Start(ctx context.Context, runID int64, config json.RawMess
 func buildShellEnv(overrides map[string]string) []string {
 	out := make([]string, 0, len(os.Environ())+len(overrides))
 	used := make(map[string]bool, len(overrides))
+	hasTerm := false
 	for _, e := range os.Environ() {
 		eq := strings.IndexByte(e, '=')
 		if eq <= 0 {
@@ -267,6 +291,9 @@ func buildShellEnv(overrides map[string]string) []string {
 		if _, ok := overrides[key]; ok {
 			continue // overridden below
 		}
+		if strings.EqualFold(key, "TERM") {
+			hasTerm = true
+		}
 		out = append(out, e)
 	}
 	for k, v := range overrides {
@@ -276,8 +303,19 @@ func buildShellEnv(overrides map[string]string) []string {
 		if strings.ContainsAny(k, "=\x00") {
 			continue
 		}
+		if strings.EqualFold(k, "TERM") {
+			hasTerm = true
+		}
 		out = append(out, k+"="+v)
 		used[k] = true
+	}
+	// Launchd-spawned agents don't inherit TERM, so ncurses programs
+	// (vim, top, less, htop) error with "Error opening terminal:
+	// unknown" or render blind (no cursor positioning, blank top).
+	// xterm.js announces itself as xterm-256color over the PTY-bytes
+	// protocol; set it explicitly when nothing else has.
+	if !hasTerm {
+		out = append(out, "TERM=xterm-256color")
 	}
 	_ = used
 	return out

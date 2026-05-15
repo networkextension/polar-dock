@@ -105,6 +105,11 @@ func main() {
 		PolarDisableShellSkill: os.Getenv("POLAR_DISABLE_SHELL_SKILL") == "true",
 		PolarMaxShellSessions:  parseEnvInt("POLAR_MAX_SHELL_SESSIONS", 32),
 
+		// Host module VNC skill. Default enabled; kill-switch + per-dock
+		// concurrency cap. Agent side opt-out is POLAR_AGENT_VNC_DISABLED.
+		PolarDisableVNCSkill: os.Getenv("POLAR_DISABLE_VNC_SKILL") == "true",
+		PolarMaxVNCSessions:  parseEnvInt("POLAR_MAX_VNC_SESSIONS", 16),
+
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 	}

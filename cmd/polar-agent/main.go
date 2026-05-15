@@ -143,6 +143,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "research: %v\n", err)
 			os.Exit(exitToolFailed)
 		}
+	case "test-serve":
+		// Standalone skill testbed. NO dock connection. NO auth.
+		// Loopback TCP socket speaking the same envelope JSON as
+		// the dock↔agent WS. See doc/agent-test-harness.md.
+		os.Exit(runTestServer(args))
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -362,6 +367,25 @@ func runAttach(args []string) int {
 		if nkSk := skills.NewNanokdpSkill(); nkSk != nil {
 			skills.Register(nkSk)
 		}
+	}
+
+	// VNC skill (B.1 plain TCP relay). Unix-only — primarily targets
+	// macOS Screen Sharing on the agent host (loopback to :5900) but
+	// any LAN-reachable VNC server works. Authentication is end-to-end
+	// in the browser via noVNC; the agent is a transparent byte pipe.
+	// Disable via POLAR_AGENT_VNC_DISABLED=true.
+	if os.Getenv("POLAR_AGENT_VNC_DISABLED") != "true" {
+		if vncSk := skills.NewVncSkill(); vncSk != nil {
+			skills.Register(vncSk)
+		}
+	}
+
+	// P3 (MCP-server): in-process JSON-RPC dispatcher over the skill's
+	// stdin/stdout. P0a ships scaffold + built-in echo tool only;
+	// gdb-mi / lldb-dap / ida-rpc adapters land in P0b+. Disable via
+	// POLAR_AGENT_MCP_DISABLED=true.
+	if os.Getenv("POLAR_AGENT_MCP_DISABLED") != "true" {
+		skills.Register(skills.NewMCPServerSkill())
 	}
 
 	if err := runAgentLoop(cfg, *bot, resolved, *verbose, spec); err != nil {

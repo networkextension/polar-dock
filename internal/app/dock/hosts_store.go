@@ -333,6 +333,31 @@ func (s *Server) listHostSkills(hostID string) ([]HostSkill, error) {
 	return out, rows.Err()
 }
 
+// updateHostSkillName renames a host_skill row. Operator-facing alias
+// for the auto-generated default name (which is the bare kind string).
+// Returns sql.ErrNoRows if the row doesn't exist.
+func (s *Server) updateHostSkillName(skillID int64, name string, now time.Time) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return errors.New("name cannot be empty")
+	}
+	if len(trimmed) > 80 {
+		return errors.New("name too long (max 80 chars)")
+	}
+	res, err := s.db.Exec(
+		`UPDATE host_skills SET name = $1, updated_at = $2 WHERE id = $3`,
+		trimmed, now, skillID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // touchHostLastSeen is the no-skills heartbeat — called on every WS
 // frame so the UI's "online N seconds ago" stays accurate without
 // requiring an advertise.
