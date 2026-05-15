@@ -38,9 +38,12 @@ async function runTypeScriptCheck() {
 }
 
 async function collectEntryPoints() {
+  // Top-level src/*.ts (and src/*.tsx, for React-powered pages like
+  // console.tsx) — each maps 1:1 to a bundled JS in public/scripts/.
+  // Files ending in `.ts.bak` are legacy/backup and ignored.
   const files = await readdir(srcDir);
   return files
-    .filter((name) => name.endsWith(".ts"))
+    .filter((name) => (name.endsWith(".ts") || name.endsWith(".tsx")) && !name.endsWith(".ts.bak"))
     .map((name) => path.join(srcDir, name));
 }
 
@@ -49,14 +52,32 @@ function esbuildOptions(entries) {
     entryPoints: entries,
     bundle: true,
     format: "esm",
-    target: ["es2020"],
+    // es2022 unlocks top-level await, which @novnc/novnc 1.7+ uses for
+    // its WebCodecs H264 feature probe (core/util/browser.js).
+    // All currently-supported Safari / Chrome / Firefox understand it.
+    target: ["es2022"],
     platform: "browser",
     outdir: publicScriptsDir,
     outExtension: { ".js": ".js" },
     sourcemap: "linked",
     logLevel: "info",
-    splitting: false,
+    // splitting:true so esbuild can move modules with top-level await
+    // (noVNC 1.7's WebCodecs H264 probe) into separate chunks; without
+    // it, esbuild emits the TLA inside a non-async wrapper and the
+    // resulting bundle is unparseable in Safari ("await unexpected
+    // identifier"). Side-effect: many small chunk files alongside the
+    // entry bundles; nginx + dock both serve any .js path under
+    // /scripts/, so chunk fetches just work.
+    splitting: true,
     minify: true,
+    // keepNames preserves function/class `.name` properties through
+    // minification. xterm.js (and some other libs we ship) depend on
+    // class identity at runtime — e.g. its keyboard-event pipeline
+    // looks up handlers by class name and silently drops events when
+    // the names get rewritten. Without this, shell panes open and
+    // render output fine, but operator typing goes nowhere.
+    // Same fix as commit ca6eb5e on feat/host-macmon-grafana-embed.
+    keepNames: true,
     legalComments: "none",
     tsconfig: tsconfigPath,
   };

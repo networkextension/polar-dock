@@ -65,6 +65,16 @@ export async function putHostSkillCredential(hostID: string, skillID: number, ke
   );
 }
 
+export async function renameHostSkill(hostID: string, skillID: number, name: string) {
+  return requestJson<{ ok?: boolean; name?: string; error?: string }>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/${skillID}`,
+    {
+      method: "PATCH",
+      body: { name },
+    },
+  );
+}
+
 export async function deleteHostSkillCredential(hostID: string, skillID: number, key: string) {
   return requestJson<{ ok: boolean; error?: string }>(
     `/api/hosts/${encodeURIComponent(hostID)}/skills/${skillID}/credentials/${encodeURIComponent(key)}`,
@@ -77,6 +87,8 @@ export async function deleteHostSkillCredential(hostID: string, skillID: number,
 import type {
   ShellOpenResponse,
   ShellSessionListResponse,
+  VNCOpenResponse,
+  VNCSessionListResponse,
 } from "../types/hosts.js";
 
 export async function openHostShell(
@@ -99,6 +111,32 @@ export async function listHostShellSessions(hostID: string) {
 export async function kickHostShellSession(hostID: string, runID: number) {
   return requestJson<{ ok: boolean; error?: string }>(
     `/api/hosts/${encodeURIComponent(hostID)}/skills/shell/sessions/${runID}`,
+    { method: "DELETE" },
+  );
+}
+
+// VNC skill --------------------------------------------------------------
+
+export async function openHostVNC(
+  hostID: string,
+  skillID: number,
+  body: { target?: string; idle_timeout_sec?: number } = {},
+) {
+  return requestJson<VNCOpenResponse>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/${skillID}/vnc/open`,
+    { method: "POST", body },
+  );
+}
+
+export async function listHostVNCSessions(hostID: string) {
+  return requestJson<VNCSessionListResponse>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/vnc/sessions`,
+  );
+}
+
+export async function kickHostVNCSession(hostID: string, runID: number) {
+  return requestJson<{ ok: boolean; error?: string }>(
+    `/api/hosts/${encodeURIComponent(hostID)}/skills/vnc/sessions/${runID}`,
     { method: "DELETE" },
   );
 }

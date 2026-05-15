@@ -14,7 +14,30 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
-import { fetchHosts, fetchHostSkillsForHost, listHostShellSessions, openHostShell } from "./api/hosts.js";
+// noVNC is loaded lazily via dynamic import — its WebCodecs H264 probe
+// uses top-level await, which esbuild 0.28 emits as `()=>{...await…}`
+// in some bundle shapes and Safari rejects with "unexpected identifier".
+// Dynamic import keeps the TLA inside an async context (the chunk is
+// loaded async, our awaiter is `loadRFB` which is async).
+type RFBClass = any;
+let cachedRFB: RFBClass | undefined;
+async function loadRFB(): Promise<RFBClass> {
+  if (cachedRFB) return cachedRFB;
+  const mod = await import("@novnc/novnc");
+  cachedRFB = (mod as { default: RFBClass }).default;
+  return cachedRFB;
+}
+
+import {
+  fetchHosts,
+  fetchHostSkillsForHost,
+  kickHostShellSession,
+  kickHostVNCSession,
+  listHostShellSessions,
+  listHostVNCSessions,
+  openHostShell,
+  openHostVNC,
+} from "./api/hosts.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
 import {
   createConsoleLayout,
@@ -45,21 +68,34 @@ const activePanes = new Map<string, ConsolePane>(); // pane_id → pane
 const savedLayouts = new Map<number, ConsoleLayout>();
 
 // Console pane: one tile of the grid. Owns its DOM node, xterm,
-// WS, and the "empty picker" state.
+// WS, and the "empty picker" state. Supports two kinds today —
+// "shell" (xterm + bidi byte WS to /ws/host/:id/shell/:run_id) and
+// "vnc" (noVNC canvas + binary WS to /ws/host/:id/vnc/:run_id). The
+// kind dispatches inside connect(); the picker stays the same.
 class ConsolePane {
   readonly id: string;
   readonly root: HTMLElement;
   // Tracked so saveCurrentLayout() can serialize the grid.
   currentHostId?: string;
   currentSkillId?: number;
+  currentKind?: string;
+  // Run id of the live shell/vnc session — set on connect, cleared on
+  // close. Used by the × button to kick the agent-side run (full
+  // terminate) so refresh doesn't reattach to a zombie session that
+  // bash still thinks is at the wrong rows/cols.
+  currentRunId?: number;
   private titleEl: HTMLElement;
   private bodyEl: HTMLElement;
   private term?: Terminal;
   private fit?: FitAddon;
   private ws?: WebSocket;
+  private rfb?: any;
   private resizeObs?: ResizeObserver;
 
-  constructor(id: string, autofill?: { hostId: string; hostSkillId: number }) {
+  constructor(
+    id: string,
+    autofill?: { hostId: string; hostSkillId: number; kind?: string; runId?: number },
+  ) {
     this.id = id;
     this.root = document.createElement("div");
     this.root.className = "console-pane";
@@ -75,17 +111,20 @@ class ConsolePane {
     this.bodyEl = this.root.querySelector("[data-pane-body]") as HTMLElement;
 
     this.root.querySelector<HTMLButtonElement>("[data-pane-close]")?.addEventListener("click", () => {
-      this.dispose();
-      activePanes.delete(this.id);
-      this.root.remove();
-      ensurePaneCount();
+      void this.closeFully().then(() => ensurePaneCount());
     });
 
     if (autofill) {
       const hostLabel = hosts.find((h) => h.id === autofill.hostId)?.name || autofill.hostId;
       this.titleEl.textContent = `${hostLabel} · 启动中...`;
       this.bodyEl.innerHTML = `<div class="console-pane-empty"><div>启动中...</div></div>`;
-      void this.connect(autofill.hostId, autofill.hostSkillId).catch((err) => {
+      void this.connect(
+        autofill.hostId,
+        autofill.hostSkillId,
+        undefined,
+        autofill.kind,
+        autofill.runId,
+      ).catch((err) => {
         this.renderLoadError(autofill.hostId, autofill.hostSkillId, err);
       });
     } else {
@@ -151,33 +190,39 @@ class ConsolePane {
         list = data.skills || [];
         skillsByHost.set(hostId, list);
       }
-      // Only `shell` is offered in the pane picker today. Nanokdp is
-      // also byte-streaming but needs device_path + baud — operator
-      // must use the dedicated host-detail flow for it. Including it
-      // here causes silent skill-start failures (no device_path → agent
-      // refuses → WS 404 / code=1006).
-      const usable = list.filter((s) => s.kind === "shell");
+      // `shell` and `vnc` are the byte-streaming kinds the pane can
+      // start directly. Nanokdp is also byte-streaming but needs
+      // device_path + baud — operator must use the dedicated
+      // host-detail flow for it. Including it here causes silent
+      // skill-start failures (no device_path → agent refuses → WS
+      // 404 / code=1006).
+      const usable = list.filter((s) => s.kind === "shell" || s.kind === "vnc");
       skillSel.innerHTML =
         `<option value="">— skill —</option>` +
-        usable.map((s) => `<option value="${s.id}">${escapeHTML(s.kind)} (id=${s.id})</option>`).join("");
+        usable
+          .map((s) => `<option value="${s.id}" data-kind="${escapeHTML(s.kind)}">${escapeHTML(s.kind)} (id=${s.id})</option>`)
+          .join("");
       skillSel.disabled = false;
     });
 
     skillSel.addEventListener("change", () => {
-      const selected = skillSel.selectedOptions[0]?.textContent || "";
-      shellSel.hidden = !selected.startsWith("shell");
+      const selected = skillSel.selectedOptions[0]?.dataset.kind || "";
+      // Shell picker (bash/zsh/sh) only applies to shell skill. VNC
+      // panes auth in-browser via noVNC and don't take shell choice.
+      shellSel.hidden = selected !== "shell";
       setStartEnabled(!!skillSel.value);
     });
 
     startBtn.addEventListener("click", async () => {
       const hostId = hostSel.value;
       const skillId = Number(skillSel.value);
+      const kind = skillSel.selectedOptions[0]?.dataset.kind || "shell";
       if (!hostId || !skillId) return;
       setStartEnabled(false);
       startBtn.textContent = "启动中...";
       try {
         const shellPref = shellSel.hidden ? undefined : shellSel.value || undefined;
-        await this.connect(hostId, skillId, shellPref);
+        await this.connect(hostId, skillId, shellPref, kind);
       } catch (err) {
         setStartEnabled(true);
         startBtn.textContent = "启动";
@@ -203,7 +248,39 @@ class ConsolePane {
     });
   }
 
-  private async connect(hostId: string, skillId: number, shell?: string): Promise<void> {
+  private async connect(
+    hostId: string,
+    skillId: number,
+    shell?: string,
+    kind?: string,
+    existingRunId?: number,
+  ): Promise<void> {
+    // kind comes from either the picker's data-kind attr or the
+    // restore path; default to "shell" for layouts saved before VNC
+    // support landed (the field is optional in ConsolePaneConfig).
+    const resolvedKind = kind || "shell";
+    if (resolvedKind === "vnc") {
+      return this.connectVnc(hostId, skillId, existingRunId);
+    }
+    return this.connectShell(hostId, skillId, shell, existingRunId);
+  }
+
+  // buildWSURL constructs the ws[s] URL for an existing run on this
+  // host. Used by the reattach path where we already know the run_id
+  // (from listHostShellSessions / listHostVNCSessions) and don't need
+  // to call /open at all. Browser-side construction is correct because
+  // location.host already includes the port the operator's tab sees.
+  private buildWSURL(hostId: string, kind: string, runId: number): string {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}/ws/host/${hostId}/${kind}/${runId}`;
+  }
+
+  private async connectShell(
+    hostId: string,
+    skillId: number,
+    shell?: string,
+    existingRunId?: number,
+  ): Promise<void> {
     const host = hosts.find((h) => h.id === hostId);
 
     // Mount the terminal + fit it BEFORE calling /shell/open, so the
@@ -226,31 +303,60 @@ class ConsolePane {
     term.loadAddon(fit);
     term.loadAddon(linksAddon);
     term.open(termEl);
+
+    // Wait for the browser to lay out the newly-mounted <div> before
+    // measuring it. Without this rAF, fit() runs in the same task that
+    // injected the HTML — the container's clientHeight is often 0 or
+    // stale, fit defaults to a tiny grid, and the agent's PTY opens at
+    // 30×100. The resize observer then grows xterm to ~60 rows after
+    // the layout settles, but bash has already printed into a small
+    // buffer and the leftover content + cursor end up clumped at the
+    // bottom of the now-tall viewport. Two rAFs is belt-and-suspenders:
+    // first to flush layout, second to ensure measurements are stable.
+    // (Brought over from commit b2d7b3c on feat/host-macmon-grafana-embed.)
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
     try {
       fit.fit();
     } catch {
-      /* container not laid out yet — first ResizeObserver tick will retry */
+      /* container still not laid out — sendResize on WS open will recover */
     }
 
-    const proposed: { rows: number; cols: number; shell?: string } = {
-      rows: term.rows || 30,
-      cols: term.cols || 100,
-    };
-    if (shell) proposed.shell = shell;
-    const { response, data } = await openHostShell(hostId, skillId, proposed);
-    if (!response.ok || !data.ws_url) {
-      term.dispose();
-      throw new Error(data.error || `HTTP ${response.status}`);
+    // Two paths:
+    //   A) reattach (existingRunId given): build ws_url client-side,
+    //      skip /shell/open entirely. Operator refresh / layout restore
+    //      lands here.
+    //   B) fresh start: POST /shell/open with measured rows/cols, get
+    //      run_id + ws_url back, agent dispatches skill.start.
+    let runId: number;
+    let wsURL: string;
+    if (typeof existingRunId === "number" && existingRunId > 0) {
+      runId = existingRunId;
+      wsURL = this.buildWSURL(hostId, "shell", runId);
+    } else {
+      const proposed: { rows: number; cols: number; shell?: string } = {
+        rows: term.rows || 30,
+        cols: term.cols || 100,
+      };
+      if (shell) proposed.shell = shell;
+      const { response, data } = await openHostShell(hostId, skillId, proposed);
+      if (!response.ok || !data.ws_url || !data.run_id) {
+        term.dispose();
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      runId = data.run_id;
+      wsURL = data.ws_url;
     }
     this.currentHostId = hostId;
     this.currentSkillId = skillId;
+    this.currentKind = "shell";
+    this.currentRunId = runId;
     term.focus();
 
     this.term = term;
     this.fit = fit;
-    this.titleEl.textContent = `${host?.name || hostId} · run=${data.run_id}`;
+    this.titleEl.textContent = `${host?.name || hostId} · run=${runId}`;
 
-    const ws = new WebSocket(data.ws_url);
+    const ws = new WebSocket(wsURL);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
 
@@ -265,17 +371,25 @@ class ConsolePane {
       }
     };
     ws.addEventListener("open", () => {
-      term.writeln(`\x1b[2m[console] connected · run=${data.run_id}\x1b[0m`);
+      term.writeln(`\x1b[2m[console] connected · run=${runId}\x1b[0m`);
       sendResize();
     });
     ws.addEventListener("message", (ev) => {
       if (typeof ev.data === "string") return;
-      term.write(new Uint8Array(ev.data), () => {
-        // Auto-scroll-to-bottom on each batch — xterm normally does
-        // this, but if the operator scrolled up and the layout shifted
-        // (pane resize), the viewport can stick at a stale offset.
-        term.scrollToBottom();
-      });
+      // Don't force scrollToBottom on each write — let xterm's natural
+      // tail-f behavior keep the cursor visible. (See commits 57af57f
+      // + 877ebf3 for the "blank top + cursor below" postmortem.)
+      // Defensive try/catch: xterm's parser can throw on malformed
+      // escape sequences from glitchy output (broken dmesg, corrupted
+      // streams); without this, one bad chunk kills the message
+      // handler and the bridge effectively stops processing output.
+      // (Brought over from commit ca6eb5e.)
+      try {
+        term.write(new Uint8Array(ev.data));
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("[console] term.write threw, dropping chunk:", err);
+      }
     });
     ws.addEventListener("close", (ev) => {
       term.writeln(`\r\n\x1b[2m[console] closed (code=${ev.code})\x1b[0m`);
@@ -306,8 +420,133 @@ class ConsolePane {
     this.resizeObs.observe(this.root);
   }
 
+  // connectVnc opens a VNC relay via /vnc/open and mounts a noVNC RFB
+  // canvas bound to the returned ws_url. The RFB constructor handles
+  // the entire RFB handshake including auth — noVNC 1.7+ supports both
+  // standard VNC auth (security type 2) and Apple Auth (security type
+  // 30 / ARD with DH + AES) natively. macOS Screen Sharing speaks RFB
+  // 003.889 + type 30 by default; the operator enters their macOS
+  // username + password in the noVNC credentials modal and the rest
+  // is handled in-browser.
+  private async connectVnc(
+    hostId: string,
+    skillId: number,
+    existingRunId?: number,
+  ): Promise<void> {
+    const host = hosts.find((h) => h.id === hostId);
+
+    // Same two-path split as shell: reattach if existingRunId given,
+    // else POST /vnc/open to mint a fresh run.
+    let runId: number;
+    let wsURL: string;
+    if (typeof existingRunId === "number" && existingRunId > 0) {
+      runId = existingRunId;
+      wsURL = this.buildWSURL(hostId, "vnc", runId);
+    } else {
+      const { response, data } = await openHostVNC(hostId, skillId, {});
+      if (!response.ok || !data.ws_url || !data.run_id) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      runId = data.run_id;
+      wsURL = data.ws_url;
+    }
+    this.currentHostId = hostId;
+    this.currentSkillId = skillId;
+    this.currentKind = "vnc";
+    this.currentRunId = runId;
+    this.titleEl.textContent = `${host?.name || hostId} · vnc · run=${runId}`;
+
+    // Mount the noVNC canvas inside the pane body. RFB will inject
+    // its own <canvas> into the provided element and stretch to fit.
+    this.bodyEl.innerHTML = `<div class="console-pane-vnc" data-pane-vnc style="width:100%;height:100%;background:#000;"></div>`;
+    const vncEl = this.bodyEl.querySelector<HTMLElement>("[data-pane-vnc]")!;
+
+    // noVNC's RFB takes a target element + WS URL + options. shared=true
+    // matches macOS Screen Sharing default (don't kick existing viewers).
+    const RFBCtor = await loadRFB();
+    const rfb = new RFBCtor(vncEl, wsURL, {
+      shared: true,
+    });
+    rfb.scaleViewport = true;
+    rfb.resizeSession = false; // RFB protocol handles size; don't ask
+                               // the server to resize its framebuffer
+                               // — macOS Screen Sharing rejects that
+                               // and the connection silently degrades.
+    rfb.background = "#000";
+    this.rfb = rfb;
+
+    // Status badge — overlaid on the black canvas so the operator
+    // sees what state RFB is in instead of staring at a dead screen.
+    const statusEl = document.createElement("div");
+    statusEl.style.cssText = "position:absolute;top:8px;left:8px;background:#0008;color:#fff;padding:4px 8px;font-size:11px;border-radius:4px;font-family:monospace;z-index:10;pointer-events:none;";
+    statusEl.textContent = "VNC 连接中...";
+    vncEl.style.position = "relative";
+    vncEl.appendChild(statusEl);
+    const setStatus = (text: string) => {
+      statusEl.textContent = text;
+    };
+
+    rfb.addEventListener("connect", () => {
+      setStatus("VNC 已连接");
+      // Fade the badge away after a beat so it doesn't cover the
+      // desktop forever.
+      setTimeout(() => {
+        statusEl.style.transition = "opacity .8s";
+        statusEl.style.opacity = "0";
+      }, 1500);
+    });
+    rfb.addEventListener("disconnect", (ev: { detail?: { clean?: boolean } }) => {
+      const clean = ev.detail?.clean !== false;
+      this.bodyEl.innerHTML = `
+        <div class="console-pane-empty">
+          <div>VNC 连接已断开${clean ? "" : "（异常）"}</div>
+          <button type="button" class="btn-inline btn-secondary" data-pane-repick>重新选择</button>
+        </div>
+      `;
+      this.bodyEl.querySelector<HTMLButtonElement>("[data-pane-repick]")?.addEventListener("click", () => {
+        this.currentHostId = undefined;
+        this.currentSkillId = undefined;
+        this.currentKind = undefined;
+        this.renderPicker();
+      });
+    });
+    rfb.addEventListener("securityfailure", (ev: { detail?: { reason?: string; status?: number } }) => {
+      const reason = ev.detail?.reason || "unknown";
+      const status = ev.detail?.status;
+      setStatus(`VNC 认证失败: ${reason}${status !== undefined ? ` (status=${status})` : ""}`);
+      alert(`VNC 认证失败: ${reason}\n密码错？账号错？再试用 macOS 登录用户名 + 密码。`);
+    });
+    // RFB fires this when the server demands credentials (after
+    // security-type negotiation). noVNC does NOT show a modal of its
+    // own — the embedder has to call sendCredentials. For Apple Auth
+    // type 30 the server wants {username, password} (macOS login).
+    // For standard VNC Auth (security type 2) only {password}.
+    rfb.addEventListener("credentialsrequired", () => {
+      setStatus("等待凭据输入");
+      // Use window.prompt — minimal but works without bringing in a
+      // modal library. Refresh / typing wrong password triggers
+      // securityfailure → operator gets the repick path. Username can
+      // be blank for standard VNC Auth servers (they ignore it).
+      const username = window.prompt("VNC 用户名（标准 VNC 留空，Apple Auth 用 macOS 登录用户）", "") ?? "";
+      const password = window.prompt("VNC 密码", "") ?? "";
+      try {
+        rfb.sendCredentials({ username, password, target: "" });
+      } catch (err) {
+        setStatus(`sendCredentials 失败: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+  }
+
   dispose(): void {
     this.resizeObs?.disconnect();
+    if (this.rfb) {
+      try {
+        this.rfb.disconnect();
+      } catch {
+        /* ignore */
+      }
+      this.rfb = undefined;
+    }
     if (this.ws && this.ws.readyState <= WebSocket.OPEN) {
       try {
         this.ws.close(1000, "pane_closed");
@@ -316,6 +555,33 @@ class ConsolePane {
       }
     }
     this.term?.dispose();
+  }
+
+  // closeFully terminates the agent-side session (DELETE /sessions/:run_id
+  // → dock dispatches skill.stop to agent) BEFORE tearing down the local
+  // UI. Without this, × just detaches the bridge — the PTY / VNC relay
+  // stays alive until idle_timeout, and refresh / re-open auto-reattaches
+  // (replays backscroll, bash still at old rows/cols, "blank top + cursor
+  // below" symptom comes back). Best-effort: if the kick 404s or errors,
+  // we still dispose locally. (Brought over from commit 72e4c82.)
+  async closeFully(): Promise<void> {
+    const hostId = this.currentHostId;
+    const runId = this.currentRunId;
+    const kind = this.currentKind;
+    this.dispose();
+    activePanes.delete(this.id);
+    this.root.remove();
+    if (hostId && typeof runId === "number" && runId > 0) {
+      try {
+        if (kind === "vnc") {
+          await kickHostVNCSession(hostId, runId);
+        } else {
+          await kickHostShellSession(hostId, runId);
+        }
+      } catch {
+        /* network blip during teardown — agent's idle_timeout reaps */
+      }
+    }
   }
 }
 
@@ -379,7 +645,11 @@ function loadLayout(layout: ConsoleLayout): void {
 
   for (const cfg of panes) {
     const id = "p" + Math.random().toString(36).slice(2, 8);
-    const pane = new ConsolePane(id, { hostId: cfg.host_id, hostSkillId: cfg.host_skill_id });
+    const pane = new ConsolePane(id, {
+      hostId: cfg.host_id,
+      hostSkillId: cfg.host_skill_id,
+      kind: cfg.kind,
+    });
     activePanes.set(id, pane);
     grid.appendChild(pane.root);
   }
@@ -426,7 +696,17 @@ function currentPanesConfig(): ConsolePaneConfig[] {
     if (!paneId) continue;
     const pane = activePanes.get(paneId);
     if (!pane || !pane.currentHostId || !pane.currentSkillId) continue;
-    panes.push({ host_id: pane.currentHostId, host_skill_id: pane.currentSkillId });
+    const cfg: ConsolePaneConfig = {
+      host_id: pane.currentHostId,
+      host_skill_id: pane.currentSkillId,
+    };
+    // Only persist kind when it's non-shell — keeps the saved JSON
+    // backward-compatible with older layouts (no `kind` field = shell
+    // by default in the restore path).
+    if (pane.currentKind && pane.currentKind !== "shell") {
+      cfg.kind = pane.currentKind;
+    }
+    panes.push(cfg);
   }
   return panes;
 }
@@ -494,7 +774,17 @@ async function bootstrap(): Promise<void> {
   }
 
   layoutSelect.addEventListener("change", () => ensurePaneCount());
-  closeAllBtn.addEventListener("click", () => {
+  closeAllBtn.addEventListener("click", async () => {
+    // Confirm once, then fan out closeFully across every live pane so
+    // each agent-side run gets explicitly killed (not just bridge
+    // detached). Picker-only / un-started panes have no run id and
+    // closeFully no-ops the kick step.
+    if (activePanes.size > 0 && !window.confirm("关闭所有 pane（包括 agent 端的 PTY / VNC）？")) {
+      return;
+    }
+    await Promise.all(
+      Array.from(activePanes.values()).map((p) => p.closeFully().catch(() => undefined)),
+    );
     disposeAllPanes();
     ensurePaneCount();
   });
@@ -531,13 +821,35 @@ async function bootstrap(): Promise<void> {
 
 async function restoreActiveSessions(): Promise<number> {
   if (hosts.length === 0) return 0;
-  const sessions: { hostId: string; hostSkillId: number }[] = [];
+  // Each restored session keeps its run_id so the pane connects WS
+  // directly without re-running /open (which now always mints fresh
+  // runs — no more implicit (host, skill, operator) dedup).
+  const sessions: { hostId: string; hostSkillId: number; kind: string; runId: number }[] = [];
   await Promise.all(
     hosts.map(async (h) => {
-      const { response, data } = await listHostShellSessions(h.id);
-      if (!response.ok || !data.sessions) return;
-      for (const s of data.sessions) {
-        sessions.push({ hostId: s.host_id, hostSkillId: s.host_skill_id });
+      const [shellRes, vncRes] = await Promise.all([
+        listHostShellSessions(h.id),
+        listHostVNCSessions(h.id),
+      ]);
+      if (shellRes.response.ok && shellRes.data.sessions) {
+        for (const s of shellRes.data.sessions) {
+          sessions.push({
+            hostId: s.host_id,
+            hostSkillId: s.host_skill_id,
+            kind: "shell",
+            runId: s.run_id,
+          });
+        }
+      }
+      if (vncRes.response.ok && vncRes.data.sessions) {
+        for (const s of vncRes.data.sessions) {
+          sessions.push({
+            hostId: s.host_id,
+            hostSkillId: s.host_skill_id,
+            kind: "vnc",
+            runId: s.run_id,
+          });
+        }
       }
     }),
   );
@@ -547,7 +859,12 @@ async function restoreActiveSessions(): Promise<number> {
   grid.dataset.cols = String(gridColsFor(target));
   for (const cfg of sessions) {
     const id = "p" + Math.random().toString(36).slice(2, 8);
-    const pane = new ConsolePane(id, { hostId: cfg.hostId, hostSkillId: cfg.hostSkillId });
+    const pane = new ConsolePane(id, {
+      hostId: cfg.hostId,
+      hostSkillId: cfg.hostSkillId,
+      kind: cfg.kind,
+      runId: cfg.runId,
+    });
     activePanes.set(id, pane);
     grid.appendChild(pane.root);
   }

@@ -13,7 +13,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pane, type PaneHandle } from "./Pane";
-import { fetchHosts, fetchHostSkillsForHost, listHostShellSessions } from "../../api/hosts.js";
+import {
+  fetchHosts,
+  fetchHostSkillsForHost,
+  listHostShellSessions,
+  listHostVNCSessions,
+} from "../../api/hosts.js";
 import {
   createConsoleLayout,
   deleteConsoleLayout,
@@ -37,7 +42,7 @@ function nearestLayoutCount(n: number) {
 
 interface PaneState {
   id: string;
-  autofill?: { hostId: string; hostSkillId: number };
+  autofill?: { hostId: string; hostSkillId: number; kind?: string; runId?: number };
 }
 
 function newPaneId() {
@@ -70,30 +75,52 @@ export function ConsoleApp() {
         setLayouts(map);
       }
 
-      // Restore active sessions (kind=shell only).
+      // Restore active sessions (shell + vnc). Each restored pane
+      // carries the live run_id so it reattaches via direct WS — no
+      // round-trip to /open, no risk of minting a duplicate run.
       const restored: PaneState[] = [];
       const newSkills = new Map<string, HostSkill[]>();
       await Promise.all(
         list.map(async (h) => {
-          const [sessRes, skillsRes] = await Promise.all([
+          const [shellSessRes, vncSessRes, skillsRes] = await Promise.all([
             listHostShellSessions(h.id),
+            listHostVNCSessions(h.id),
             fetchHostSkillsForHost(h.id),
           ]);
-          if (!sessRes.response.ok) return;
           if (skillsRes.response.ok && skillsRes.data.skills) {
             newSkills.set(h.id, skillsRes.data.skills);
           }
-          const shellIds = new Set(
-            (skillsRes.response.ok ? skillsRes.data.skills || [] : [])
-              .filter((s) => s.kind === "shell")
-              .map((s) => s.id),
-          );
-          for (const s of sessRes.data.sessions || []) {
-            if (!shellIds.has(s.host_skill_id)) continue;
-            restored.push({
-              id: newPaneId(),
-              autofill: { hostId: s.host_id, hostSkillId: s.host_skill_id },
-            });
+          const skillKindById = new Map<number, string>();
+          for (const s of skillsRes.response.ok ? skillsRes.data.skills || [] : []) {
+            skillKindById.set(s.id, s.kind);
+          }
+          if (shellSessRes.response.ok) {
+            for (const s of shellSessRes.data.sessions || []) {
+              if (skillKindById.get(s.host_skill_id) !== "shell") continue;
+              restored.push({
+                id: newPaneId(),
+                autofill: {
+                  hostId: s.host_id,
+                  hostSkillId: s.host_skill_id,
+                  kind: "shell",
+                  runId: s.run_id,
+                },
+              });
+            }
+          }
+          if (vncSessRes.response.ok) {
+            for (const s of vncSessRes.data.sessions || []) {
+              if (skillKindById.get(s.host_skill_id) !== "vnc") continue;
+              restored.push({
+                id: newPaneId(),
+                autofill: {
+                  hostId: s.host_id,
+                  hostSkillId: s.host_skill_id,
+                  kind: "vnc",
+                  runId: s.run_id,
+                },
+              });
+            }
           }
         }),
       );
@@ -206,7 +233,15 @@ export function ConsoleApp() {
       setTargetCount(target);
       const next: PaneState[] = cfg.map((c) => ({
         id: newPaneId(),
-        autofill: { hostId: c.host_id, hostSkillId: c.host_skill_id },
+        autofill: {
+          hostId: c.host_id,
+          hostSkillId: c.host_skill_id,
+          kind: c.kind,
+          // Saved layouts only carry (host, skill, kind) — no run_id —
+          // so loading triggers fresh /open. If the operator wants to
+          // reattach to a still-live run instead, refresh the page
+          // (restoreActiveSessions discovers + carries the run_id).
+        },
       }));
       while (next.length < target) next.push({ id: newPaneId() });
       setPanes(next);
@@ -231,12 +266,21 @@ export function ConsoleApp() {
   const saveCurrent = async () => {
     const cfg = panes
       .map((p) => paneRefs.current.get(p.id)?.snapshot())
-      .filter((s): s is { hostId: string; hostSkillId: number; runId: number } =>
+      .filter((s): s is { hostId: string; hostSkillId: number; kind: string; runId: number } =>
         !!s?.hostId && !!s?.hostSkillId && !!s.runId,
       )
-      .map((s) => ({ host_id: s.hostId, host_skill_id: s.hostSkillId }));
+      .map((s) => {
+        // Save kind only when non-shell so older layouts (no kind
+        // field) keep parsing — restore defaults to "shell" without it.
+        const entry: { host_id: string; host_skill_id: number; kind?: string } = {
+          host_id: s.hostId,
+          host_skill_id: s.hostSkillId,
+        };
+        if (s.kind && s.kind !== "shell") entry.kind = s.kind;
+        return entry;
+      });
     if (cfg.length === 0) {
-      alert("没有可保存的活动 pane（请先启动至少一个 shell）");
+      alert("没有可保存的活动 pane（请先启动至少一个 shell / vnc）");
       return;
     }
     const existing = selectedLayoutId ? layouts.get(selectedLayoutId) : undefined;
@@ -285,12 +329,16 @@ export function ConsoleApp() {
         <strong style={{ fontSize: 13 }}>Console</strong>
         <span style={{ fontSize: 11, color: "#94a3b8" }}>多终端并排工作区</span>
         <span style={{ flex: 1 }} />
-        <label style={{ fontSize: 12 }}>
+        <label style={{ fontSize: 12 }} htmlFor="consoleLayoutSelect">
           布局{" "}
           <select
+            id="consoleLayoutSelect"
+            name="console-layout-count"
             value={String(targetCount)}
             onChange={(e) => setTargetCount(Number(e.target.value))}
             style={{ marginLeft: 4 }}
+            aria-label="pane 数量布局"
+            autoComplete="off"
           >
             <option value="1">1 pane</option>
             <option value="2">2 panes</option>
@@ -300,12 +348,16 @@ export function ConsoleApp() {
             <option value="9">3×3</option>
           </select>
         </label>
-        <label style={{ fontSize: 12 }}>
+        <label style={{ fontSize: 12 }} htmlFor="consoleSavedSelect">
           已保存{" "}
           <select
+            id="consoleSavedSelect"
+            name="console-saved-layout"
             value={selectedLayoutId ? String(selectedLayoutId) : ""}
             onChange={(e) => onSavedChange(e.target.value)}
             style={{ marginLeft: 4, minWidth: 140 }}
+            aria-label="加载已保存的布局"
+            autoComplete="off"
           >
             <option value="">— 选择已保存的布局 —</option>
             {sortedLayouts.map((l) => (
@@ -315,7 +367,12 @@ export function ConsoleApp() {
             ))}
           </select>
         </label>
-        <button type="button" className="btn-inline btn-secondary" onClick={saveCurrent}>
+        <button
+          type="button"
+          className="btn-inline btn-secondary"
+          onClick={saveCurrent}
+          aria-label="保存当前布局"
+        >
           💾 保存
         </button>
         <button
@@ -323,10 +380,19 @@ export function ConsoleApp() {
           className="btn-inline btn-secondary"
           disabled={!selectedLayoutId}
           onClick={deleteSelected}
+          aria-label="删除选中的已保存布局"
+          title="删除选中的已保存布局"
+          style={!selectedLayoutId ? { cursor: "not-allowed", opacity: 0.5 } : undefined}
         >
           🗑
         </button>
-        <button type="button" className="btn-inline btn-secondary" onClick={closeAll}>
+        <button
+          type="button"
+          className="btn-inline btn-secondary"
+          onClick={closeAll}
+          aria-label="关闭所有 pane 并终止 agent 端 session"
+          title="关闭所有 pane"
+        >
           关闭全部
         </button>
         <a className="lp-topbar-back" href="/hosts.html">

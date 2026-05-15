@@ -11,6 +11,7 @@
     "preview": "UI_STATIC_DIR=dist node server.js"
   },
   "dependencies": {
+    "@novnc/novnc": "^1.7.0",
     "@tiptap/core": "^3.22.3",
     "@tiptap/pm": "^3.22.3",
     "@tiptap/starter-kit": "^3.22.3",

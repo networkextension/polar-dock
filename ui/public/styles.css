@@ -1808,7 +1808,12 @@ button:hover {
   margin-bottom: 0;
 }
 
-textarea {
+/* :not(.xterm-helper-textarea) excludes xterm.js's invisible IME-proxy
+ * textarea — it's positioned absolutely at the cursor for screen-reader /
+ * IME input and must stay ~7×14px. Without this exclusion, the global
+ * width:100%; min-height:320px makes the helper 1228×320px, pushing the
+ * actual terminal rows below the pane viewport. See doc/webmux_review2.md. */
+textarea:not(.xterm-helper-textarea) {
   width: 100%;
   min-height: 320px;
   background: var(--card);

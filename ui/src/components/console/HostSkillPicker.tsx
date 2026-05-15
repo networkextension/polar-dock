@@ -10,6 +10,10 @@ import type { Host, HostSkill } from "../../types/hosts.js";
 export interface PickerChoice {
   hostId: string;
   hostSkillId: number;
+  /** Skill kind: "shell" or "vnc". Determines which /open endpoint
+   *  the pane will call. Other byte-streaming kinds (nanokdp) need
+   *  device-specific config and aren't started from this picker. */
+  kind: string;
   shell?: string;
 }
 
@@ -51,9 +55,12 @@ export function HostSkillPicker({ hosts, skillsByHost, onSkillsResolved, onStart
     };
   }, [hostId, skills, onSkillsResolved]);
 
-  // Only shell skills are user-selectable. Nanokdp needs device_path
-  // that the picker doesn't ask for; see PR #208.
-  const usable = useMemo(() => (skills || []).filter((s) => s.kind === "shell"), [skills]);
+  // shell + vnc are user-selectable byte-streaming kinds. Nanokdp
+  // needs device_path which the picker doesn't ask for; see PR #208.
+  const usable = useMemo(
+    () => (skills || []).filter((s) => s.kind === "shell" || s.kind === "vnc"),
+    [skills],
+  );
 
   const selectedSkill = useMemo(
     () => usable.find((s) => String(s.id) === skillId),
@@ -70,6 +77,7 @@ export function HostSkillPicker({ hosts, skillsByHost, onSkillsResolved, onStart
       await onStart({
         hostId,
         hostSkillId: Number(skillId),
+        kind: selectedSkill?.kind || "shell",
         shell: shellPref || undefined,
       });
     } catch (e) {
@@ -89,6 +97,9 @@ export function HostSkillPicker({ hosts, skillsByHost, onSkillsResolved, onStart
           setHostId(e.target.value);
           setSkillId("");
         }}
+        name="console-pane-host"
+        aria-label="选择主机"
+        autoComplete="off"
       >
         <option value="">— host —</option>
         {hosts.map((h) => (
@@ -103,11 +114,17 @@ export function HostSkillPicker({ hosts, skillsByHost, onSkillsResolved, onStart
         value={skillId}
         onChange={(e) => setSkillId(e.target.value)}
         disabled={!hostId || loading}
+        name="console-pane-skill"
+        aria-label="选择 skill"
+        autoComplete="off"
       >
         <option value="">{loading ? "加载中..." : "— skill —"}</option>
         {usable.map((s) => (
           <option key={s.id} value={s.id}>
-            {s.kind} (id={s.id})
+            {/* Display the operator-renameable label; fall back to the
+                bare kind when name hasn't been customized. The DB id is
+                kept off-screen — operators don't need to see "129". */}
+            {s.name && s.name !== s.kind ? `${s.name} (${s.kind})` : s.kind}
           </option>
         ))}
       </select>
@@ -117,6 +134,9 @@ export function HostSkillPicker({ hosts, skillsByHost, onSkillsResolved, onStart
           style={{ maxWidth: 240 }}
           value={shellPref}
           onChange={(e) => setShellPref(e.target.value)}
+          name="console-pane-shell"
+          aria-label="shell 程序"
+          autoComplete="off"
         >
           <option value="">默认 shell (auto)</option>
           <option value="bash">bash</option>

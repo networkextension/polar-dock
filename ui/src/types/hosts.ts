@@ -109,3 +109,26 @@ export type ShellSession = {
 export type ShellSessionListResponse = ErrorResponse & {
   sessions?: ShellSession[];
 };
+
+// VNC skill --------------------------------------------------------------
+
+export type VNCOpenResponse = ErrorResponse & {
+  run_id?: number;
+  ws_url?: string;
+  host_id?: string;
+  target?: string;
+  opened_at?: string;
+};
+
+export type VNCSession = {
+  run_id: number;
+  host_id: string;
+  host_skill_id: number;
+  operator_user_id: string;
+  opened_at: string;
+  target?: string;
+};
+
+export type VNCSessionListResponse = ErrorResponse & {
+  sessions?: VNCSession[];
+};

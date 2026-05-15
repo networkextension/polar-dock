@@ -22,6 +22,7 @@ import {
   fetchHostSkillsForHost,
   fetchHosts,
   putHostSkillCredential,
+  renameHostSkill,
 } from "./api/hosts.js";
 import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
@@ -274,16 +275,23 @@ function renderSkillCard(hostID: string, sk: HostSkill, encryptionBadge: string)
     : `<div style="font-size:11px; color:var(--text-muted,#888); padding:4px 0;">尚未配置 API key</div>`;
 
   // P2: Shell skill gets an "Open shell" button instead of the
-  // credentials form (it doesn't use API keys). Other skill kinds
-  // get the credential vault UI.
+  // credentials form (it doesn't use API keys). VNC skill is similar
+  // — auth happens in the browser via noVNC and the operator launches
+  // it from /console.html as a pane, not from a per-card button here.
+  // Other skill kinds get the credential vault UI.
   const isShell = sk.kind === "shell";
+  const isVNC = sk.kind === "vnc";
   const headerExtras = isShell
     ? `<button type="button" class="btn-inline btn-secondary" data-shell-open="${sk.id}" style="margin-left:auto; font-size:12px;">▶ Open shell</button>`
-    : "";
+    : isVNC
+      ? `<a class="btn-inline btn-secondary" href="/console.html" target="_blank" style="margin-left:auto; font-size:12px; text-decoration:none;">▶ 打开 console</a>`
+      : "";
 
   const body = isShell
     ? `<div style="font-size:11px; color:var(--text-muted,#888); padding:4px 0;">Shell skill 通过 pty 实时打开 host 上的 bash。每个 host 最多 4 个并发会话。</div>`
-    : `
+    : isVNC
+      ? `<div style="font-size:11px; color:var(--text-muted,#888); padding:4px 0;">VNC skill 把 agent 上的 VNC 服务器（默认 127.0.0.1:5900）桥接到浏览器 noVNC。先开启系统设置 → 通用 → 共享 → 屏幕共享；从 /console.html 选 vnc skill 启动，浏览器会弹框让你输 macOS 用户名 + 密码。每个 host 最多 2 个并发会话。</div>`
+      : `
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
         <span style="font-size:11px; font-weight:500;">Credentials</span>
         ${encryptionBadge}
@@ -297,11 +305,22 @@ function renderSkillCard(hostID: string, sk: HostSkill, encryptionBadge: string)
         <button type="submit" class="btn-inline btn-secondary" style="font-size:12px;">保存</button>
       </form>`;
 
+  // Editable display name. Defaults to the bare kind; operator can
+  // rename to "Office Mac VNC" / "Build Server Shell" / etc. The id
+  // and kind stay shown as small grey metadata so admins can still
+  // map the row back to the DB / agent advertise.
+  const displayName = sk.name && sk.name !== sk.kind ? sk.name : sk.kind;
   return `
     <div data-skill-id="${sk.id}" style="border:1px solid var(--surface-border,#e5e7eb); border-radius:8px; padding:12px; margin-bottom:10px;">
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <strong>${escapeHTML(sk.kind)}</strong>
-        <span style="font-size:11px; color:var(--text-muted,#888); font-family:monospace;">id=${sk.id}</span>
+        <input type="text" class="input" data-skill-name-input="${sk.id}"
+               value="${escapeHTML(displayName)}"
+               aria-label="重命名 host_skill"
+               style="flex:1; max-width:280px; font-size:13px; font-weight:600; padding:4px 8px;"
+               maxlength="80" />
+        <button type="button" class="btn-inline" data-skill-rename="${sk.id}"
+                style="font-size:11px; padding:2px 8px;">重命名</button>
+        <span style="font-size:11px; color:var(--text-muted,#888); font-family:monospace;">${escapeHTML(sk.kind)} · id=${sk.id}</span>
         ${subtitle ? `<span style="font-size:11px; color:var(--text-muted,#888);">— ${escapeHTML(subtitle)}</span>` : ""}
         ${headerExtras}
       </div>
@@ -311,6 +330,42 @@ function renderSkillCard(hostID: string, sk: HostSkill, encryptionBadge: string)
 }
 
 function attachSkillCardListeners(hostID: string): void {
+  // Skill rename — click button OR press Enter in the name input.
+  hostsSkillsList.querySelectorAll<HTMLButtonElement>("button[data-skill-rename]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const skillID = Number(btn.dataset.skillRename || 0);
+      const input = hostsSkillsList.querySelector<HTMLInputElement>(
+        `input[data-skill-name-input="${skillID}"]`,
+      );
+      if (!input || !skillID) return;
+      const name = input.value.trim();
+      if (!name) {
+        alert("名称不能为空");
+        return;
+      }
+      btn.disabled = true;
+      const { response, data } = await renameHostSkill(hostID, skillID, name);
+      btn.disabled = false;
+      if (!response.ok) {
+        alert(`重命名失败：${data.error || response.statusText}`);
+        return;
+      }
+      // Refresh so the new name shows in the rest of the UI (picker etc.).
+      await loadHostSkillsForDetail(hostID);
+    });
+  });
+  hostsSkillsList.querySelectorAll<HTMLInputElement>("input[data-skill-name-input]").forEach((input) => {
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        const skillID = input.dataset.skillNameInput;
+        const btn = hostsSkillsList.querySelector<HTMLButtonElement>(
+          `button[data-skill-rename="${skillID}"]`,
+        );
+        btn?.click();
+      }
+    });
+  });
   hostsSkillsList.querySelectorAll<HTMLFormElement>("form[data-skill-cred-form]").forEach((form) => {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
