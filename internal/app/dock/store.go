@@ -2359,6 +2359,25 @@ CREATE TABLE IF NOT EXISTS host_skill_credentials (
 CREATE INDEX IF NOT EXISTS idx_host_skill_credentials_skill
 	ON host_skill_credentials(host_skill_id);
 
+-- console_layouts: per-user named layouts for the /console.html
+-- tile workspace (PR #202 + follow-up). panes_config is a JSONB
+-- array of {host_id, host_skill_id} entries; position is implicit
+-- by array index. Length determines the grid (1..9 panes; same
+-- mapping as the layout selector in console.ts). teams + users
+-- both exist far earlier in this batch so inline FKs are fine.
+CREATE TABLE IF NOT EXISTS console_layouts (
+	id BIGSERIAL PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	panes_config JSONB NOT NULL DEFAULT '[]'::jsonb,
+	created_at TIMESTAMPTZ NOT NULL,
+	updated_at TIMESTAMPTZ NOT NULL,
+	UNIQUE (workspace_id, owner_user_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_console_layouts_owner
+	ON console_layouts(workspace_id, owner_user_id, updated_at DESC);
+
 -- projects CREATE was moved earlier in this batch (above the
 -- ALTER TABLE projects block) so the ALTERs and the foreign keys
 -- on iosdist_agent_builds / project_research_runs all see it.

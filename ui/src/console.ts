@@ -5,10 +5,9 @@
 // an xterm bound to the byte-bridge WS that was already used by the
 // single-modal shell flow (host_shell_handlers.go).
 //
-// MVP scope: pure browser state. Layout = grid auto-sized by the
-// toolbar's pane count selector. No persistence (refresh = blank
-// panes). No drag/resize. No input broadcast. Each pane closes
-// independently when its WS terminates or the user clicks ×.
+// Layouts are saved per-user-per-workspace and recallable from the
+// "已保存" dropdown. Loading a saved layout auto-starts every pane's
+// shell — the operator doesn't have to click "Start" N times.
 
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -17,28 +16,42 @@ import "@xterm/xterm/css/xterm.css";
 
 import { fetchHosts, fetchHostSkillsForHost, openHostShell } from "./api/hosts.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
+import {
+  createConsoleLayout,
+  deleteConsoleLayout,
+  fetchConsoleLayouts,
+  updateConsoleLayout,
+} from "./api/console-layouts.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import { byId } from "./lib/dom.js";
 import type { Host, HostSkill } from "./types/hosts.js";
+import type { ConsoleLayout, ConsolePaneConfig } from "./types/console.js";
 
 initStoredTheme();
 bindThemeSync();
 
 const grid = byId<HTMLElement>("consoleGrid");
 const layoutSelect = byId<HTMLSelectElement>("consoleLayoutSelect");
+const savedSelect = byId<HTMLSelectElement>("consoleSavedSelect");
+const saveBtn = byId<HTMLButtonElement>("consoleSaveBtn");
+const deleteBtn = byId<HTMLButtonElement>("consoleDeleteBtn");
 const closeAllBtn = byId<HTMLButtonElement>("consoleCloseAllBtn");
 const logoutBtn = byId<HTMLButtonElement>("logoutBtn");
 
 let hosts: Host[] = [];
 const skillsByHost = new Map<string, HostSkill[]>();
 const activePanes = new Map<string, ConsolePane>(); // pane_id → pane
+const savedLayouts = new Map<number, ConsoleLayout>();
 
 // Console pane: one tile of the grid. Owns its DOM node, xterm,
 // WS, and the "empty picker" state.
 class ConsolePane {
   readonly id: string;
   readonly root: HTMLElement;
+  // Tracked so saveCurrentLayout() can serialize the grid.
+  currentHostId?: string;
+  currentSkillId?: number;
   private titleEl: HTMLElement;
   private bodyEl: HTMLElement;
   private term?: Terminal;
@@ -46,7 +59,7 @@ class ConsolePane {
   private ws?: WebSocket;
   private resizeObs?: ResizeObserver;
 
-  constructor(id: string) {
+  constructor(id: string, autofill?: { hostId: string; hostSkillId: number }) {
     this.id = id;
     this.root = document.createElement("div");
     this.root.className = "console-pane";
@@ -68,7 +81,16 @@ class ConsolePane {
       ensurePaneCount();
     });
 
-    this.renderPicker();
+    if (autofill) {
+      const hostLabel = hosts.find((h) => h.id === autofill.hostId)?.name || autofill.hostId;
+      this.titleEl.textContent = `${hostLabel} · 启动中...`;
+      this.bodyEl.innerHTML = `<div class="console-pane-empty"><div>启动中...</div></div>`;
+      void this.connect(autofill.hostId, autofill.hostSkillId).catch((err) => {
+        this.renderLoadError(autofill.hostId, autofill.hostSkillId, err);
+      });
+    } else {
+      this.renderPicker();
+    }
   }
 
   private renderPicker(): void {
@@ -137,6 +159,23 @@ class ConsolePane {
     });
   }
 
+  private renderLoadError(hostId: string, skillId: number, err: unknown): void {
+    const msg = err instanceof Error ? err.message : String(err);
+    this.titleEl.textContent = `${hostId} · 失败`;
+    this.bodyEl.innerHTML = `
+      <div class="console-pane-empty">
+        <div style="color:#fca5a5;">无法启动 host=${escapeHTML(hostId)} skill=${skillId}</div>
+        <div style="font-size:11px; color:#94a3b8;">${escapeHTML(msg)}</div>
+        <button type="button" class="btn-inline btn-secondary" data-pane-repick>重新选择</button>
+      </div>
+    `;
+    this.bodyEl.querySelector<HTMLButtonElement>("[data-pane-repick]")?.addEventListener("click", () => {
+      this.currentHostId = undefined;
+      this.currentSkillId = undefined;
+      this.renderPicker();
+    });
+  }
+
   private async connect(hostId: string, skillId: number): Promise<void> {
     const host = hosts.find((h) => h.id === hostId);
     const fit = new FitAddon();
@@ -145,6 +184,8 @@ class ConsolePane {
     if (!response.ok || !data.ws_url) {
       throw new Error(data.error || `HTTP ${response.status}`);
     }
+    this.currentHostId = hostId;
+    this.currentSkillId = skillId;
 
     // Tear down the picker and put a fresh terminal in.
     this.bodyEl.innerHTML = `<div class="console-pane-term" data-pane-term></div>`;
@@ -231,10 +272,15 @@ class ConsolePane {
   }
 }
 
+function gridColsFor(paneCount: number): number {
+  if (paneCount <= 1) return 1;
+  if (paneCount <= 4) return 2;
+  return 3;
+}
+
 function ensurePaneCount(): void {
   const target = Number(layoutSelect.value || 4);
-  const cols = target <= 1 ? 1 : target <= 4 ? 2 : 3;
-  grid.dataset.cols = String(cols);
+  grid.dataset.cols = String(gridColsFor(target));
 
   while (activePanes.size < target) {
     const id = "p" + Math.random().toString(36).slice(2, 8);
@@ -255,6 +301,137 @@ function ensurePaneCount(): void {
   }
 }
 
+// Pick a layout-count select value matching this pane count, so the
+// existing `data-cols` mapping stays the single source of truth.
+function nearestLayoutCount(n: number): number {
+  const known = [1, 2, 3, 4, 6, 9];
+  for (const v of known) {
+    if (v >= n) return v;
+  }
+  return known[known.length - 1];
+}
+
+function disposeAllPanes(): void {
+  activePanes.forEach((p) => {
+    p.dispose();
+    p.root.remove();
+  });
+  activePanes.clear();
+}
+
+function loadLayout(layout: ConsoleLayout): void {
+  const panes = layout.panes_config || [];
+  if (panes.length === 0) {
+    alert("空布局，未生效");
+    return;
+  }
+  disposeAllPanes();
+  const target = nearestLayoutCount(panes.length);
+  layoutSelect.value = String(target);
+  grid.dataset.cols = String(gridColsFor(target));
+
+  for (const cfg of panes) {
+    const id = "p" + Math.random().toString(36).slice(2, 8);
+    const pane = new ConsolePane(id, { hostId: cfg.host_id, hostSkillId: cfg.host_skill_id });
+    activePanes.set(id, pane);
+    grid.appendChild(pane.root);
+  }
+  // Fill remaining slots (e.g. layout has 3 panes but layoutSelect maps to 4)
+  // with empty pickers so the grid looks consistent.
+  while (activePanes.size < target) {
+    const id = "p" + Math.random().toString(36).slice(2, 8);
+    const pane = new ConsolePane(id);
+    activePanes.set(id, pane);
+    grid.appendChild(pane.root);
+  }
+}
+
+function refreshSavedSelect(selectedId?: number): void {
+  const opts: string[] = [`<option value="">— 选择已保存的布局 —</option>`];
+  const items = Array.from(savedLayouts.values()).sort((a, b) =>
+    a.updated_at < b.updated_at ? 1 : -1,
+  );
+  for (const l of items) {
+    const sel = selectedId && l.id === selectedId ? " selected" : "";
+    opts.push(`<option value="${l.id}"${sel}>${escapeHTML(l.name)}</option>`);
+  }
+  savedSelect.innerHTML = opts.join("");
+  deleteBtn.disabled = !savedSelect.value;
+}
+
+async function refreshSavedLayouts(selectedId?: number): Promise<void> {
+  const { response, data } = await fetchConsoleLayouts();
+  savedLayouts.clear();
+  if (response.ok && data.layouts) {
+    for (const l of data.layouts) {
+      savedLayouts.set(l.id, l);
+    }
+  }
+  refreshSavedSelect(selectedId);
+}
+
+function currentPanesConfig(): ConsolePaneConfig[] {
+  const panes: ConsolePaneConfig[] = [];
+  // Iterate in DOM order so the saved layout matches what the
+  // operator sees on screen.
+  for (const child of Array.from(grid.children) as HTMLElement[]) {
+    const paneId = child.dataset.paneId;
+    if (!paneId) continue;
+    const pane = activePanes.get(paneId);
+    if (!pane || !pane.currentHostId || !pane.currentSkillId) continue;
+    panes.push({ host_id: pane.currentHostId, host_skill_id: pane.currentSkillId });
+  }
+  return panes;
+}
+
+async function saveCurrentLayout(): Promise<void> {
+  const panes = currentPanesConfig();
+  if (panes.length === 0) {
+    alert("没有可保存的活动 pane（请先启动至少一个 shell/nanokdp）");
+    return;
+  }
+  // If a layout is currently selected, default to updating it; allow
+  // rename. Otherwise prompt for a new name.
+  const selectedId = Number(savedSelect.value || 0);
+  const existing = selectedId ? savedLayouts.get(selectedId) : undefined;
+  const defaultName = existing?.name || `布局 ${new Date().toLocaleString()}`;
+  const name = window.prompt("布局名称", defaultName);
+  if (!name) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
+
+  if (existing && trimmed === existing.name) {
+    const { response, data } = await updateConsoleLayout(existing.id, { panes_config: panes });
+    if (!response.ok) {
+      alert(`保存失败: ${data.error || response.status}`);
+      return;
+    }
+    await refreshSavedLayouts(existing.id);
+  } else {
+    const { response, data } = await createConsoleLayout({ name: trimmed, panes_config: panes });
+    if (!response.ok) {
+      const hint = response.status === 409 ? "已存在同名布局，请换一个名字" : data.error;
+      alert(`保存失败: ${hint || response.status}`);
+      return;
+    }
+    await refreshSavedLayouts(data.layout?.id);
+  }
+}
+
+async function deleteSelectedLayout(): Promise<void> {
+  const id = Number(savedSelect.value || 0);
+  if (!id) return;
+  const layout = savedLayouts.get(id);
+  if (!layout) return;
+  if (!window.confirm(`确定删除布局 "${layout.name}"？`)) return;
+  const { response, data } = await deleteConsoleLayout(id);
+  if (!response.ok) {
+    alert(`删除失败: ${data.error || response.status}`);
+    return;
+  }
+  await refreshSavedLayouts();
+}
+
 async function bootstrap(): Promise<void> {
   await hydrateSiteBrand();
   const { response: meRes, data: me } = await fetchCurrentUser();
@@ -271,18 +448,28 @@ async function bootstrap(): Promise<void> {
 
   layoutSelect.addEventListener("change", () => ensurePaneCount());
   closeAllBtn.addEventListener("click", () => {
-    activePanes.forEach((p) => {
-      p.dispose();
-      p.root.remove();
-    });
-    activePanes.clear();
+    disposeAllPanes();
     ensurePaneCount();
+  });
+  savedSelect.addEventListener("change", () => {
+    deleteBtn.disabled = !savedSelect.value;
+    const id = Number(savedSelect.value || 0);
+    if (!id) return;
+    const layout = savedLayouts.get(id);
+    if (layout) loadLayout(layout);
+  });
+  saveBtn.addEventListener("click", () => {
+    void saveCurrentLayout();
+  });
+  deleteBtn.addEventListener("click", () => {
+    void deleteSelectedLayout();
   });
   logoutBtn.addEventListener("click", async () => {
     await logout();
     window.location.href = "/login.html";
   });
 
+  await refreshSavedLayouts();
   ensurePaneCount();
 }
 

@@ -131,6 +131,13 @@
               <option value="9">3×3</option>
             </select>
           </label>
+          <label style="font-size:12px;">已保存
+            <select id="consoleSavedSelect" style="margin-left:4px; min-width:140px;">
+              <option value="">— 未保存的布局 —</option>
+            </select>
+          </label>
+          <button id="consoleSaveBtn" class="btn-inline btn-secondary" type="button" title="保存当前布局">💾 保存</button>
+          <button id="consoleDeleteBtn" class="btn-inline btn-secondary" type="button" disabled title="删除选中的已保存布局">🗑</button>
           <button id="consoleCloseAllBtn" class="btn-inline btn-secondary" type="button">关闭全部</button>
           <a class="lp-topbar-back" href="/hosts.html">主机</a>
         </div>
