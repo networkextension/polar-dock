@@ -862,6 +862,11 @@ func (s *Server) registerRoutes() {
 		api.POST("/hosts/:id/skills/:skillId/shell/open", s.AuthMiddleware(), s.handleHostShellOpen)
 		api.GET("/hosts/:id/skills/shell/sessions", s.AuthMiddleware(), s.handleHostShellSessions)
 		api.DELETE("/hosts/:id/skills/shell/sessions/:run_id", s.AuthMiddleware(), s.handleHostShellKick)
+		// /console.html named layouts (per workspace + per user).
+		api.GET("/console/layouts", s.AuthMiddleware(), s.handleConsoleLayoutList)
+		api.POST("/console/layouts", s.AuthMiddleware(), s.handleConsoleLayoutCreate)
+		api.PATCH("/console/layouts/:layoutId", s.AuthMiddleware(), s.handleConsoleLayoutUpdate)
+		api.DELETE("/console/layouts/:layoutId", s.AuthMiddleware(), s.handleConsoleLayoutDelete)
 		// projects (workspace-scoped product container with AI
 		// requirement decomposition + plan generation).
 		api.GET("/projects", s.AuthMiddleware(), s.handleProjectList)
