@@ -53,8 +53,9 @@ type shellSession struct {
 // pointer is the identity — attach/detach use ptr equality to avoid
 // a stale defer detaching a freshly-replaced bridge.
 type shellBridge struct {
-	cancel    func()
-	eventSink chan skillEventFrame
+	cancel     func()
+	eventSink  chan skillEventFrame
+	stdoutSink chan []byte
 }
 
 type shellSessionRegistry struct {
@@ -192,6 +193,24 @@ func (r *shellSessionRegistry) forwardEvent(runID int64, ev skillEventFrame) {
 	}
 	select {
 	case sink <- ev:
+	default:
+	}
+}
+
+// forwardStdout posts bytes to the currently-attached bridge with
+// drop-on-full. Called by the supervisor.
+func (r *shellSessionRegistry) forwardStdout(runID int64, chunk []byte) {
+	r.mu.Lock()
+	sink := chan []byte(nil)
+	if sess, ok := r.byRun[runID]; ok && sess.bridge != nil {
+		sink = sess.bridge.stdoutSink
+	}
+	r.mu.Unlock()
+	if sink == nil {
+		return
+	}
+	select {
+	case sink <- chunk:
 	default:
 	}
 }

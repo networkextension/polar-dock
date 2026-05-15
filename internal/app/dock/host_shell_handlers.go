@@ -303,25 +303,19 @@ func (s *Server) handleHostShellWS(c *gin.Context) {
 	bridgeCtx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 
-	// Bridge slot: attach this WS's cancel + event-sink to the
-	// supervisor's fan-out. If a previous browser is attached, evict
-	// it (last writer wins — refresh-then-reconnect kicks the stale
-	// tab gracefully).
+	// Bridge slot: the supervisor owns the agent channels and forwards
+	// stdout + events to our local sinks. If a previous browser is
+	// attached, evict it (last writer wins — refresh-then-reconnect
+	// kicks the stale tab gracefully).
 	bridge := &shellBridge{
-		cancel:    cancel,
-		eventSink: make(chan skillEventFrame, 16),
+		cancel:     cancel,
+		eventSink:  make(chan skillEventFrame, 16),
+		stdoutSink: make(chan []byte, 256),
 	}
 	if prev := s.shellSessions.attachBridge(runID, bridge); prev != nil && prev.cancel != nil {
 		prev.cancel()
 	}
 	defer s.shellSessions.detachBridge(runID, bridge)
-
-	// Stdout: bridge tracks/untracks directly. After detach, agent
-	// stdout is dropped on the dock side (no replay). Acceptable for
-	// MVP — the PTY itself stays alive so reattach lands on the live
-	// shell prompt.
-	stdoutCh := conn.trackSkillStdout(runID)
-	defer conn.untrackSkillStdout(runID)
 
 	// Bridge close does NOT send skill.stop and does NOT finalize the
 	// run — both are the supervisor's job (on terminal event) or
@@ -384,7 +378,7 @@ func (s *Server) handleHostShellWS(c *gin.Context) {
 	defer pingTicker.Stop()
 	for {
 		select {
-		case chunk, ok := <-stdoutCh:
+		case chunk, ok := <-bridge.stdoutSink:
 			if !ok {
 				return
 			}

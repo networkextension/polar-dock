@@ -25,8 +25,14 @@ func (s *Server) startShellSupervisor(conn *agentConn, runID int64) {
 }
 
 func (s *Server) runShellSupervisor(conn *agentConn, runID int64) {
+	// Own both channels for the run's lifetime — the bridge no longer
+	// calls track/untrack directly, eliminating the race where a
+	// detaching old bridge would untrack the new bridge's freshly-
+	// installed channel.
 	eventCh := conn.trackSkillPending(runID)
 	defer conn.untrackSkillPending(runID)
+	stdoutCh := conn.trackSkillStdout(runID)
+	defer conn.untrackSkillStdout(runID)
 
 	cleanup := func(state, reason string) {
 		_ = s.finalizeHostSkillRun(runID, state, reason, time.Now().UTC())
@@ -40,17 +46,21 @@ func (s *Server) runShellSupervisor(conn *agentConn, runID int64) {
 		select {
 		case ev, ok := <-eventCh:
 			if !ok {
-				// agentConn closed its dispatcher; treat as agent gone.
 				cleanup("ended", "agent_disconnect")
 				return
 			}
-			// Forward to attached bridge (drop-on-full inside).
 			s.shellSessions.forwardEvent(runID, ev)
 			if ev.EventKind == "exit" {
 				reason, _ := ev.Data["reason"].(string)
 				cleanup("ended", reason)
 				return
 			}
+		case chunk, ok := <-stdoutCh:
+			if !ok {
+				cleanup("ended", "agent_disconnect")
+				return
+			}
+			s.shellSessions.forwardStdout(runID, chunk)
 		case <-conn.close:
 			cleanup("ended", "agent_disconnect")
 			return
