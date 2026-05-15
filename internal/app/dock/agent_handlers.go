@@ -333,6 +333,14 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 	_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		// Heartbeat: bump hosts.last_seen_at so /hosts.html flips
+		// green. Without this the host shows green right after
+		// skill.advertise, then ages back to gray once the UI's
+		// 60s online-window expires — even though the WS is alive
+		// and the agent is happily pinging.
+		if ac.hostID != "" {
+			_ = s.touchHostLastSeen(ac.hostID, time.Now().UTC())
+		}
 		return nil
 	})
 	for {
