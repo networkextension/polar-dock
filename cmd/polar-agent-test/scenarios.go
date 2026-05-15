@@ -156,6 +156,37 @@ var scenarios = []scenario{
 		desc: "malformed JSON line → error.code=-32700 (Parse error)",
 		run:  scenarioMCPParseError,
 	},
+	// --- MCP P0b — adapter framework + stub adapter ---
+	{
+		name: "mcp-adapter-default",
+		desc: "no adapter config → defaults to ['echo']; tools/list contains echo only",
+		run:  scenarioMCPAdapterDefault,
+	},
+	{
+		name: "mcp-adapter-stub-only",
+		desc: "adapters:['stub'] → tools/list shows stub.add / stub.error / stub.delay_ms, no echo",
+		run:  scenarioMCPAdapterStubOnly,
+	},
+	{
+		name: "mcp-adapter-multi",
+		desc: "adapters:['echo','stub'] → tools/list contains both adapters' tools",
+		run:  scenarioMCPAdapterMulti,
+	},
+	{
+		name: "mcp-stub-add",
+		desc: "stub.add {a:3,b:4} → result with sum=7",
+		run:  scenarioMCPStubAdd,
+	},
+	{
+		name: "mcp-stub-error",
+		desc: "stub.error → JSON-RPC error code -32000 (tool execution failure)",
+		run:  scenarioMCPStubError,
+	},
+	{
+		name: "mcp-adapter-unknown",
+		desc: "adapters:['nonesuch'] → run starts with empty catalogue + skipped_adapters in state",
+		run:  scenarioMCPAdapterUnknown,
+	},
 }
 
 func scenarioPing(ctx context.Context, c *client) error {
@@ -1059,6 +1090,203 @@ func scenarioMCPParseError(ctx context.Context, c *client) error {
 		}
 	}
 	return fmt.Errorf("expected parse error (-32700) reply within 3s")
+}
+
+// startMCPRunWithAdapters dispatches skill.start kind=mcp-server with
+// an explicit adapter list. Use empty slice to test the "no config →
+// defaults to ['echo']" path.
+func startMCPRunWithAdapters(c *client, runID int64, adapters []string) error {
+	cfgMap := map[string]any{}
+	if len(adapters) > 0 {
+		cfgMap["adapters"] = adapters
+	}
+	cfg, _ := json.Marshal(cfgMap)
+	if err := c.send(envelope{
+		"kind":       "skill.start",
+		"run_id":     runID,
+		"skill_kind": "mcp-server",
+		"config":     json.RawMessage(cfg),
+	}); err != nil {
+		return err
+	}
+	time.Sleep(150 * time.Millisecond)
+	return nil
+}
+
+func toolNamesFromList(resp *mcpResponse) ([]string, error) {
+	if resp.Error != nil {
+		return nil, fmt.Errorf("tools/list error: %d %s", resp.Error.Code, resp.Error.Message)
+	}
+	var result struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	names := make([]string, len(result.Tools))
+	for i, t := range result.Tools {
+		names[i] = t.Name
+	}
+	return names, nil
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func scenarioMCPAdapterDefault(ctx context.Context, c *client) error {
+	const runID = 310
+	// No "adapters" key → default ["echo"].
+	if err := startMCPRunWithAdapters(c, runID, nil); err != nil {
+		return err
+	}
+	resp, err := sendMCPRequest(c, runID, 1, "tools/list", nil, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	tools, err := toolNamesFromList(resp)
+	if err != nil {
+		return err
+	}
+	if !containsString(tools, "echo") {
+		return fmt.Errorf("default config missing echo tool; got %v", tools)
+	}
+	if containsString(tools, "stub.add") {
+		return fmt.Errorf("default config unexpectedly includes stub tools; got %v", tools)
+	}
+	return nil
+}
+
+func scenarioMCPAdapterStubOnly(ctx context.Context, c *client) error {
+	const runID = 311
+	if err := startMCPRunWithAdapters(c, runID, []string{"stub"}); err != nil {
+		return err
+	}
+	resp, err := sendMCPRequest(c, runID, 1, "tools/list", nil, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	tools, err := toolNamesFromList(resp)
+	if err != nil {
+		return err
+	}
+	for _, want := range []string{"stub.add", "stub.error", "stub.delay_ms"} {
+		if !containsString(tools, want) {
+			return fmt.Errorf("stub-only config missing %s; got %v", want, tools)
+		}
+	}
+	if containsString(tools, "echo") {
+		return fmt.Errorf("stub-only config unexpectedly includes echo; got %v", tools)
+	}
+	return nil
+}
+
+func scenarioMCPAdapterMulti(ctx context.Context, c *client) error {
+	const runID = 312
+	if err := startMCPRunWithAdapters(c, runID, []string{"echo", "stub"}); err != nil {
+		return err
+	}
+	resp, err := sendMCPRequest(c, runID, 1, "tools/list", nil, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	tools, err := toolNamesFromList(resp)
+	if err != nil {
+		return err
+	}
+	for _, want := range []string{"echo", "stub.add", "stub.error", "stub.delay_ms"} {
+		if !containsString(tools, want) {
+			return fmt.Errorf("multi config missing %s; got %v", want, tools)
+		}
+	}
+	return nil
+}
+
+func scenarioMCPStubAdd(ctx context.Context, c *client) error {
+	const runID = 313
+	if err := startMCPRunWithAdapters(c, runID, []string{"stub"}); err != nil {
+		return err
+	}
+	resp, err := sendMCPRequest(c, runID, 1, "tools/call", map[string]any{
+		"name":      "stub.add",
+		"arguments": map[string]any{"a": 3, "b": 4},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("stub.add error: %d %s", resp.Error.Code, resp.Error.Message)
+	}
+	var result struct {
+		Sum     float64          `json:"sum"`
+		Content []map[string]any `json:"content"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return err
+	}
+	if result.Sum != 7 {
+		return fmt.Errorf("stub.add sum mismatch: got %v, want 7", result.Sum)
+	}
+	if len(result.Content) == 0 {
+		return fmt.Errorf("missing content array")
+	}
+	if text, _ := result.Content[0]["text"].(string); text != "7" {
+		return fmt.Errorf("stub.add content text mismatch: got %q, want '7'", text)
+	}
+	return nil
+}
+
+func scenarioMCPStubError(ctx context.Context, c *client) error {
+	const runID = 314
+	if err := startMCPRunWithAdapters(c, runID, []string{"stub"}); err != nil {
+		return err
+	}
+	resp, err := sendMCPRequest(c, runID, 1, "tools/call", map[string]any{
+		"name":      "stub.error",
+		"arguments": map[string]any{},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	if resp.Error == nil {
+		return fmt.Errorf("expected JSON-RPC error from stub.error, got result: %s", string(resp.Result))
+	}
+	if resp.Error.Code != -32000 {
+		return fmt.Errorf("expected -32000, got %d (%s)", resp.Error.Code, resp.Error.Message)
+	}
+	if !strings.Contains(resp.Error.Message, "intentional failure") {
+		return fmt.Errorf("expected 'intentional failure' in message, got: %q", resp.Error.Message)
+	}
+	return nil
+}
+
+func scenarioMCPAdapterUnknown(ctx context.Context, c *client) error {
+	const runID = 315
+	// Adapters list with a name that nobody registered. Skill should
+	// still start (soft-fail on the missing one), just with an empty
+	// catalogue + skipped_adapters in the state event.
+	if err := startMCPRunWithAdapters(c, runID, []string{"nonesuch-adapter-zzz"}); err != nil {
+		return err
+	}
+	resp, err := sendMCPRequest(c, runID, 1, "tools/list", nil, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	tools, err := toolNamesFromList(resp)
+	if err != nil {
+		return err
+	}
+	if len(tools) > 0 {
+		return fmt.Errorf("expected empty tools catalogue when all adapters skipped, got %v", tools)
+	}
+	return nil
 }
 
 func lastLine(s string) string {

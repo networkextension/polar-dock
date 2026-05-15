@@ -49,13 +49,13 @@ const (
 	mcpHardCapSec      = 21600
 )
 
-// MCPConfig is the per-run config inside skill.start. P0a has no
-// configurable options — adapters list lands in P0b. The struct exists
-// so future fields can be added without breaking the wire.
+// MCPConfig is the per-run config inside skill.start.
 type MCPConfig struct {
-	// Adapters: list of adapter names to load. Ignored in P0a (only
-	// the built-in echo tool is available). Will be honored in P0b
-	// when the gdb-mi adapter lands.
+	// Adapters: list of adapter names to load. Default ["echo"]
+	// when empty. Each name must be a registered MCPAdapterFactory
+	// (see mcp_adapter.go's RegisterMCPAdapter). Unknown / unavailable
+	// adapters are logged + skipped rather than aborting the whole
+	// MCP server.
 	Adapters []string `json:"adapters,omitempty"`
 }
 
@@ -72,11 +72,11 @@ func (m *mcpSkill) Version() string { return mcpServerVersion }
 
 func (m *mcpSkill) Capabilities() map[string]any {
 	return map[string]any{
-		"protocol":         "jsonrpc-ndjson",
-		"mcp_version":      mcpProtocolVersion,
-		"tools":            mcpBuiltinToolNames(),
-		"default_idle_sec": mcpDefaultIdleSec,
-		"hard_cap_sec":     mcpHardCapSec,
+		"protocol":            "jsonrpc-ndjson",
+		"mcp_version":         mcpProtocolVersion,
+		"available_adapters":  registeredAdapterNames(),
+		"default_idle_sec":    mcpDefaultIdleSec,
+		"hard_cap_sec":        mcpHardCapSec,
 	}
 }
 
@@ -95,10 +95,32 @@ func (m *mcpSkill) Start(ctx context.Context, runID int64, config json.RawMessag
 			return nil, fmt.Errorf("mcp: parse config: %w", err)
 		}
 	}
+	// Default adapter set when operator didn't specify — keep the
+	// P0a-equivalent behavior of "echo tool available out of the box".
+	if len(cfg.Adapters) == 0 {
+		cfg.Adapters = []string{"echo"}
+	}
+
+	// Instantiate each requested adapter. Soft-fail on any that aren't
+	// available (e.g. gdb not on PATH) — partial catalogues beat no
+	// catalogue. Track loaded + skipped for the state event.
+	adapters := []MCPAdapter{}
+	skipped := map[string]string{}
+	for _, name := range cfg.Adapters {
+		ad, err := newMCPAdapter(name)
+		if err != nil {
+			skipped[name] = err.Error()
+			log.Printf("[mcp] run=%d adapter %q skipped: %v", runID, name, err)
+			continue
+		}
+		adapters = append(adapters, ad)
+	}
+
 	runCtx, cancel := context.WithCancel(ctx)
 	run := &mcpRun{
 		id:        runID,
 		cfg:       cfg,
+		adapters:  adapters,
 		events:    make(chan Event, 64),
 		ctxCancel: cancel,
 		inBuf:     &bytes.Buffer{},
@@ -106,10 +128,12 @@ func (m *mcpSkill) Start(ctx context.Context, runID int64, config json.RawMessag
 	}
 	run.lastActivity.Store(time.Now().UnixNano())
 	run.send(Event{Kind: EventState, Data: map[string]any{
-		"status":       "running",
-		"mcp_version":  mcpProtocolVersion,
-		"server_name":  mcpServerName,
-		"tools":        mcpBuiltinToolNames(),
+		"status":        "running",
+		"mcp_version":   mcpProtocolVersion,
+		"server_name":   mcpServerName,
+		"loaded_adapters": run.adapterNames(),
+		"skipped_adapters": skipped,
+		"tools":         run.allToolNames(),
 	}})
 	go run.idleWatchdog(runCtx)
 	return run, nil
@@ -119,8 +143,9 @@ func (m *mcpSkill) Start(ctx context.Context, runID int64, config json.RawMessag
 // WriteInput (line-delimited NDJSON over the skill's stdin), responses
 // stream out as EventStdout.
 type mcpRun struct {
-	id  int64
-	cfg MCPConfig
+	id       int64
+	cfg      MCPConfig
+	adapters []MCPAdapter
 
 	events    chan Event
 	ctxCancel context.CancelFunc
@@ -132,6 +157,43 @@ type mcpRun struct {
 	lastActivity atomic.Int64
 	stopOnce     sync.Once
 	closed       atomic.Bool
+}
+
+func (r *mcpRun) adapterNames() []string {
+	out := make([]string, len(r.adapters))
+	for i, a := range r.adapters {
+		out[i] = a.Name()
+	}
+	return out
+}
+
+func (r *mcpRun) allTools() []MCPToolDef {
+	out := []MCPToolDef{}
+	for _, a := range r.adapters {
+		out = append(out, a.Tools()...)
+	}
+	return out
+}
+
+func (r *mcpRun) allToolNames() []string {
+	out := []string{}
+	for _, a := range r.adapters {
+		for _, t := range a.Tools() {
+			out = append(out, t.Name)
+		}
+	}
+	return out
+}
+
+func (r *mcpRun) findToolAdapter(toolName string) MCPAdapter {
+	for _, a := range r.adapters {
+		for _, t := range a.Tools() {
+			if t.Name == toolName {
+				return a
+			}
+		}
+	}
+	return nil
 }
 
 func (r *mcpRun) ID() int64                { return r.id }
@@ -231,9 +293,20 @@ func (r *mcpRun) dispatchLine(line []byte) {
 		if isNotif {
 			return
 		}
-		r.replyResult(req.ID, map[string]any{
-			"tools": mcpBuiltinToolDefs(),
-		})
+		// Marshal each adapter's tool defs verbatim into the response.
+		// Tools across adapters merge into a single flat catalogue —
+		// the adapter that owns a tool is implicit in the tool name
+		// (e.g. "stub.add" belongs to the "stub" adapter); operators
+		// don't need to address adapters explicitly when calling.
+		toolList := []map[string]any{}
+		for _, t := range r.allTools() {
+			toolList = append(toolList, map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"inputSchema": t.InputSchema,
+			})
+		}
+		r.replyResult(req.ID, map[string]any{"tools": toolList})
 	case "tools/call":
 		if isNotif {
 			return
@@ -246,12 +319,12 @@ func (r *mcpRun) dispatchLine(line []byte) {
 			r.replyError(req.ID, -32602, "invalid params: "+err.Error())
 			return
 		}
-		tool, ok := mcpBuiltinToolByName(p.Name)
-		if !ok {
+		adapter := r.findToolAdapter(p.Name)
+		if adapter == nil {
 			r.replyError(req.ID, -32601, "unknown tool: "+p.Name)
 			return
 		}
-		result, callErr := tool.Call(p.Arguments)
+		result, callErr := adapter.Call(p.Name, p.Arguments)
 		if callErr != nil {
 			r.replyError(req.ID, -32000, callErr.Error())
 			return
@@ -328,6 +401,14 @@ func (r *mcpRun) idleWatchdog(ctx context.Context) {
 func (r *mcpRun) stop(reason string) error {
 	r.stopOnce.Do(func() {
 		r.closed.Store(true)
+		// Close adapters in reverse-load order so a later adapter's
+		// resources (e.g. a subprocess started AFTER something else
+		// it depends on) get torn down first.
+		for i := len(r.adapters) - 1; i >= 0; i-- {
+			if err := r.adapters[i].Close(); err != nil {
+				log.Printf("[mcp] run=%d adapter %q close: %v", r.id, r.adapters[i].Name(), err)
+			}
+		}
 		r.send(Event{Kind: EventExit, Data: map[string]any{
 			"ok":     reason == "operator" || reason == "idle" || reason == "hard_cap",
 			"reason": reason,
@@ -353,72 +434,6 @@ func (r *mcpRun) send(ev Event) {
 	}
 }
 
-// ---- built-in tools registry ----------------------------------------
-
-type mcpTool struct {
-	Name        string
-	Description string
-	InputSchema map[string]any
-	Call        func(args json.RawMessage) (map[string]any, error)
-}
-
-// mcpBuiltinTools is the P0a tool set — just `echo`. Adapter-backed
-// tools (gdb.run, gdb.read_register, lldb.*, ida.*) land in P0b+.
-var mcpBuiltinTools = []mcpTool{
-	{
-		Name:        "echo",
-		Description: "Echo the input message back. Used to validate the MCP transport end-to-end without any adapter dependency.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"message": map[string]any{
-					"type":        "string",
-					"description": "The text to echo back.",
-				},
-			},
-			"required": []string{"message"},
-		},
-		Call: func(args json.RawMessage) (map[string]any, error) {
-			var p struct {
-				Message string `json:"message"`
-			}
-			if err := json.Unmarshal(args, &p); err != nil {
-				return nil, fmt.Errorf("invalid arguments: %w", err)
-			}
-			return map[string]any{
-				"content": []map[string]any{
-					{"type": "text", "text": p.Message},
-				},
-			}, nil
-		},
-	},
-}
-
-func mcpBuiltinToolNames() []string {
-	out := make([]string, len(mcpBuiltinTools))
-	for i, t := range mcpBuiltinTools {
-		out[i] = t.Name
-	}
-	return out
-}
-
-func mcpBuiltinToolDefs() []map[string]any {
-	out := make([]map[string]any, len(mcpBuiltinTools))
-	for i, t := range mcpBuiltinTools {
-		out[i] = map[string]any{
-			"name":        t.Name,
-			"description": t.Description,
-			"inputSchema": t.InputSchema,
-		}
-	}
-	return out
-}
-
-func mcpBuiltinToolByName(name string) (*mcpTool, bool) {
-	for i := range mcpBuiltinTools {
-		if mcpBuiltinTools[i].Name == name {
-			return &mcpBuiltinTools[i], true
-		}
-	}
-	return nil, false
-}
+// Tools are owned by adapters (mcp_adapter_echo.go, mcp_adapter_stub.go,
+// future gdb/lldb/ida/frida/radare2). Skill dispatches via
+// mcpRun.findToolAdapter — see Start() for the load-from-config path.
