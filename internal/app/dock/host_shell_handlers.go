@@ -75,6 +75,10 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		Cwd            string            `json:"cwd"`
 		Env            map[string]string `json:"env"`
 		IdleTimeoutSec int               `json:"idle_timeout_sec"`
+		// Shell picker: "bash" / "zsh" / "sh". Empty / unknown → agent
+		// auto-picks. Whitelisted server-side too so an attacker
+		// can't smuggle an arbitrary binary path into the env.
+		Shell string `json:"shell"`
 		// P5 (Nanokdp): when the bound skill kind is nanokdp, these
 		// supersede the shell-specific fields above.
 		DevicePath string `json:"device_path"`
@@ -137,6 +141,9 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	}
 	if req.IdleTimeoutSec > 0 {
 		startCfg["idle_timeout_sec"] = req.IdleTimeoutSec
+	}
+	if pref := strings.ToLower(strings.TrimSpace(req.Shell)); pref == "bash" || pref == "zsh" || pref == "sh" {
+		startCfg["shell"] = pref
 	}
 	// P5: pass through device_path + baud when the bound skill is
 	// nanokdp. The req struct above doesn't yet have these fields;

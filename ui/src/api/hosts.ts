@@ -82,7 +82,7 @@ import type {
 export async function openHostShell(
   hostID: string,
   skillID: number,
-  body: { rows?: number; cols?: number; cwd?: string } = {},
+  body: { rows?: number; cols?: number; cwd?: string; shell?: string } = {},
 ) {
   return requestJson<ShellOpenResponse>(
     `/api/hosts/${encodeURIComponent(hostID)}/skills/${skillID}/shell/open`,

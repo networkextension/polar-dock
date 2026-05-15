@@ -94,6 +94,9 @@ class ConsolePane {
   }
 
   private renderPicker(): void {
+    // The start button is styled inline (not via .btn-* classes) so it
+    // pops on the dark pane background — the global secondary button
+    // uses surface-light tones that vanish on #0f172a.
     this.bodyEl.innerHTML = `
       <div class="console-pane-empty">
         <div>选择主机 + skill 启动</div>
@@ -104,19 +107,36 @@ class ConsolePane {
         <select data-pane-skill class="input" disabled style="max-width:240px;">
           <option value="">— skill —</option>
         </select>
-        <button type="button" class="btn-inline btn-secondary" data-pane-start disabled>启动</button>
+        <select data-pane-shell class="input" hidden style="max-width:240px;">
+          <option value="">默认 shell (auto)</option>
+          <option value="bash">bash</option>
+          <option value="zsh">zsh</option>
+          <option value="sh">sh</option>
+        </select>
+        <button type="button" data-pane-start disabled
+          style="padding:8px 24px;border:none;border-radius:8px;background:#16a34a;color:#fff;font-weight:600;font-size:13px;cursor:pointer;opacity:.5;">
+          启动
+        </button>
       </div>
     `;
 
     const hostSel = this.bodyEl.querySelector<HTMLSelectElement>("[data-pane-host]")!;
     const skillSel = this.bodyEl.querySelector<HTMLSelectElement>("[data-pane-skill]")!;
+    const shellSel = this.bodyEl.querySelector<HTMLSelectElement>("[data-pane-shell]")!;
     const startBtn = this.bodyEl.querySelector<HTMLButtonElement>("[data-pane-start]")!;
+
+    const setStartEnabled = (enabled: boolean) => {
+      startBtn.disabled = !enabled;
+      startBtn.style.opacity = enabled ? "1" : ".5";
+      startBtn.style.cursor = enabled ? "pointer" : "not-allowed";
+    };
 
     hostSel.addEventListener("change", async () => {
       const hostId = hostSel.value;
       skillSel.innerHTML = `<option value="">加载中...</option>`;
       skillSel.disabled = true;
-      startBtn.disabled = true;
+      shellSel.hidden = true;
+      setStartEnabled(false);
       if (!hostId) {
         skillSel.innerHTML = `<option value="">— skill —</option>`;
         return;
@@ -140,19 +160,22 @@ class ConsolePane {
     });
 
     skillSel.addEventListener("change", () => {
-      startBtn.disabled = !skillSel.value;
+      const selected = skillSel.selectedOptions[0]?.textContent || "";
+      shellSel.hidden = !selected.startsWith("shell");
+      setStartEnabled(!!skillSel.value);
     });
 
     startBtn.addEventListener("click", async () => {
       const hostId = hostSel.value;
       const skillId = Number(skillSel.value);
       if (!hostId || !skillId) return;
-      startBtn.disabled = true;
+      setStartEnabled(false);
       startBtn.textContent = "启动中...";
       try {
-        await this.connect(hostId, skillId);
+        const shellPref = shellSel.hidden ? undefined : shellSel.value || undefined;
+        await this.connect(hostId, skillId, shellPref);
       } catch (err) {
-        startBtn.disabled = false;
+        setStartEnabled(true);
         startBtn.textContent = "启动";
         alert(`启动失败: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -176,10 +199,11 @@ class ConsolePane {
     });
   }
 
-  private async connect(hostId: string, skillId: number): Promise<void> {
+  private async connect(hostId: string, skillId: number, shell?: string): Promise<void> {
     const host = hosts.find((h) => h.id === hostId);
     const fit = new FitAddon();
-    const proposed = { rows: 30, cols: 100 };
+    const proposed: { rows: number; cols: number; shell?: string } = { rows: 30, cols: 100 };
+    if (shell) proposed.shell = shell;
     const { response, data } = await openHostShell(hostId, skillId, proposed);
     if (!response.ok || !data.ws_url) {
       throw new Error(data.error || `HTTP ${response.status}`);
