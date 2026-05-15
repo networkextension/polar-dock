@@ -69,6 +69,14 @@
         position: absolute;
         inset: 0;
       }
+      /* xterm renders a hidden <textarea> for IME input + screen readers
+         at the cursor position. With our pane styles it occasionally
+         flashes visible until first layout. Force it invisible defensively. */
+      .console-pane-term .xterm-helper-textarea {
+        opacity: 0 !important;
+        pointer-events: none;
+        resize: none;
+      }
       .console-toolbar {
         display: flex;
         align-items: center;

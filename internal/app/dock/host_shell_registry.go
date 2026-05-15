@@ -30,8 +30,13 @@ var (
 )
 
 // shellSession is the dock-side handle for one open shell. Created by
-// handleHostShellOpen / handleHostShellWS, closed by either side
-// disconnecting. operatorUserID + openedAt feed the sessions list UI.
+// handleHostShellOpen, persists for the run's full lifetime (NOT just
+// for the lifetime of any one browser's WS). Operators can refresh
+// the page or close the tab without killing the PTY — a fresh WS to
+// the same run_id reattaches.
+//
+// operatorUserID + openedAt feed the sessions list UI; bridge points
+// to the currently-attached browser bridge (nil when detached).
 type shellSession struct {
 	RunID          int64     `json:"run_id"`
 	HostID         string    `json:"host_id"`
@@ -39,9 +44,17 @@ type shellSession struct {
 	OperatorUserID string    `json:"operator_user_id"`
 	OpenedAt       time.Time `json:"opened_at"`
 
-	// cancel is the byte bridge's context cancel. Calling it tears
-	// down both the browser-side and agent-side goroutines.
-	cancel func() `json:"-"`
+	// bridge is the live browser bridge; nil = detached. Mutated only
+	// under shellSessionRegistry.mu.
+	bridge *shellBridge `json:"-"`
+}
+
+// shellBridge is the dock-side handle to one attached browser. The
+// pointer is the identity — attach/detach use ptr equality to avoid
+// a stale defer detaching a freshly-replaced bridge.
+type shellBridge struct {
+	cancel    func()
+	eventSink chan skillEventFrame
 }
 
 type shellSessionRegistry struct {
@@ -117,6 +130,87 @@ func (r *shellSessionRegistry) get(runID int64) (*shellSession, bool) {
 	return sess, ok
 }
 
+// findActiveFor returns the most-recently-opened session belonging to
+// this operator on this (host, host_skill). Used by /shell/open to
+// dedupe: instead of dispatching a fresh skill.start every time, an
+// existing run is reused so refresh / re-pick lands the operator back
+// on their live PTY.
+func (r *shellSessionRegistry) findActiveFor(hostID string, hostSkillID int64, operatorUserID string) *shellSession {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var picked *shellSession
+	for _, s := range r.byHost[hostID] {
+		if s.HostSkillID != hostSkillID || s.OperatorUserID != operatorUserID {
+			continue
+		}
+		if picked == nil || s.OpenedAt.After(picked.OpenedAt) {
+			picked = s
+		}
+	}
+	return picked
+}
+
+// attachBridge installs a new bridge and returns the previous one if
+// any — caller invokes prev.cancel() to evict the old browser
+// (reattach = last writer wins).
+func (r *shellSessionRegistry) attachBridge(runID int64, b *shellBridge) *shellBridge {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	sess, ok := r.byRun[runID]
+	if !ok {
+		return nil
+	}
+	prev := sess.bridge
+	sess.bridge = b
+	return prev
+}
+
+// detachBridge clears the bridge slot iff the currently-installed
+// bridge is still ours — a fresh bridge that replaced us via attach
+// must not be evicted by our defer.
+func (r *shellSessionRegistry) detachBridge(runID int64, b *shellBridge) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	sess, ok := r.byRun[runID]
+	if !ok || sess.bridge != b {
+		return
+	}
+	sess.bridge = nil
+}
+
+// forwardEvent posts to the currently-attached bridge with drop-on-full.
+// Called by the supervisor; safe when no bridge is attached.
+func (r *shellSessionRegistry) forwardEvent(runID int64, ev skillEventFrame) {
+	r.mu.Lock()
+	sink := chan skillEventFrame(nil)
+	if sess, ok := r.byRun[runID]; ok && sess.bridge != nil {
+		sink = sess.bridge.eventSink
+	}
+	r.mu.Unlock()
+	if sink == nil {
+		return
+	}
+	select {
+	case sink <- ev:
+	default:
+	}
+}
+
+// snatchBridge clears + returns the current bridge. Used by the
+// supervisor on terminal events to evict the browser before cleaning
+// up the registry entry.
+func (r *shellSessionRegistry) snatchBridge(runID int64) *shellBridge {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	sess, ok := r.byRun[runID]
+	if !ok {
+		return nil
+	}
+	prev := sess.bridge
+	sess.bridge = nil
+	return prev
+}
+
 func (r *shellSessionRegistry) listByHost(hostID string) []shellSession {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -135,8 +229,10 @@ func (r *shellSessionRegistry) listByHost(hostID string) []shellSession {
 	return out
 }
 
-// kick calls the session's cancel func, which the byte bridge picks
-// up + tears down + removes from the registry on its way out.
+// kick cancels the attached bridge if any. The agent-side teardown
+// is the explicit responsibility of the caller (handleHostShellKick
+// dispatches skill.stop separately) — kick only severs the dock-side
+// bridge.
 func (r *shellSessionRegistry) kick(runID int64) error {
 	r.mu.Lock()
 	sess, ok := r.byRun[runID]
@@ -144,8 +240,8 @@ func (r *shellSessionRegistry) kick(runID int64) error {
 	if !ok {
 		return errShellSessionNotFound
 	}
-	if sess.cancel != nil {
-		sess.cancel()
+	if sess.bridge != nil && sess.bridge.cancel != nil {
+		sess.bridge.cancel()
 	}
 	return nil
 }
