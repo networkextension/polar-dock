@@ -181,7 +181,42 @@ function renderHostDetail(host: Host): void {
   hostsLastSeen.textContent = host.last_seen_at ? formatRelative(host.last_seen_at) + " （" + new Date(host.last_seen_at).toLocaleString() + "）" : "—";
   hostsLastSeenIP.textContent = host.last_seen_ip ? `IP: ${host.last_seen_ip}` : "IP: —";
 
+  renderHostMetricsSection(host);
+
   hostsDeleteBtn.hidden = false;
+}
+
+// macmon dashboard embed — only meaningful for darwin (macmon is
+// macOS-only). The Grafana URL assumes the dock host serves grafana at
+// /grafana/ and the dashboard is provisioned with uid=macmon-overview.
+// Iframe is the primary surface; the link is the fallback for browsers
+// that refuse the embed (X-Frame-Options) or when Grafana hasn't
+// enabled allow_embedding yet.
+function renderHostMetricsSection(host: Host): void {
+  const section = document.getElementById("hostsMetricsSection") as HTMLElement | null;
+  const frame = document.getElementById("hostsMetricsFrame") as HTMLIFrameElement | null;
+  const link = document.getElementById("hostsMetricsOpen") as HTMLAnchorElement | null;
+  const fallback = document.getElementById("hostsMetricsFallback") as HTMLElement | null;
+  if (!section || !frame || !link || !fallback) return;
+  if ((host.os || "").toLowerCase() !== "darwin") {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  fallback.hidden = true;
+  const dashURL = "/grafana/d/macmon-overview/macmon-overview?from=now-30m&theme=dark&refresh=10s";
+  // kiosk=tv strips the chrome (sidebar + topnav) for a clean embed.
+  frame.src = dashURL + "&kiosk=tv";
+  link.href = dashURL;
+  // X-Frame-Options refusal doesn't fire onerror reliably; use a
+  // load-timeout heuristic. If the iframe never reports loaded after
+  // 8s, surface the fallback hint.
+  let loaded = false;
+  const onLoad = () => { loaded = true; };
+  frame.addEventListener("load", onLoad, { once: true });
+  setTimeout(() => {
+    if (!loaded) fallback.hidden = false;
+  }, 8000);
 }
 
 async function loadHostSkillsForDetail(hostID: string): Promise<void> {

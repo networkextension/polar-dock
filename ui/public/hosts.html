@@ -133,6 +133,22 @@
                   <div id="hostsLastSeen" style="font-size:13px; color:var(--text-muted,#888);">—</div>
                   <div id="hostsLastSeenIP" style="font-size:11px; color:var(--text-muted,#888); margin-top:4px;">—</div>
                 </section>
+
+                <!-- macmon system metrics — Apple Silicon power/thermal/CPU/GPU
+                     telemetry via macmon (https://github.com/vladkens/macmon).
+                     Renders an iframe to the local Grafana dashboard for darwin
+                     hosts; non-darwin hosts (freebsd, linux) hide the section
+                     entirely since macmon is macOS-only. -->
+                <section id="hostsMetricsSection" hidden>
+                  <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px;">
+                    <div style="font-weight:600; font-size:13px;">系统监控 (macmon)</div>
+                    <a id="hostsMetricsOpen" href="#" target="_blank" rel="noopener" style="font-size:11px;">在 Grafana 打开 ↗</a>
+                  </div>
+                  <iframe id="hostsMetricsFrame" style="width:100%; height:560px; border:1px solid var(--border,#333); border-radius:8px; background:#0b0c10;" loading="lazy" referrerpolicy="no-referrer"></iframe>
+                  <div id="hostsMetricsFallback" hidden style="font-size:11px; color:var(--text-muted,#888); margin-top:6px;">
+                    iframe 被浏览器或 Grafana 阻止；点击上方链接在新标签页打开。
+                  </div>
+                </section>
               </div>
             </section>
 
