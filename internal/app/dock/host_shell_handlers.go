@@ -210,6 +210,7 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		HostSkillID:    skillID,
 		OperatorUserID: operatorUserID,
 		OpenedAt:       now,
+		backscroll:     newByteRing(shellBackscrollBytes),
 	}
 	if err := s.shellSessions.insert(sess); err != nil {
 		_ = s.agentHub.dispatchSkillStop(conn, runID, "registry_full")
@@ -217,7 +218,23 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 		return
 	}
-	s.startShellSupervisor(conn, runID)
+	first := s.startShellSupervisor(conn, runID)
+	// Wait briefly for the agent to confirm the run started (or fail
+	// fast). Avoids the race where the browser's WS upgrade arrives
+	// AFTER the supervisor has already removed the session because the
+	// agent rejected the dispatch (e.g. nanokdp without device_path).
+	// 1500ms covers loopback + pty.Start + first byte; longer pty
+	// startups would race regardless and fall back to a 404 on WS.
+	select {
+	case sig := <-first:
+		if sig.failed {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "skill start failed: " + sig.reason})
+			return
+		}
+	case <-time.After(1500 * time.Millisecond):
+		// Best effort — assume success; if the agent never started,
+		// the WS connect will surface the failure.
+	}
 
 	scheme := "ws"
 	if strings.HasPrefix(strings.ToLower(c.GetHeader("X-Forwarded-Proto")), "https") || c.Request.TLS != nil {
@@ -316,6 +333,22 @@ func (s *Server) handleHostShellWS(c *gin.Context) {
 		prev.cancel()
 	}
 	defer s.shellSessions.detachBridge(runID, bridge)
+
+	// Replay backscroll FIRST so the operator sees the recent screen
+	// state before live stdout starts streaming. Without this, refresh
+	// lands on a blank xterm until the agent's next byte. Lookup is
+	// fresh so we get the up-to-date snapshot post-attach.
+	if sess, _ := s.shellSessions.get(runID); sess != nil && sess.backscroll != nil {
+		if snap := sess.backscroll.snapshot(); len(snap) > 0 {
+			select {
+			case bridge.stdoutSink <- snap:
+			default:
+				// stdoutSink is buffered 256 chunks; this case is
+				// theoretically unreachable for an unread sink but
+				// the select is cheap insurance.
+			}
+		}
+	}
 
 	// Bridge close does NOT send skill.stop and does NOT finalize the
 	// run — both are the supervisor's job (on terminal event) or

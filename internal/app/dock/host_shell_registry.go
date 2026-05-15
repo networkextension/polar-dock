@@ -23,6 +23,13 @@ import (
 
 const perHostShellCap = 4
 
+// shellBackscrollBytes is the per-run ring buffer cap (latest stdout
+// bytes kept on the dock for replay on bridge reattach). 64 KiB is
+// roughly the last screenful or two of typical terminal output; large
+// enough to make a refresh feel continuous, small enough that 32
+// concurrent runs cap at 2 MiB total.
+const shellBackscrollBytes = 64 * 1024
+
 var (
 	errShellPerHostCapReached = errors.New("shell session cap reached for this host (4)")
 	errShellGlobalCapReached  = errors.New("global shell session cap reached")
@@ -47,6 +54,12 @@ type shellSession struct {
 	// bridge is the live browser bridge; nil = detached. Mutated only
 	// under shellSessionRegistry.mu.
 	bridge *shellBridge `json:"-"`
+
+	// backscroll keeps the last N bytes of stdout for replay when a
+	// new bridge attaches (e.g. after page refresh). The supervisor
+	// writes to it on every chunk; the bridge reads a snapshot at
+	// attach time and replays before listening to live stream.
+	backscroll *byteRing `json:"-"`
 }
 
 // shellBridge is the dock-side handle to one attached browser. The
