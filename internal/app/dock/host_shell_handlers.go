@@ -69,6 +69,30 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	}
 	hostID := strings.TrimSpace(c.Param("id"))
 
+	// Reattach shortcut: if this operator already has an active session
+	// on this (host, host_skill), return its run_id instead of dispatching
+	// a fresh skill.start. Lets refresh / re-pick land back on the live
+	// PTY rather than spawning N detached shells per operator.
+	if existing := s.shellSessions.findActiveFor(hostID, skillID, operatorUserID); existing != nil {
+		scheme := "ws"
+		if strings.HasPrefix(strings.ToLower(c.GetHeader("X-Forwarded-Proto")), "https") || c.Request.TLS != nil {
+			scheme = "wss"
+		}
+		wsHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
+		if wsHost == "" {
+			wsHost = c.Request.Host
+		}
+		wsURL := scheme + "://" + wsHost + "/ws/host/" + hostID + "/shell/" + strconv.FormatInt(existing.RunID, 10)
+		c.JSON(http.StatusOK, gin.H{
+			"run_id":     existing.RunID,
+			"ws_url":     wsURL,
+			"host_id":    hostID,
+			"opened_at":  existing.OpenedAt,
+			"reattached": true,
+		})
+		return
+	}
+
 	var req struct {
 		Rows           uint16            `json:"rows"`
 		Cols           uint16            `json:"cols"`
@@ -175,6 +199,26 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		return
 	}
 
+	// Insert the session record + spawn the supervisor BEFORE returning.
+	// The supervisor owns the agent event channel for the run's lifetime
+	// and survives any browser disconnect (refresh, tab close), so the
+	// PTY stays alive until the agent reports exit / the operator kicks
+	// the run / the agent disconnects.
+	sess := &shellSession{
+		RunID:          runID,
+		HostID:         hostID,
+		HostSkillID:    skillID,
+		OperatorUserID: operatorUserID,
+		OpenedAt:       now,
+	}
+	if err := s.shellSessions.insert(sess); err != nil {
+		_ = s.agentHub.dispatchSkillStop(conn, runID, "registry_full")
+		_ = s.finalizeHostSkillRun(runID, "failed", "registry: "+err.Error(), time.Now().UTC())
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+		return
+	}
+	s.startShellSupervisor(conn, runID)
+
 	scheme := "ws"
 	if strings.HasPrefix(strings.ToLower(c.GetHeader("X-Forwarded-Proto")), "https") || c.Request.TLS != nil {
 		scheme = "wss"
@@ -241,47 +285,42 @@ func (s *Server) handleHostShellWS(c *gin.Context) {
 		return
 	}
 
+	// Verify the session was registered by /shell/open. Direct WS
+	// without prior /open is rejected — /open is the only place that
+	// dispatches skill.start to the agent.
+	if _, ok := s.shellSessions.get(runID); !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "shell session not found (call /shell/open first)"})
+		return
+	}
+	_ = operatorUserID
+
 	wsConn, err := hostShellUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		// Upgrade already wrote a 4xx; nothing to do.
 		return
 	}
 	defer wsConn.Close()
 
-	// Register the session (insert phase — the reserve was done during
-	// /open, but a malicious browser could skip /open and POST straight
-	// to the WS, so we re-check the cap here too).
 	bridgeCtx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
-	sess := &shellSession{
-		RunID:          runID,
-		HostID:         hostID,
-		HostSkillID:    0, // not used post-/open; we don't re-lookup
-		OperatorUserID: operatorUserID,
-		OpenedAt:       time.Now().UTC(),
-		cancel:         cancel,
+
+	// Bridge slot: the supervisor owns the agent channels and forwards
+	// stdout + events to our local sinks. If a previous browser is
+	// attached, evict it (last writer wins — refresh-then-reconnect
+	// kicks the stale tab gracefully).
+	bridge := &shellBridge{
+		cancel:     cancel,
+		eventSink:  make(chan skillEventFrame, 16),
+		stdoutSink: make(chan []byte, 256),
 	}
-	if err := s.shellSessions.insert(sess); err != nil {
-		_ = wsConn.WriteControl(websocket.CloseMessage,
-			websocket.FormatCloseMessage(4290, err.Error()), time.Now().Add(time.Second))
-		return
+	if prev := s.shellSessions.attachBridge(runID, bridge); prev != nil && prev.cancel != nil {
+		prev.cancel()
 	}
-	defer s.shellSessions.remove(runID)
+	defer s.shellSessions.detachBridge(runID, bridge)
 
-	stdoutCh := conn.trackSkillStdout(runID)
-	defer conn.untrackSkillStdout(runID)
-
-	// Also track skill.event (lifecycle: state/exit/log) so we can
-	// observe agent-side exit and proactively close the browser WS.
-	eventCh := conn.trackSkillPending(runID)
-	defer conn.untrackSkillPending(runID)
-
-	// Ensure the agent gets a stop signal when this bridge tears
-	// down, regardless of which side closed first.
-	defer func() {
-		_ = s.agentHub.dispatchSkillStop(conn, runID, "browser_closed")
-		_ = s.finalizeHostSkillRun(runID, "ended", "", time.Now().UTC())
-	}()
+	// Bridge close does NOT send skill.stop and does NOT finalize the
+	// run — both are the supervisor's job (on terminal event) or
+	// handleHostShellKick's (explicit kick). This is what makes the
+	// session survive browser refresh.
 
 	// Write mutex — multiple goroutines (bytes pump + ping ticker)
 	// share the WS conn; gorilla forbids concurrent writes.
@@ -339,20 +378,20 @@ func (s *Server) handleHostShellWS(c *gin.Context) {
 	defer pingTicker.Stop()
 	for {
 		select {
-		case chunk, ok := <-stdoutCh:
+		case chunk, ok := <-bridge.stdoutSink:
 			if !ok {
 				return
 			}
 			if err := writeBinary(chunk); err != nil {
 				return
 			}
-		case ev, ok := <-eventCh:
+		case ev, ok := <-bridge.eventSink:
 			if !ok {
 				return
 			}
 			if ev.EventKind == "exit" {
-				// Agent-side run ended (idle / eof / hard_cap / etc.).
-				// Close browser WS with a code that hints at the reason.
+				// Supervisor will finalize + remove; just close the WS
+				// politely with a hint for the operator.
 				reason, _ := ev.Data["reason"].(string)
 				code := websocket.CloseNormalClosure
 				if reason == "agent_disconnect" {
@@ -428,9 +467,17 @@ func (s *Server) handleHostShellKick(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid run_id"})
 		return
 	}
-	if err := s.shellSessions.kick(runID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	if _, ok := s.shellSessions.get(runID); !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": errShellSessionNotFound.Error()})
 		return
+	}
+	// Sever the dock-side bridge first so the browser closes promptly.
+	_ = s.shellSessions.kick(runID)
+	// Tell the agent to tear down the PTY. The supervisor will pick
+	// up the resulting EventExit and finalize the DB run + remove
+	// from the registry.
+	if conn := s.agentHub.lookupByHostID(hostID); conn != nil {
+		_ = s.agentHub.dispatchSkillStop(conn, runID, "operator_kick")
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

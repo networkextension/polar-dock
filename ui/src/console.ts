@@ -14,7 +14,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
-import { fetchHosts, fetchHostSkillsForHost, openHostShell } from "./api/hosts.js";
+import { fetchHosts, fetchHostSkillsForHost, listHostShellSessions, openHostShell } from "./api/hosts.js";
 import { fetchCurrentUser, logout } from "./api/session.js";
 import {
   createConsoleLayout,
@@ -201,17 +201,12 @@ class ConsolePane {
 
   private async connect(hostId: string, skillId: number, shell?: string): Promise<void> {
     const host = hosts.find((h) => h.id === hostId);
-    const fit = new FitAddon();
-    const proposed: { rows: number; cols: number; shell?: string } = { rows: 30, cols: 100 };
-    if (shell) proposed.shell = shell;
-    const { response, data } = await openHostShell(hostId, skillId, proposed);
-    if (!response.ok || !data.ws_url) {
-      throw new Error(data.error || `HTTP ${response.status}`);
-    }
-    this.currentHostId = hostId;
-    this.currentSkillId = skillId;
 
-    // Tear down the picker and put a fresh terminal in.
+    // Mount the terminal + fit it BEFORE calling /shell/open, so the
+    // agent's PTY starts the right size for this pane. Otherwise the
+    // initial 24×80 default fills with bash startup output, fit later
+    // grows the viewport, and the cursor lands at the bottom of an
+    // oversized terminal — top half ends up blank.
     this.bodyEl.innerHTML = `<div class="console-pane-term" data-pane-term></div>`;
     const termEl = this.bodyEl.querySelector<HTMLElement>("[data-pane-term]")!;
     const term = new Terminal({
@@ -219,13 +214,32 @@ class ConsolePane {
       fontSize: 12,
       cursorBlink: true,
       convertEol: false,
+      scrollback: 5000,
       theme: { background: "#0f172a", foreground: "#e2e8f0" },
     });
     const linksAddon = new WebLinksAddon();
+    const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(linksAddon);
     term.open(termEl);
-    setTimeout(() => fit.fit(), 0);
+    try {
+      fit.fit();
+    } catch {
+      /* container not laid out yet — first ResizeObserver tick will retry */
+    }
+
+    const proposed: { rows: number; cols: number; shell?: string } = {
+      rows: term.rows || 30,
+      cols: term.cols || 100,
+    };
+    if (shell) proposed.shell = shell;
+    const { response, data } = await openHostShell(hostId, skillId, proposed);
+    if (!response.ok || !data.ws_url) {
+      term.dispose();
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    this.currentHostId = hostId;
+    this.currentSkillId = skillId;
     term.focus();
 
     this.term = term;
@@ -252,7 +266,12 @@ class ConsolePane {
     });
     ws.addEventListener("message", (ev) => {
       if (typeof ev.data === "string") return;
-      term.write(new Uint8Array(ev.data));
+      term.write(new Uint8Array(ev.data), () => {
+        // Auto-scroll-to-bottom on each batch — xterm normally does
+        // this, but if the operator scrolled up and the layout shifted
+        // (pane resize), the viewport can stick at a stale offset.
+        term.scrollToBottom();
+      });
     });
     ws.addEventListener("close", (ev) => {
       term.writeln(`\r\n\x1b[2m[console] closed (code=${ev.code})\x1b[0m`);
@@ -494,7 +513,47 @@ async function bootstrap(): Promise<void> {
   });
 
   await refreshSavedLayouts();
-  ensurePaneCount();
+
+  // Reattach: if the operator has live shell sessions across hosts
+  // (e.g. they refreshed the page), spawn panes pre-bound to those
+  // (host, host_skill) tuples — openHostShell on the dock side will
+  // dedupe and return the existing run_id, so the panes land back on
+  // the live PTYs without the operator having to re-pick anything.
+  const restored = await restoreActiveSessions();
+  if (restored === 0) {
+    ensurePaneCount();
+  }
+}
+
+async function restoreActiveSessions(): Promise<number> {
+  if (hosts.length === 0) return 0;
+  const sessions: { hostId: string; hostSkillId: number }[] = [];
+  await Promise.all(
+    hosts.map(async (h) => {
+      const { response, data } = await listHostShellSessions(h.id);
+      if (!response.ok || !data.sessions) return;
+      for (const s of data.sessions) {
+        sessions.push({ hostId: s.host_id, hostSkillId: s.host_skill_id });
+      }
+    }),
+  );
+  if (sessions.length === 0) return 0;
+  const target = nearestLayoutCount(sessions.length);
+  layoutSelect.value = String(target);
+  grid.dataset.cols = String(gridColsFor(target));
+  for (const cfg of sessions) {
+    const id = "p" + Math.random().toString(36).slice(2, 8);
+    const pane = new ConsolePane(id, { hostId: cfg.hostId, hostSkillId: cfg.hostSkillId });
+    activePanes.set(id, pane);
+    grid.appendChild(pane.root);
+  }
+  while (activePanes.size < target) {
+    const id = "p" + Math.random().toString(36).slice(2, 8);
+    const pane = new ConsolePane(id);
+    activePanes.set(id, pane);
+    grid.appendChild(pane.root);
+  }
+  return sessions.length;
 }
 
 function escapeHTML(s: string): string {
