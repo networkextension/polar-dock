@@ -151,8 +151,12 @@ class ConsolePane {
         list = data.skills || [];
         skillsByHost.set(hostId, list);
       }
-      // Only byte-streaming skills can host a pane (shell + nanokdp).
-      const usable = list.filter((s) => s.kind === "shell" || s.kind === "nanokdp");
+      // Only `shell` is offered in the pane picker today. Nanokdp is
+      // also byte-streaming but needs device_path + baud — operator
+      // must use the dedicated host-detail flow for it. Including it
+      // here causes silent skill-start failures (no device_path → agent
+      // refuses → WS 404 / code=1006).
+      const usable = list.filter((s) => s.kind === "shell");
       skillSel.innerHTML =
         `<option value="">— skill —</option>` +
         usable.map((s) => `<option value="${s.id}">${escapeHTML(s.kind)} (id=${s.id})</option>`).join("");
