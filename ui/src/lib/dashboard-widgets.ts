@@ -397,6 +397,64 @@ export async function renderSystemInfo(): Promise<string> {
   });
 }
 
+// llm_proxy_stats widget — P7c. Three numbers an admin glances at:
+//   1. 本月 API 用量 (workspace-wide SUM cost_usd this UTC month)
+//   2. 上游可用性 (count UP / total from the prober)
+//   3. 活跃 token (un-revoked tokens in this workspace)
+// Hides itself on non-admin (the endpoint is admin-gated → 403 →
+// emptyState).
+type ProxyStatsResp = {
+  month_spend_usd: number;
+  active_tokens: number;
+  upstreams: {
+    up: number;
+    total: number;
+    items?: Array<{ name: string; model: string; up: boolean }>;
+  };
+};
+
+export async function renderLLMProxyStats(): Promise<string> {
+  const { response, data } = await requestJson<ProxyStatsResp>("/api/llm-proxy/dashboard-stats");
+  if (!response.ok) {
+    return widgetCard("LLM Proxy", emptyState("加载失败 — 可能没有 admin 权限"));
+  }
+  const spend = data.month_spend_usd ?? 0;
+  const ups = data.upstreams || { up: 0, total: 0 };
+  const upRatio = ups.total > 0 ? ups.up / ups.total : 0;
+  const upColor =
+    ups.total === 0 ? "var(--text-muted,#888)" : upRatio === 1 ? "var(--success,#0a7)" : upRatio >= 0.5 ? "var(--warning,#e60)" : "var(--danger,#c00)";
+  const downItems = (ups.items ?? []).filter((u) => !u.up);
+  const downList =
+    downItems.length > 0
+      ? `<div class="proxy-stats-down" title="${escapeHTML(downItems.map((u) => `${u.name} · ${u.model}`).join(" / "))}">
+           ${downItems.length} 死: ${downItems.map((u) => escapeHTML(u.name)).join("、")}
+         </div>`
+      : "";
+  const body = `
+    <div class="proxy-stats-grid">
+      <a class="proxy-stats-card" href="/proxy-tokens.html" title="本月 SUM(cost_usd) — 仅含价格表里的 model">
+        <div class="proxy-stats-label">本月用量</div>
+        <div class="proxy-stats-value">$${spend.toFixed(spend < 1 ? 4 : 2)}</div>
+        <div class="proxy-stats-sub">USD · 估算</div>
+      </a>
+      <a class="proxy-stats-card" href="/proxy-tokens.html" title="活跃（未撤销）token 数">
+        <div class="proxy-stats-label">活跃 Token</div>
+        <div class="proxy-stats-value">${data.active_tokens}</div>
+        <div class="proxy-stats-sub">未撤销</div>
+      </a>
+      <a class="proxy-stats-card" href="/grafana/" target="_blank" rel="noopener" title="polar_llm_upstream_up gauge — 探针每 30s 更新">
+        <div class="proxy-stats-label">上游可用</div>
+        <div class="proxy-stats-value" style="color: ${upColor};">${ups.up} / ${ups.total}</div>
+        <div class="proxy-stats-sub">${downItems.length === 0 && ups.total > 0 ? "全部 UP" : downItems.length > 0 ? `${downItems.length} DOWN` : "无数据"}</div>
+      </a>
+    </div>
+    ${downList}
+  `;
+  return widgetCard("LLM Proxy", body, {
+    headerExtra: `<a href="/proxy-tokens.html" style="font-size:11px;">管理 →</a>`,
+  });
+}
+
 // Render the entire dashboard's enabled widgets in order. Renders
 // each card synchronously when possible (quick_start) and awaits
 // async fetches in parallel for a fast first paint.
@@ -417,6 +475,8 @@ export async function renderDashboardWidgets(layout: string[], container: HTMLEl
         return { slug, html: await renderIOSDistBuilds() };
       case "system_info":
         return { slug, html: await renderSystemInfo() };
+      case "llm_proxy_stats":
+        return { slug, html: await renderLLMProxyStats() };
       default:
         return { slug, html: "" };
     }

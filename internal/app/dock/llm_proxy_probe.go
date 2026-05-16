@@ -36,12 +36,40 @@ const (
 type llmProxyProber struct {
 	server *Server
 
-	mu     sync.Mutex
-	stopCh chan struct{}
+	mu          sync.Mutex
+	stopCh      chan struct{}
+	lastResults map[int64]llmProbeResult // config_id -> last probe outcome
+}
+
+// llmProbeResult is the per-config probe state kept in memory so
+// non-Prometheus callers (e.g. dashboard-stats handler) can read
+// upstream health without scraping /metrics.
+type llmProbeResult struct {
+	Name      string
+	Model     string
+	Up        bool
+	CheckedAt time.Time
 }
 
 func newLLMProxyProber(s *Server) *llmProxyProber {
-	return &llmProxyProber{server: s, stopCh: make(chan struct{})}
+	return &llmProxyProber{
+		server:      s,
+		stopCh:      make(chan struct{}),
+		lastResults: map[int64]llmProbeResult{},
+	}
+}
+
+// Snapshot returns a copy of the last-known probe state for every
+// known config. Empty until the first probe pass completes (~startup
+// + 0s for the first immediate run).
+func (p *llmProxyProber) Snapshot() []llmProbeResult {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]llmProbeResult, 0, len(p.lastResults))
+	for _, r := range p.lastResults {
+		out = append(out, r)
+	}
+	return out
 }
 
 func (p *llmProxyProber) start() {
@@ -118,6 +146,14 @@ func (p *llmProxyProber) runOnce() {
 			defer wg.Done()
 			ok := p.probeOne(t.baseURL, t.model, t.apiKey, t.proxyURL)
 			p.server.metricsRegistry.setLLMUpstreamUp(t.id, t.name, t.model, ok)
+			p.mu.Lock()
+			p.lastResults[t.id] = llmProbeResult{
+				Name:      t.name,
+				Model:     t.model,
+				Up:        ok,
+				CheckedAt: time.Now(),
+			}
+			p.mu.Unlock()
 		}(t)
 	}
 	wg.Wait()

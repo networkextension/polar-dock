@@ -76,6 +76,58 @@ func (s *Server) handleLLMProxyTokenCreate(c *gin.Context) {
 	})
 }
 
+// GET /api/llm-proxy/dashboard-stats — workspace-scoped rollup for
+// the dashboard widget. Returns:
+//   - month_spend_usd: SUM(cost_usd) for current UTC month
+//   - active_tokens: COUNT(*) WHERE revoked_at IS NULL
+//   - upstreams: per-config probe status (up/down + name + model)
+//
+// Admin-gated. Workspace-scoped via the standard middleware.
+func (s *Server) handleLLMProxyDashboardStats(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	monthSpend, err := s.workspaceProxyMonthSpend(workspaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	activeTokens, err := s.workspaceProxyActiveTokens(workspaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	// Upstream snapshot is process-wide (probe doesn't know about
+	// workspaces). All admins see the same list — that's fine since
+	// upstream config is platform-level anyway.
+	var upCount, totalCount int
+	var upstreams []gin.H
+	if s.llmProxyProber != nil {
+		for _, r := range s.llmProxyProber.Snapshot() {
+			totalCount++
+			if r.Up {
+				upCount++
+			}
+			upstreams = append(upstreams, gin.H{
+				"name":       r.Name,
+				"model":      r.Model,
+				"up":         r.Up,
+				"checked_at": r.CheckedAt,
+			})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"month_spend_usd": monthSpend,
+		"active_tokens":   activeTokens,
+		"upstreams": gin.H{
+			"up":    upCount,
+			"total": totalCount,
+			"items": upstreams,
+		},
+	})
+}
+
 // GET /api/llm-proxy/tokens/:id/calls?limit=N
 func (s *Server) handleLLMProxyTokenCalls(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
