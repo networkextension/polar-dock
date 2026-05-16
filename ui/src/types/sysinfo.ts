@@ -29,9 +29,27 @@ export type SystemHostCPU = {
 
 export type SystemHostVersion = {
   git_sha?: string;
+  git_branch?: string;
+  git_dirty?: boolean;
   build_time?: string;
   go: string;
   module?: string;
+};
+
+export type SystemHostDBPool = {
+  open: number;
+  in_use: number;
+  idle: number;
+  wait_count: number;
+};
+
+export type SystemHostRuntime = {
+  process_uptime_seconds: number;
+  goroutines: number;
+  heap_alloc_bytes: number;
+  heap_sys_bytes: number;
+  gc_runs: number;
+  db_pool?: SystemHostDBPool;
 };
 
 export type SystemHostInfo = {
@@ -45,5 +63,6 @@ export type SystemHostInfo = {
   disks: SystemHostDisk[];
   memory: SystemHostMemory;
   cpu: SystemHostCPU;
+  runtime?: SystemHostRuntime;
   sampled_at: string;
 };
