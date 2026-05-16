@@ -124,6 +124,10 @@ type Server struct {
 	// LLM proxy in-memory rate limiter. Per-token sliding window;
 	// see llm_proxy_rate_limit.go.
 	llmProxyRateLimiter *llmProxyRateLimiter
+
+	// LLM upstream health prober — synthetic-call goroutine that
+	// updates polar_llm_upstream_up gauges every 30s.
+	llmProxyProber *llmProxyProber
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -405,6 +409,8 @@ func NewServer(cfg Config) (*Server, error) {
 	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
 	server.startMetricsSampler()
+	server.llmProxyProber = newLLMProxyProber(server)
+	server.llmProxyProber.start()
 
 	server.router = gin.Default()
 	// Increase max upload size for video files (default gin limit is 32 MiB)

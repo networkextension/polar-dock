@@ -1,0 +1,94 @@
+# Prometheus alerting rules for the LLM proxy.
+#
+# Drop this into /opt/homebrew/etc/prometheus.args by adding:
+#   --rule-files=/opt/homebrew/etc/prometheus/llm-proxy-alerts.yml
+# and place this file at /opt/homebrew/etc/prometheus/llm-proxy-alerts.yml.
+#
+# Then `brew services restart prometheus` (or `curl -X POST localhost:9090/-/reload`).
+#
+# Wire your alertmanager to push to ntfy / Slack / iOS push / email —
+# see https://prometheus.io/docs/alerting/latest/configuration/.
+
+groups:
+  - name: llm-proxy
+    interval: 30s
+    rules:
+      # Per-config upstream death. polar_llm_upstream_up is set by the
+      # in-process prober every 30s. Two minutes of zero = wake someone up.
+      - alert: LLMUpstreamDown
+        expr: polar_llm_upstream_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: llm-proxy
+        annotations:
+          summary: "LLM upstream {{ $labels.name }} unreachable for 2m"
+          description: |
+            llm_config #{{ $labels.config_id }} ({{ $labels.name }}, model={{ $labels.model }})
+            has been failing the synthetic probe for ≥2 minutes. Customers calling
+            /api/proxy/v1/chat/completions with this config will see 502s.
+
+            Check:
+              - vLLM/SGLang engine on the upstream host (commonly OOM)
+              - DNS / network reachability
+              - api_key validity
+              - the dock log (grep for the config id around the alert time)
+
+      # Sustained 4xx/5xx on the proxy — clients are failing for some
+      # reason (rate limit, bad model, upstream down, etc.). 10% over 5m.
+      - alert: LLMProxyErrorRateHigh
+        expr: |
+          (
+            sum(rate(polar_llm_proxy_requests_total{status!~"2.."}[5m]))
+              / sum(rate(polar_llm_proxy_requests_total[5m]))
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: llm-proxy
+        annotations:
+          summary: "LLM proxy error rate >10% for 5m"
+          description: |
+            More than 10% of /api/proxy/v1/chat/completions requests are returning non-2xx
+            status codes (sliding 5m window). Check polar_llm_proxy_requests_total grouped
+            by `status` and `token` in Grafana.
+
+      # Tail-latency regression. P95 e2e over 30s for non-stream above
+      # 60s is almost always upstream pain.
+      - alert: LLMProxyP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(polar_llm_proxy_e2e_seconds_bucket{mode="nonstream"}[5m]))
+              by (model, le)
+          ) > 60
+        for: 10m
+        labels:
+          severity: warning
+          component: llm-proxy
+        annotations:
+          summary: "LLM proxy non-stream P95 > 60s for model {{ $labels.model }}"
+          description: |
+            P95 end-to-end latency for {{ $labels.model }} has been above 60 seconds
+            for 10 minutes. Likely upstream is queueing requests. Check
+            polar_llm_proxy_e2e_seconds and the upstream's own metrics.
+
+      # Streaming TTFT regression. >3s P95 = clients see a multi-second
+      # blank-screen delay before the typewriter starts.
+      - alert: LLMProxyTTFTHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(polar_llm_proxy_ttft_seconds_bucket[5m]))
+              by (model, le)
+          ) > 3
+        for: 10m
+        labels:
+          severity: warning
+          component: llm-proxy
+        annotations:
+          summary: "LLM proxy streaming TTFT P95 > 3s for {{ $labels.model }}"
+          description: |
+            Time-to-first-token for streaming responses on {{ $labels.model }} is
+            above 3 seconds at P95 for 10 minutes. Users perceive a hang before
+            the typewriter starts.
