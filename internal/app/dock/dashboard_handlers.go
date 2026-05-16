@@ -48,6 +48,7 @@ func dashboardWidgetCatalog() []dashboardWidget {
 		{Slug: "recent_chat", Name: "最近 Chat", Description: "最近 chat thread top 5 + 未读数。"},
 		{Slug: "iosdist_builds", Name: "iOS 分发构建", Description: "最近 5 个签名/分发构建状态（admin only）。", AdminOnly: true},
 		{Slug: "system_info", Name: "系统信息", Description: "dock 进程所在主机的 OS / IP / 磁盘 / 内存 / CPU / 上线时间。", Default: true},
+		{Slug: "llm_proxy_stats", Name: "LLM Proxy", Description: "本月 API 用量 USD、上游可用性、活跃 token 数（admin only）。", AdminOnly: true, Default: true},
 	}
 }
 

@@ -716,6 +716,7 @@ func (s *Server) registerRoutes() {
 		api.DELETE("/llm-configs/:id", s.AuthMiddleware(), s.handleLLMConfigDelete)
 		// LLM proxy — admin-gated token CRUD. The plaintext is shown
 		// once at create-time and never returnable again.
+		api.GET("/llm-proxy/dashboard-stats", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyDashboardStats)
 		api.GET("/llm-proxy/tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenList)
 		api.POST("/llm-proxy/tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenCreate)
 		api.DELETE("/llm-proxy/tokens/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenRevoke)

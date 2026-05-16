@@ -320,6 +320,36 @@ func (s *Server) touchLLMProxyTokenLastUsed(id int64, now time.Time) {
 	_, _ = s.db.Exec(`UPDATE llm_proxy_tokens SET last_used_at = $2 WHERE id = $1`, id, now)
 }
 
+// workspaceProxyMonthSpend returns SUM(cost_usd) across ALL tokens
+// in the workspace for the current UTC month. Used by the P7c
+// dashboard "本月用量" card. NULL cost rows (unknown-model upstreams)
+// contribute 0.
+func (s *Server) workspaceProxyMonthSpend(workspaceID string) (float64, error) {
+	var v float64
+	err := s.db.QueryRow(
+		`SELECT COALESCE(SUM(cost_usd), 0)::FLOAT8
+		   FROM llm_proxy_calls
+		  WHERE workspace_id = $1
+		    AND created_at  >= date_trunc('month', NOW())`,
+		workspaceID,
+	).Scan(&v)
+	return v, err
+}
+
+// workspaceProxyActiveTokens returns count of un-revoked tokens
+// in the workspace. Used by the dashboard stats card.
+func (s *Server) workspaceProxyActiveTokens(workspaceID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*)
+		   FROM llm_proxy_tokens
+		  WHERE workspace_id = $1
+		    AND revoked_at IS NULL`,
+		workspaceID,
+	).Scan(&n)
+	return n, err
+}
+
 // listLLMProxyCalls returns up to `limit` most-recent audit rows
 // for a token within the given workspace. Caller verifies admin +
 // workspace-scope ownership before calling.

@@ -5019,3 +5019,48 @@ textarea:focus-visible,
 .sysinfo-table tr:last-child th, .sysinfo-table tr:last-child td {
   border-bottom: none;
 }
+
+/* LLM Proxy dashboard stats widget (P7c) */
+.proxy-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.proxy-stats-card {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.12s ease;
+}
+.proxy-stats-card:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.proxy-stats-label {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.proxy-stats-value {
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+.proxy-stats-sub {
+  font-size: 10.5px;
+  color: var(--text-muted, #888);
+  margin-top: 2px;
+}
+.proxy-stats-down {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--danger, #c00);
+  padding: 6px 8px;
+  border-left: 2px solid var(--danger, #c00);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+  border-radius: 0 4px 4px 0;
+}
