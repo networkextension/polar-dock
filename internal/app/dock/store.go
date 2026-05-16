@@ -2590,6 +2590,55 @@ COMMENT ON COLUMN iosdist_certificates.owner_user_id IS 'audit: who created/upse
 COMMENT ON COLUMN iosdist_profiles.owner_user_id     IS 'audit: who created/upserted; not for authorization (use workspace_id)';
 COMMENT ON COLUMN iosdist_asc_configs.owner_user_id  IS 'audit: who created/upserted; not for authorization (use workspace_id)';
 COMMENT ON COLUMN llm_configs.owner_user_id          IS 'audit: who created/upserted; not for authorization (use workspace_id)';
+
+-- llm_proxy_tokens: per-workspace API tokens that let external clients
+-- (Cursor, Raycast, custom scripts) hit our OpenAI-compatible
+-- /v1/chat/completions proxy. Plaintext shown ONCE at create time;
+-- only sha256(plaintext) + a short prefix are stored. See
+-- doc/llm-proxy-design.md.
+CREATE TABLE IF NOT EXISTS llm_proxy_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    prefix TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    default_llm_config_id BIGINT REFERENCES llm_configs(id) ON DELETE SET NULL,
+    rate_limit_rpm INTEGER NOT NULL DEFAULT 60,
+    monthly_quota_usd NUMERIC(10,4) NOT NULL DEFAULT 0,
+    scopes TEXT NOT NULL DEFAULT 'chat.completions',
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    last_used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_llm_proxy_tokens_workspace
+    ON llm_proxy_tokens(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_proxy_tokens_active_hash
+    ON llm_proxy_tokens(token_hash) WHERE revoked_at IS NULL;
+
+-- llm_proxy_calls: per-request audit row. Inserted post-dispatch
+-- whether the upstream succeeded or failed. UI aggregates this for
+-- per-token / per-model usage views. No FK on llm_config_id so
+-- deleting the upstream config doesn't wipe history.
+CREATE TABLE IF NOT EXISTS llm_proxy_calls (
+    id BIGSERIAL PRIMARY KEY,
+    token_id BIGINT NOT NULL REFERENCES llm_proxy_tokens(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    model_requested TEXT NOT NULL,
+    model_resolved TEXT NOT NULL,
+    llm_config_id BIGINT,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    status_code INTEGER NOT NULL,
+    error_text TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_token_ts
+    ON llm_proxy_calls(token_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_ts
+    ON llm_proxy_calls(workspace_id, created_at DESC);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
