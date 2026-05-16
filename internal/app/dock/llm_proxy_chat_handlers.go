@@ -80,6 +80,21 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		}
 	}
 
+	// 3b) Monthly USD quota gate (P4). 60s in-memory cache; fail-open
+	// on DB error. quota=0 = unlimited. Status 402 Payment Required
+	// + audit row so the operator can see who is hitting the cap.
+	if s.llmProxyQuota != nil && tok.MonthlyQuotaUSD > 0 {
+		if ok, spend := s.llmProxyQuota.allow(tok.ID, tok.MonthlyQuotaUSD); !ok {
+			s.recordProxyCallFailure(tok, req.Model, "", 0, http.StatusPaymentRequired,
+				fmt.Sprintf("monthly quota exceeded: $%.4f >= $%.4f", spend, tok.MonthlyQuotaUSD), start)
+			s.metricsRegistry.recordLLMProxyCall(tok.Name, req.Model, mode, http.StatusPaymentRequired, time.Since(start), 0, 0)
+			s.metricsRegistry.recordLLMProxyQuotaExceeded(tok.Name)
+			openAIError(c, http.StatusPaymentRequired, "monthly_quota_exceeded",
+				fmt.Sprintf("token monthly quota exceeded ($%.4f / $%.4f)", spend, tok.MonthlyQuotaUSD))
+			return
+		}
+	}
+
 	// 4) Resolve upstream LLM config — alias route first, then
 	// fall back to the token's default. An alias matches the
 	// client's `model` field exactly (case-sensitive).
