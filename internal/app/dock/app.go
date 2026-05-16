@@ -915,6 +915,8 @@ func (s *Server) registerRoutes() {
 		api.GET("/agent/binary", s.handleAgentBinary)
 		api.GET("/agent/bots/:bot_id/config", s.PolarAgentAuthMiddleware(), s.handleAgentBotConfig)
 		api.POST("/agent/auto-register", s.PolarAgentAuthMiddleware(), s.handleAgentAutoRegister)
+		// P-recovery-0a: knowledge-base device upsert via agent token.
+		api.POST("/agent/library/devices/upsert", s.PolarAgentAuthMiddleware(), s.handleAgentRevDeviceUpsert)
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
 		api.POST("/agent/bots/:bot_id/dispatch", s.AuthMiddleware(), s.handleAgentDispatch)
 		// hosts (workspace-scoped named machines reachable via
