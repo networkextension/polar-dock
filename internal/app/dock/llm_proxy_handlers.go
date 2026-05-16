@@ -135,6 +135,100 @@ func (s *Server) handleLLMProxyTokenCallsAggregate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"aggregate": agg, "days": days})
 }
 
+// GET /api/llm-proxy/tokens/:id/routes
+func (s *Server) handleLLMProxyTokenRoutesList(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 id"})
+		return
+	}
+	tok, err := s.getLLMProxyToken(workspaceID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if tok == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "token 不存在"})
+		return
+	}
+	routes, err := s.listLLMProxyRoutes(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"routes": routes})
+}
+
+// PUT /api/llm-proxy/tokens/:id/routes
+// Body: { "routes": [ {alias_model, llm_config_id}, ... ] }
+// Replaces the route set atomically. Empty input clears all routes.
+func (s *Server) handleLLMProxyTokenRoutesReplace(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 id"})
+		return
+	}
+	tok, err := s.getLLMProxyToken(workspaceID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if tok == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "token 不存在"})
+		return
+	}
+	var req struct {
+		Routes []struct {
+			AliasModel  string `json:"alias_model"`
+			LLMConfigID int64  `json:"llm_config_id"`
+		} `json:"routes"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	// Validate each llm_config_id belongs to the same workspace.
+	out := make([]LLMProxyRoute, 0, len(req.Routes))
+	for _, r := range req.Routes {
+		alias := strings.TrimSpace(r.AliasModel)
+		if alias == "" {
+			continue
+		}
+		if r.LLMConfigID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "llm_config_id 无效: " + alias})
+			return
+		}
+		cfg, _, err := s.getLLMConfigForOwner(workspaceID, r.LLMConfigID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if cfg == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "llm_config_id 不属于本 workspace: " + alias})
+			return
+		}
+		out = append(out, LLMProxyRoute{
+			TokenID:     id,
+			AliasModel:  alias,
+			LLMConfigID: r.LLMConfigID,
+		})
+	}
+	if err := s.replaceLLMProxyRoutes(id, out, time.Now().UTC()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	routes, _ := s.listLLMProxyRoutes(id)
+	c.JSON(http.StatusOK, gin.H{"routes": routes})
+}
+
 func (s *Server) handleLLMProxyTokenRevoke(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {

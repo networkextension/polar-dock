@@ -710,6 +710,8 @@ func (s *Server) registerRoutes() {
 		api.DELETE("/llm-proxy/tokens/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenRevoke)
 		api.GET("/llm-proxy/tokens/:id/calls", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenCalls)
 		api.GET("/llm-proxy/tokens/:id/calls/aggregate", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenCallsAggregate)
+		api.GET("/llm-proxy/tokens/:id/routes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenRoutesList)
+		api.PUT("/llm-proxy/tokens/:id/routes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenRoutesReplace)
 		// Public OpenAI-compatible chat completion endpoint. Auth is
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.

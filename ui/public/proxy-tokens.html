@@ -203,6 +203,40 @@
       </div>
     </div>
 
+    <!-- Routes editor modal -->
+    <div id="routesModal" class="lp-modal" hidden>
+      <div class="lp-modal-card" style="max-width: 720px;">
+        <div class="lp-modal-head">
+          <span class="lp-modal-title" id="routesTitle">别名路由</span>
+          <button id="routesCloseBtn" type="button" class="lp-modal-close">✕</button>
+        </div>
+        <div class="lp-modal-body">
+          <p class="meta-subtitle" style="margin: 0 0 12px 0;">
+            客户端请求里 <code>model</code> 字段 == 某行的"别名"时，路由到该行的上游配置；都不匹配则走 token 的默认上游。
+          </p>
+          <div class="settings-section-card">
+            <div class="settings-section-title">路由表</div>
+            <table id="routesTable" class="lp-table" style="width: 100%; margin-top: 6px;">
+              <thead>
+                <tr>
+                  <th style="width: 40%;">别名 (model 字段)</th>
+                  <th style="width: 50%;">→ 上游 LLM</th>
+                  <th style="width: 10%;"></th>
+                </tr>
+              </thead>
+              <tbody id="routesTbody"></tbody>
+            </table>
+            <button id="routesAddBtn" type="button" class="btn-inline btn-secondary" style="margin-top: 8px;">+ 添加别名</button>
+          </div>
+          <div id="routesError" class="status-text" style="color: var(--danger, #c00); margin-top: 8px;"></div>
+        </div>
+        <div class="lp-modal-foot">
+          <button id="routesCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
+          <button id="routesSaveBtn" type="button" class="btn-inline btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Plaintext-shown-once modal -->
     <div id="plaintextModal" class="lp-modal" hidden>
       <div class="lp-modal-card" style="max-width: 600px;">

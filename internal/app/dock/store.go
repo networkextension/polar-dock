@@ -2639,6 +2639,23 @@ CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_token_ts
     ON llm_proxy_calls(token_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_ts
     ON llm_proxy_calls(workspace_id, created_at DESC);
+
+-- llm_proxy_routes: per-token alias_model -> llm_config map. The
+-- proxy chat handler looks up (token_id, req.Model) here first; if
+-- there's a match, dispatch goes to that llm_config_id. Otherwise
+-- falls back to llm_proxy_tokens.default_llm_config_id. Lets a
+-- single token route gpt-4o-mini -> Kimi, polar:research -> Gemini,
+-- etc. See doc/llm-proxy-design.md.
+CREATE TABLE IF NOT EXISTS llm_proxy_routes (
+    token_id BIGINT NOT NULL REFERENCES llm_proxy_tokens(id) ON DELETE CASCADE,
+    alias_model TEXT NOT NULL,
+    llm_config_id BIGINT NOT NULL REFERENCES llm_configs(id) ON DELETE CASCADE,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (token_id, alias_model)
+);
+CREATE INDEX IF NOT EXISTS idx_llm_proxy_routes_token
+    ON llm_proxy_routes(token_id, sort_order);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

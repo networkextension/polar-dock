@@ -75,3 +75,19 @@ export type LLMProxyCallAggregateResponse = ErrorResponse & {
   aggregate?: LLMProxyCallAggregate[];
   days?: number;
 };
+
+export type LLMProxyRoute = {
+  token_id: number;
+  alias_model: string;
+  llm_config_id: number;
+  sort_order: number;
+  created_at: string;
+};
+
+export type LLMProxyRouteListResponse = ErrorResponse & {
+  routes?: LLMProxyRoute[];
+};
+
+export type LLMProxyRouteReplacePayload = {
+  routes: Array<{ alias_model: string; llm_config_id: number }>;
+};

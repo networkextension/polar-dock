@@ -4,6 +4,8 @@ import { requestJson } from "./http.js";
 import type {
   LLMProxyCallAggregateResponse,
   LLMProxyCallListResponse,
+  LLMProxyRouteListResponse,
+  LLMProxyRouteReplacePayload,
   LLMProxyTokenCreatePayload,
   LLMProxyTokenCreateResponse,
   LLMProxyTokenListResponse,
@@ -37,4 +39,15 @@ export async function fetchProxyTokenCallsAggregate(id: number, days = 7) {
   return requestJson<LLMProxyCallAggregateResponse>(
     `/api/llm-proxy/tokens/${id}/calls/aggregate?days=${days}`,
   );
+}
+
+export async function fetchProxyTokenRoutes(id: number) {
+  return requestJson<LLMProxyRouteListResponse>(`/api/llm-proxy/tokens/${id}/routes`);
+}
+
+export async function replaceProxyTokenRoutes(id: number, payload: LLMProxyRouteReplacePayload) {
+  return requestJson<LLMProxyRouteListResponse>(`/api/llm-proxy/tokens/${id}/routes`, {
+    method: "PUT",
+    body: payload,
+  });
 }
