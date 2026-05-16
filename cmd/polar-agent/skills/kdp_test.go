@@ -2,7 +2,7 @@
 
 package skills
 
-// Nanokdp skill unit tests. The real serial path needs a device;
+// KDP skill unit tests. The real serial path needs a device;
 // these tests validate the config + the agent-side `?` command
 // dispatcher in isolation (without opening a port).
 
@@ -14,21 +14,21 @@ import (
 	"testing"
 )
 
-func TestNanokdpSkillKindAndVersion(t *testing.T) {
-	sk := NewNanokdpSkill()
+func TestKDPSkillKindAndVersion(t *testing.T) {
+	sk := NewKDPSkill()
 	if sk == nil {
 		t.Skip("non-unix")
 	}
-	if sk.Kind() != KindNanoKDP {
-		t.Errorf("Kind: got %q, want %q", sk.Kind(), KindNanoKDP)
+	if sk.Kind() != KindKDP {
+		t.Errorf("Kind: got %q, want %q", sk.Kind(), KindKDP)
 	}
 	if sk.Version() == "" {
 		t.Error("Version: empty")
 	}
 }
 
-func TestNanokdpSkillCapabilities(t *testing.T) {
-	sk := NewNanokdpSkill()
+func TestKDPSkillCapabilities(t *testing.T) {
+	sk := NewKDPSkill()
 	if sk == nil {
 		t.Skip("non-unix")
 	}
@@ -44,8 +44,8 @@ func TestNanokdpSkillCapabilities(t *testing.T) {
 	}
 }
 
-func TestNanokdpSkillValidate(t *testing.T) {
-	sk := NewNanokdpSkill()
+func TestKDPSkillValidate(t *testing.T) {
+	sk := NewKDPSkill()
 	if sk == nil {
 		t.Skip("non-unix")
 	}
@@ -73,30 +73,30 @@ func TestNanokdpSkillValidate(t *testing.T) {
 	}
 }
 
-func TestNanokdpSkillStartWithoutDevice(t *testing.T) {
-	sk := NewNanokdpSkill()
+func TestKDPSkillStartWithoutDevice(t *testing.T) {
+	sk := NewKDPSkill()
 	if sk == nil {
 		t.Skip("non-unix")
 	}
 	// /dev/null-but-not-serial: opening succeeds on some unixes,
 	// fails on others. Use a path that's guaranteed not to exist.
-	cfg := json.RawMessage(`{"device_path":"/dev/polar-nanokdp-nonexistent-device","baud":115200}`)
+	cfg := json.RawMessage(`{"device_path":"/dev/polar-kdp-nonexistent-device","baud":115200}`)
 	_, err := sk.Start(context.Background(), 1, cfg)
 	if err == nil {
 		t.Fatal("expected error opening nonexistent serial device")
 	}
-	if !strings.Contains(err.Error(), "/dev/polar-nanokdp-nonexistent-device") {
+	if !strings.Contains(err.Error(), "/dev/polar-kdp-nonexistent-device") {
 		t.Errorf("error should mention the device path: %v", err)
 	}
 }
 
-func TestNanokdpDispatchLineBuiltins(t *testing.T) {
+func TestKDPDispatchLineBuiltins(t *testing.T) {
 	// Test the `?` command parser without a real serial device. We
-	// construct a nanokdpRun manually with a nil port + a buffered
+	// construct a kdpRun manually with a nil port + a buffered
 	// events channel, then call runBuiltin directly.
-	run := &nanokdpRun{
+	run := &kdpRun{
 		id:     42,
-		cfg:    NanokdpConfig{DevicePath: "/dev/test", Baud: 115200},
+		cfg:    KDPConfig{DevicePath: "/dev/test", Baud: 115200},
 		events: make(chan Event, 16),
 		stopCh: make(chan struct{}),
 	}
@@ -149,8 +149,8 @@ func TestNanokdpDispatchLineBuiltins(t *testing.T) {
 	}
 }
 
-func TestNanokdpResizeIsNoop(t *testing.T) {
-	run := &nanokdpRun{}
+func TestKDPResizeIsNoop(t *testing.T) {
+	run := &kdpRun{}
 	if err := run.Resize(40, 120); err != nil {
 		t.Errorf("Resize: want nil err (serial has no winsize), got %v", err)
 	}

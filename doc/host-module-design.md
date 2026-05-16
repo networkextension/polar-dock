@@ -83,7 +83,7 @@ CREATE INDEX idx_hosts_last_seen ON hosts(last_seen_at DESC);
 CREATE TABLE host_skills (
     id BIGSERIAL PRIMARY KEY,
     host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL,                                  -- coder / shell / proxy / wireguard / nanokdp / ...
+    kind TEXT NOT NULL,                                  -- coder / shell / proxy / wireguard / kdp / ...
     name TEXT NOT NULL,                                  -- operator-given label
     config_json JSONB NOT NULL DEFAULT '{}',             -- per-skill schema
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -128,7 +128,7 @@ The agent already maintains a long-lived WS connection to dock
     {"kind": "shell",     "version": "1.0", "capabilities": {}},
     {"kind": "proxy",     "version": "1.0", "capabilities": {"protocols": ["http", "socks5"]}},
     {"kind": "wireguard", "version": "1.0", "capabilities": {}},
-    {"kind": "nanokdp",   "version": "1.0", "capabilities": {}}
+    {"kind": "kdp",   "version": "1.0", "capabilities": {}}
   ],
   "host": {"os": "darwin", "arch": "arm64", "hostname": "locals-Mac"}
 }
@@ -208,7 +208,7 @@ Two new pages under the workspace nav.
 │ dpaa2-board-01                🟢 online · seen 15s ago     │
 │ freebsd/arm64 · LAN-only                                   │
 │ 1 skill running                                            │
-│ [nanokdp /dev/cu.usbserial-DT03V19V]                       │
+│ [kdp /dev/cu.usbserial-DT03V19V]                       │
 └────────────────────────────────────────────────────────────┘
 [+ Add host]
 ```
@@ -228,8 +228,8 @@ Advertised by agent              Enabled on this host
 ✓ shell  v1.0                    ✓ coder("claude", workdir=/Polar-)        [▶ running] [⏸] [⚙]
 ✓ proxy  v1.0                    + Enable shell
 ✓ wireguard v1.0                 + Enable proxy
-✓ nanokdp v1.0                   + Enable wireguard
-                                 + Enable nanokdp
+✓ kdp v1.0                   + Enable wireguard
+                                 + Enable kdp
 ```
 
 Per-skill row shows: state pill, last 3 log lines (collapsible), pause/
@@ -265,7 +265,7 @@ matching UI form spec under `ui/src/hosts/skill-forms/<kind>.ts`.
 | `shell`      | Interactive bash to chat user    | pty + bidi WS bytes         | initial cwd, env, timeout |
 | `proxy`      | HTTP/SOCKS5 outbound proxy       | sing-box/shadowsocks subproc | protocol, listen, upstream |
 | `wireguard`  | WG server or client endpoint     | wg-quick + iface             | peer config, endpoint     |
-| `nanokdp`    | Serial console to embedded board | pty + bidi (routed: `?…` to AI) | device, baud, KDP UDP port |
+| `kdp`    | Serial console to embedded board | pty + bidi (routed: `?…` to AI) | device, baud, KDP UDP port |
 | `mcp-server` | Run MCP servers for chat tool-use | spawn mcp executable        | server type, args         |
 
 Each skill implements:

@@ -140,7 +140,7 @@ func registerSkillsForTestServer(workdir string) {
 	tryRegister(skills.NewShellSkill(workdir))
 	tryRegister(skills.NewProxySkill())
 	tryRegister(skills.NewWireGuardSkill())
-	tryRegister(skills.NewNanokdpSkill())
+	tryRegister(skills.NewKDPSkill())
 	tryRegister(skills.NewVncSkill())
 	tryRegister(skills.NewMCPServerSkill())
 }

@@ -1,12 +1,12 @@
-# Astris / LLDB Skill — Design Proposal
+# JTAG / LLDB Skill — Design Proposal
 
-**Status**: draft 2026-05-16. Synthesized from `doc/astris/00..11.md`
-(LLM-conversation logs on m1n1 + Astris + MCP) + the existing MCP
+**Status**: draft 2026-05-16. Synthesized from `doc/jtag/00..11.md`
+(LLM-conversation logs on m1n1 + JTAG + MCP) + the existing MCP
 skill (P0a + P0b adapter framework already in tree).
 
 **Why now**: P0b shipped the adapter framework. The next adapter to
 land is the one with the highest "AI × hardware" leverage — exactly
-what the astris/ docs argue: give an LLM agent direct read/write
+what the jtag/ docs argue: give an LLM agent direct read/write
 access to ARM system registers + physical memory + boot-stage
 inspection, and Apple Silicon kernel-port work that used to take a
 week of grep'ing the ARMv8 manual collapses to hours.
@@ -14,7 +14,7 @@ week of grep'ing the ARMv8 manual collapses to hours.
 **Companion docs**:
 - `doc/mcp-skill-design.md` — protocol + dock-side dispatch overview
 - `doc/mcp-skill-dev.md` — phase plan; this proposal slots between P0c (sessions) and P2-mcp (lldb-dap)
-- `doc/astris/all_arch.md` — the operator's whole-system vision; this skill is the "Astris" branch of the §2.3 Skill Layer
+- `doc/jtag/all_arch.md` — the operator's whole-system vision; this skill is the "JTAG" branch of the §2.3 Skill Layer
 
 ## 1. Problem in one paragraph
 
@@ -22,12 +22,12 @@ An Apple Silicon kernel-port developer (m1n1, FreeBSD-on-M1,
 asahi-Linux) spends most debug time in a loop: tweak source →
 build → flash → set breakpoint → read register → look up what
 the register means in a 5000-page ARMv8 manual → guess → repeat.
-The Astris JTAG probe + LLDB chain gives a human direct register
+The JTAG probe + LLDB chain gives a human direct register
 + memory access, but the human is the bottleneck. Wire that chain
 behind an MCP adapter and the LLM becomes the loop's executor —
 it reads `ESR_EL1`, knows what bit 25 means without grep, walks
 the page table itself, and reports "your TTBR0_EL1 is pointing at
-unmapped phys; fix here". The astris/ docs converge on this same
+unmapped phys; fix here". The jtag/ docs converge on this same
 prescription — this design is how it lands in Polar.
 
 ## 2. Where it fits
@@ -38,27 +38,27 @@ polar-agent (one process per host)
 │   ├── MCPAdapter registry (P0b)
 │   │   ├── echo      ← P0a — sanity check, always loads
 │   │   ├── stub      ← P0b — deterministic test tools
-│   │   ├── lldb      ← THIS DESIGN, P-astris-0a
-│   │   ├── astris    ← THIS DESIGN, P-astris-0b (when probe present)
+│   │   ├── lldb      ← THIS DESIGN, P-jtag-0a
+│   │   ├── jtag    ← THIS DESIGN, P-jtag-0b (when probe present)
 │   │   ├── ida       ← future, P-ida-0a
 │   │   └── frida     ← future, P-frida-0a
 │   └── JSON-RPC dispatch — initialize / tools/list / tools/call
-└── (existing skills: shell / vnc / coder / proxy / wireguard / nanokdp)
+└── (existing skills: shell / vnc / coder / proxy / wireguard / kdp)
 ```
 
-The `lldb` and `astris` adapters are siblings of `echo` and `stub`.
+The `lldb` and `jtag` adapters are siblings of `echo` and `stub`.
 Operator opts in per-host via skill config:
 
 ```jsonc
-// skill_config_json on a Mac with LLDB + an Astris probe attached:
-{ "adapters": ["lldb", "astris"] }
+// skill_config_json on a Mac with LLDB + an JTAG probe attached:
+{ "adapters": ["lldb", "jtag"] }
 
 // On a Linux build box with no probe:
 { "adapters": ["lldb"] }
 ```
 
 Adapter unavailability is a soft-fail (per P0b's
-`errAdapterUnavailable` pattern) — no Astris probe → `astris`
+`errAdapterUnavailable` pattern) — no JTAG probe → `jtag`
 adapter logs + skips at Start; the rest of the MCP server runs
 normally.
 
@@ -68,7 +68,7 @@ normally.
 
 No new transport. JSON-RPC over the existing `skill.stdin` /
 `skill.event(stdout)` byte stream — same shape as P0a/P0b. The
-adapter owns its subprocess (lldb or astrisctl); the MCP server
+adapter owns its subprocess (lldb or vendor JTAG controller); the MCP server
 just dispatches `tools/call` and forwards the result.
 
 ### 3.2 LLDB adapter
@@ -87,7 +87,7 @@ stdout. Too brittle — output format depends on lldb version, color
 codes, terminal width. The Python binding has stable
 serialization.
 
-**Tools (P-astris-0a)**:
+**Tools (P-jtag-0a)**:
 
 | Tool | Args | Returns |
 |---|---|---|
@@ -107,17 +107,17 @@ explicit `lldb.detach`. The MCP P0c work (persistent sessions in
 the framework itself) is a prerequisite for this — see §5
 ordering.
 
-### 3.3 Astris adapter
+### 3.3 JTAG adapter
 
-Astris is Apple-internal. Two real-world constraints from the
+JTAG is Apple-internal. Two real-world constraints from the
 source docs:
 
-1. **`libastris.dylib` is undocumented** (`doc/astris/05.md`,
+1. **`vendor JTAG library (libjtag.dylib)` is undocumented** (`doc/jtag/05.md`,
    `06.md`). Headers aren't public. We bind via `cgo` or via
-   subprocess to `astrisctl` — *subprocess is the safer first cut*
-   (no symbol-name guessing, no breaking on Astris updates).
+   subprocess to `vendor JTAG controller` — *subprocess is the safer first cut*
+   (no symbol-name guessing, no breaking on JTAG updates).
 2. **Production boards need the Red-eye / Ticket-based Auth**
-   (`doc/astris/09.md`) — Astris will refuse to attach to a
+   (`doc/jtag/09.md`) — JTAG will refuse to attach to a
    t8101/M1 production board without a server-issued ticket. On
    any board where the operator can't get a ticket, the adapter
    degrades to "absent" and we fall through to LLDB-over-serial
@@ -126,40 +126,40 @@ source docs:
 So the adapter shape:
 
 ```go
-type astrisAdapter struct {
-    astrisctl   string       // path; "" if not found
+type jtagAdapter struct {
+    vendor JTAG controller   string       // path; "" if not found
     probeOnline bool         // false if no probe / auth fails
-    sessions    map[string]*astrisSession
+    sessions    map[string]*jtagSession
 }
 
-func (a *astrisAdapter) factory() (MCPAdapter, error) {
-    p, err := exec.LookPath("astrisctl")
+func (a *jtagAdapter) factory() (MCPAdapter, error) {
+    p, err := exec.LookPath("vendor JTAG controller")
     if err != nil { return nil, errAdapterUnavailable }
-    // ... attempt `astrisctl status` to detect probe + auth
+    // ... attempt `vendor JTAG controller status` to detect probe + auth
 }
 ```
 
-**Tools (P-astris-0b)**:
+**Tools (P-jtag-0b)**:
 
 | Tool | Args | Returns |
 |---|---|---|
-| `astris.attach` | `{probe_serial?}` | `{session_id, target_chip}` |
-| `astris.halt` | `{session_id, core?}` | `{halted, pc, exception_level}` |
-| `astris.resume` | `{session_id}` | `{ok}` |
-| `astris.read_reg` | `{session_id, name}` (`SCTLR_EL1`, `TTBR0_EL1`, …) | `{value_hex}` |
-| `astris.write_reg` | `{session_id, name, value}` | `{ok}` ⚠️ destructive |
-| `astris.read_mem` | `{session_id, address, size}` | `{bytes_hex}` |
-| `astris.write_mem` | `{session_id, address, bytes_hex}` | `{ok}` ⚠️ destructive |
-| `astris.step` | `{session_id, count?}` | `{pc, exception_level}` |
-| `astris.parse_pagetable` | `{session_id, ttbr_value}` | `[{va, pa, attrs, perms}]` — high-value helper, AI doesn't have to walk the table by hand |
-| `astris.dump_devicetree` | `{session_id, address}` | `{decoded_json}` |
+| `jtag.attach` | `{probe_serial?}` | `{session_id, target_chip}` |
+| `jtag.halt` | `{session_id, core?}` | `{halted, pc, exception_level}` |
+| `jtag.resume` | `{session_id}` | `{ok}` |
+| `jtag.read_reg` | `{session_id, name}` (`SCTLR_EL1`, `TTBR0_EL1`, …) | `{value_hex}` |
+| `jtag.write_reg` | `{session_id, name, value}` | `{ok}` ⚠️ destructive |
+| `jtag.read_mem` | `{session_id, address, size}` | `{bytes_hex}` |
+| `jtag.write_mem` | `{session_id, address, bytes_hex}` | `{ok}` ⚠️ destructive |
+| `jtag.step` | `{session_id, count?}` | `{pc, exception_level}` |
+| `jtag.parse_pagetable` | `{session_id, ttbr_value}` | `[{va, pa, attrs, perms}]` — high-value helper, AI doesn't have to walk the table by hand |
+| `jtag.dump_devicetree` | `{session_id, address}` | `{decoded_json}` |
 
-`astris.parse_pagetable` and `astris.dump_devicetree` are the
+`jtag.parse_pagetable` and `jtag.dump_devicetree` are the
 "give the LLM superpowers" tools — they encode ARMv8 page-table
 walks + Apple FDT layouts that no human would want to grep for.
 
 **Safety**: write tools (`write_reg` / `write_mem`) are
-HIGH RISK on real hardware. Per `doc/astris/02.md` "Watchdog 干扰"
+HIGH RISK on real hardware. Per `doc/jtag/02.md` "Watchdog 干扰"
 and `06.md` "可能烧毁屏幕" warnings, we should:
 
 - Gate `write_*` behind a `safe_mode: false` flag in adapter
@@ -173,8 +173,8 @@ and `06.md` "可能烧毁屏幕" warnings, we should:
 
 **Critical realization from operator (2026-05-16)**: the board
 exposes a SoC-state channel via the USB Recovery / DFU protocol
-that does NOT require an Astris probe AND does not need the
-Red-eye Auth ticket from `doc/astris/09.md`. Two tools available:
+that does NOT require an JTAG probe AND does not need the
+Red-eye Auth ticket from `doc/jtag/09.md`. Two tools available:
 
 - **`irecovery -q`** (from libimobiledevice / libirecovery) —
   query a device in Recovery or DFU mode, returns chip/board
@@ -197,11 +197,11 @@ Red-eye Auth ticket from `doc/astris/09.md`. Two tools available:
   `checkm8`-vulnerable etc.).
 
 **Why this matters for the skill design**: a `recovery` adapter
-fits BEFORE LLDB and Astris in the phase plan — no Auth ticket,
+fits BEFORE LLDB and JTAG in the phase plan — no Auth ticket,
 no Xcode install, no probe hardware. The bar to attach is just
 "USB cable + libimobiledevice installed". On a production board
-that Astris can't touch, recovery is the only channel — exactly
-the "Builder's备选方案" the source docs (`doc/astris/09.md` §方案
+that JTAG can't touch, recovery is the only channel — exactly
+the "Builder's备选方案" the source docs (`doc/jtag/09.md` §方案
 调整, `10.md`) prescribe.
 
 **Tools (P-recovery-0a)**:
@@ -222,11 +222,11 @@ absent → adapter unavailable (soft fail per §2 convention).
 installed can declare:
 
 ```jsonc
-{ "adapters": ["recovery", "astris", "lldb"] }
+{ "adapters": ["recovery", "jtag", "lldb"] }
 ```
 
 The LLM picks the right channel by tool name. Recovery for the
-"is the device present + what is it" pre-flight; Astris for
+"is the device present + what is it" pre-flight; JTAG for
 deep JTAG-level halt+step (when probe + Auth available); LLDB
 for user-space process debugging on the host running the agent.
 
@@ -375,7 +375,7 @@ Tools (`library.functions.*`):
 - REST under `/api/library/{devices,firmwares,functions}/...`
   (admin-only PUT/POST, workspace-member read)
 - MCP `library` adapter wraps the REST — operator config
-  `{adapters: ["library", "lldb", "astris", "recovery"]}`. The
+  `{adapters: ["library", "lldb", "jtag", "recovery"]}`. The
   adapter dials the dock loopback (`http://127.0.0.1:8080/...`)
   + forwards each tool call as a REST request. No new wire
   protocol; reuses the dock auth + DB
@@ -388,50 +388,50 @@ Tools (`library.functions.*`):
 
 ### 3.6 Sandbox + state recovery
 
-From `doc/astris/all.md` §🛠 avoidance:
+From `doc/jtag/all.md` §🛠 avoidance:
 
 > Agent 是破坏狂，尤其是挂载了内核调试和逆向工具后。整个 VNC/
 > Shell 环境必须实现秒级快照恢复 (Snapshot & Restore)。
 
 For the LLDB adapter the blast radius is "kill the subprocess +
-the debugged target" — bounded. For Astris the blast radius is
+the debugged target" — bounded. For JTAG the blast radius is
 "brick the SoC" or "force a Kernel Panic that requires DFU
 re-flash". For v1 we MUST NOT auto-recover SoC bricks; instead:
 
 - Hard cap on write tools (per above)
-- Surface every Astris adapter run with a state event flagging it
+- Surface every JTAG adapter run with a state event flagging it
   as "destructive-capable" so the operator UI can warn
 
-Auto-DFU + reflash is a P-astris-0c follow-up; depends on a
+Auto-DFU + reflash is a P-jtag-0c follow-up; depends on a
 separate per-host launcher script the operator wires.
 
 ## 4. Concrete tool flow — example
 
 Operator picks "AI 排查 m1n1 卡死" task. Coder agent receives
-the task + a hostid pointing at a Mac with Astris probe + an M1
+the task + a hostid pointing at a Mac with JTAG probe + an M1
 dev board attached:
 
 ```
-1. agent → MCP: tools/call astris.attach {}
+1. agent → MCP: tools/call jtag.attach {}
               ← {session_id: "s_7k3", target_chip: "t8101"}
 
-2. agent → MCP: tools/call astris.halt {session_id: "s_7k3"}
+2. agent → MCP: tools/call jtag.halt {session_id: "s_7k3"}
               ← {halted: true, pc: "0x8000124c", exception_level: 1}
 
-3. agent → MCP: tools/call astris.read_reg {session_id, name: "ESR_EL1"}
+3. agent → MCP: tools/call jtag.read_reg {session_id, name: "ESR_EL1"}
               ← {value_hex: "0x96000050"}
 
    LLM internal: ESR_EL1 bits 31-26 = 0x25 = "Data Abort from
    lower EL", bit 6 = WnR=1 (write), bits 5..0 = 0x10 = "level 0
    translation fault". So: write to an unmapped page.
 
-4. agent → MCP: tools/call astris.read_reg {session_id, name: "FAR_EL1"}
+4. agent → MCP: tools/call jtag.read_reg {session_id, name: "FAR_EL1"}
               ← {value_hex: "0xfffffe0010083000"}
 
-5. agent → MCP: tools/call astris.read_reg {session_id, name: "TTBR0_EL1"}
+5. agent → MCP: tools/call jtag.read_reg {session_id, name: "TTBR0_EL1"}
               ← {value_hex: "0x80808000"}
 
-6. agent → MCP: tools/call astris.parse_pagetable
+6. agent → MCP: tools/call jtag.parse_pagetable
               {session_id, ttbr_value: "0x80808000"}
               ← [{va: 0xff...000, pa: 0x800..., perms: "rw"},
                  {va: 0xff...100, perms: "RESERVED — NOT MAPPED"}]
@@ -460,16 +460,16 @@ plus one prerequisite that hasn't landed.
 | **P-library-0a** | dock schema migrations + REST endpoints for `rev_devices` / `rev_firmwares` / `rev_functions`. CRUD + lookup tools | none (pure dock) | ~600 Go + ~150 SQL | low |
 | **P-library-0b** | `library` MCP adapter — wraps the REST so the agent can query in-loop. Tools: devices.{list,get,upsert,recent_seen} + firmwares.{list,get,matching,ingest} + functions.{lookup_by_address,lookup_by_symbol,search,match_signature,add} | P0c + P-library-0a | ~400 Go | low |
 | **P-recovery-0a** | `recovery` adapter — wraps `irecovery` (mandatory) + Anya (optional). 5 tools (detect / query / send_command / dfu_send_image / anya_status). No probe required, no Auth ticket. On detect / query, auto-upserts new ECIDs into `rev_devices` so the device inventory is self-populating | P0c + P-library-0a | ~400 Go + mock | low |
-| **P-astris-0a** | `lldb` adapter — 5 core tools (attach / read_register / read_memory / backtrace / continue) over LLDB Python bindings via subprocess | P0c | ~600 Go + ~200 Python helper | medium |
-| **P-astris-0b** | `astris` adapter — wrap `astrisctl interact`, 6 read tools + `parse_pagetable` helper. NO write tools by default. Detect probe + auth at Start | P-astris-0a | ~700 Go + ~150 Tcl | high (env-specific) |
-| **P-astris-0c** | Write tools (`write_reg` / `write_mem`) behind `safe_mode: false`. Per-target register denylist | P-astris-0b | ~150 Go | high (destructive) |
-| **P-astris-0d** | Auto-recovery: DFU + reflash hook per host. Sandbox snapshot/rollback (where the host is itself a sacrificial VM) | P-astris-0c + P-recovery-0a | env-specific | high (operator setup) |
-| **P-astris-0e** | LLDB-over-serial fallback for boards Astris can't attach to (per `doc/astris/10.md`) | P-astris-0a | ~400 Go | medium |
+| **P-jtag-0a** | `lldb` adapter — 5 core tools (attach / read_register / read_memory / backtrace / continue) over LLDB Python bindings via subprocess | P0c | ~600 Go + ~200 Python helper | medium |
+| **P-jtag-0b** | `jtag` adapter — wrap `vendor JTAG controller (interactive mode)`, 6 read tools + `parse_pagetable` helper. NO write tools by default. Detect probe + auth at Start | P-jtag-0a | ~700 Go + ~150 Tcl | high (env-specific) |
+| **P-jtag-0c** | Write tools (`write_reg` / `write_mem`) behind `safe_mode: false`. Per-target register denylist | P-jtag-0b | ~150 Go | high (destructive) |
+| **P-jtag-0d** | Auto-recovery: DFU + reflash hook per host. Sandbox snapshot/rollback (where the host is itself a sacrificial VM) | P-jtag-0c + P-recovery-0a | env-specific | high (operator setup) |
+| **P-jtag-0e** | LLDB-over-serial fallback for boards JTAG can't attach to (per `doc/jtag/10.md`) | P-jtag-0a | ~400 Go | medium |
 
 **Ordering rationale**:
 
 1. **P0c first** — sessions are required by every stateful
-   adapter (lldb / astris attach state); pure framework code,
+   adapter (lldb / jtag attach state); pure framework code,
    no hardware
 2. **P-library-0a in parallel** — pure dock CRUD, no adapter
    work yet. Schema + REST can land alongside P0c on a sibling
@@ -481,13 +481,13 @@ plus one prerequisite that hasn't landed.
 4. **P-recovery-0a next** — lowest-bar hardware adapter. Auto-
    populates the device inventory built in -0a. Validates the
    multi-adapter end-to-end on hardware the operator has today
-5. **P-astris-0a (lldb)** then **0b (astris)** — heavier
+5. **P-jtag-0a (lldb)** then **0b (jtag)** — heavier
    adapters; lean on the library adapter for symbol resolution
 6. **0c / 0d / 0e** — destructive writes / auto-recovery /
    serial fallback. All operator-environment-specific
 
 P0c lands first (we already need session_id for LLDB; better to
-build it into the MCP framework than per-adapter). Then P-astris
+build it into the MCP framework than per-adapter). Then P-jtag
 phases serial.
 
 ## 6. Open questions to settle before P0c
@@ -535,7 +535,7 @@ adapter rejects code without:
 
 ### 7.1 Mock subprocess pattern
 
-LLDB and Astris are external binaries we can't assume are
+LLDB and JTAG are external binaries we can't assume are
 installed. The pattern we shipped for VNC (`mock_vnc.go` — TCP
 listener that speaks the wire shape) generalizes:
 
@@ -543,16 +543,16 @@ listener that speaks the wire shape) generalizes:
 // cmd/polar-agent-test/mock_lldb.go
 type mockLLDBSubprocess struct {
     // Speaks just enough lldb-rpc-server wire to satisfy the 5
-    // P-astris-0a tools. Returns canned fixtures keyed by the
+    // P-jtag-0a tools. Returns canned fixtures keyed by the
     // exact GDB-Remote-Protocol request bytes — adapter doesn't
     // know it's mocked.
     Pid  int
     Sock string  // unix socket the adapter dials into
 }
 
-// cmd/polar-agent-test/mock_astris.go
-type mockAstrisctl struct {
-    // Pretends to be `astrisctl interact` over a pipe. Has a
+// cmd/polar-agent-test/mock_jtag.go
+type mockJTAG controller struct {
+    // Pretends to be `vendor JTAG controller (interactive mode)` over a pipe. Has a
     // built-in fixture table for halt / read_reg / read_mem so
     // scenarios can pin expected values:
     //   m.SetRegFixture("ESR_EL1", "0x96000050")
@@ -618,7 +618,7 @@ Go integration tests under `internal/app/dock/rev_library_test.go`
   adapter loads as unavailable (soft fail per framework
   convention)
 
-**P-astris-0a (lldb adapter, mock-backed)**:
+**P-jtag-0a (lldb adapter, mock-backed)**:
 - `mcp-lldb-attach-mock` — happy path, session_id returned
 - `mcp-lldb-read-register` — value flows from mock fixture
 - `mcp-lldb-backtrace` — multi-frame list parses correctly
@@ -629,26 +629,26 @@ Go integration tests under `internal/app/dock/rev_library_test.go`
   This is the scenario that proves the WHOLE LOOP works the way
   §4's example expects, not just individual tools.
 
-**P-astris-0b (astris adapter, mock-backed)**:
-- `mcp-astris-no-probe` — adapter loads + immediately reports
-  unavailable when `astrisctl` returns "no probe"
-- `mcp-astris-halt-reg` — halt, read PC + ESR_EL1, values match
+**P-jtag-0b (jtag adapter, mock-backed)**:
+- `mcp-jtag-no-probe` — adapter loads + immediately reports
+  unavailable when `vendor JTAG controller` returns "no probe"
+- `mcp-jtag-halt-reg` — halt, read PC + ESR_EL1, values match
   fixture
-- `mcp-astris-parse-pagetable` — given a fixture TTBR0 dump,
+- `mcp-jtag-parse-pagetable` — given a fixture TTBR0 dump,
   decoded VA→PA list matches expected
-- `mcp-astris-mmu-fault-flow` — **multi-step, mirrors §4**:
+- `mcp-jtag-mmu-fault-flow` — **multi-step, mirrors §4**:
   attach → halt → read ESR (fixture = 0x96000050) → read FAR →
   read TTBR0 → parse_pagetable → assert that the fault VA falls
   outside the mapped ranges in the decoded output. Proves the
   end-to-end "AI walks the page table fault" path works in
   isolation.
 
-**P-astris-0c (destructive writes, safe_mode gating)**:
-- `mcp-astris-write-rejected` — safe_mode=true (default),
+**P-jtag-0c (destructive writes, safe_mode gating)**:
+- `mcp-jtag-write-rejected` — safe_mode=true (default),
   attempt write_reg → error "writes disabled"
-- `mcp-astris-write-allowed` — safe_mode=false, write_reg
+- `mcp-jtag-write-allowed` — safe_mode=false, write_reg
   succeeds, audit event emitted
-- `mcp-astris-write-denylist` — safe_mode=false but PMGR_CLK_X
+- `mcp-jtag-write-denylist` — safe_mode=false but PMGR_CLK_X
   on the denylist → still rejected
 
 ### 7.3 Dev loop with the harness
@@ -671,7 +671,7 @@ test-serve subprocess every time + tears it down on exit, so
 each iteration is hermetic.
 
 For real-hardware testing (LLDB attached to a real process,
-Astris attached to a real probe), the SAME scenarios run with
+JTAG attached to a real probe), the SAME scenarios run with
 real subprocesses by setting `POLAR_LLDB_BIN=/usr/bin/lldb` etc.
 — no separate test code path. Gated behind a tag like
 `POLAR_TEST_REAL_LLDB=1` so CI doesn't need the hardware.
@@ -692,7 +692,7 @@ real subprocesses by setting `POLAR_LLDB_BIN=/usr/bin/lldb` etc.
 ## 8. What this design does NOT cover
 
 - The MiroFish marketplace / billing / Surge+kcptun parts of
-  `doc/astris/all_arch.md` — that's the surrounding business
+  `doc/jtag/all_arch.md` — that's the surrounding business
   layer. This is one specific Skill inside it.
 - IDA Pro / Ghidra / Frida / radare2 adapters — same pattern, each
   is its own future P-* design.
@@ -701,17 +701,17 @@ real subprocesses by setting `POLAR_LLDB_BIN=/usr/bin/lldb` etc.
   P1-mcp.
 - A web UI for the MCP catalogue + session list (`doc/mcp-skill-
   dev.md` P7-mcp).
-- Hardware autoflash recovery (P-astris-0d above is a stub —
+- Hardware autoflash recovery (P-jtag-0d above is a stub —
   needs its own design doc when we get there).
 
 ## 9. Recommended next action
 
 Start **P0c (sessions in the MCP framework)** — it's the
-prerequisite for both LLDB and Astris adapters, and is dock/
+prerequisite for both LLDB and JTAG adapters, and is dock/
 hardware-independent. ~250 Go LOC, 4 harness scenarios (per §7.2).
 Lands behind the same `go run ./cmd/polar-agent-test orchestrate`
 loop we already use; can ship before anyone needs to touch LLDB
-or get an Astris probe.
+or get an JTAG probe.
 
 **Concrete first session of work** (~3 hours, end-to-end):
 
@@ -726,7 +726,7 @@ or get an Astris probe.
    write the 4 harness scenarios above
 5. `go run ./cmd/polar-agent-test orchestrate` → 30+4 scenarios
    PASS in <30s
-6. Commit + PR. P-astris-0a can start immediately after merge.
+6. Commit + PR. P-jtag-0a can start immediately after merge.
 
 After P0c lands, **P-library-0a + 0b are the next two steps in
 parallel with P-recovery-0a**. The library work is dock-pure
@@ -742,7 +742,7 @@ P-recovery-0a still wants to land too. Reasons:
   hardware (the operator has irecovery + a board today, per
   the 2026-05-16 update that triggered this section)
 - Provides the universal "what is this device + which channel
-  is available" pre-flight that LLDB and Astris adapters
+  is available" pre-flight that LLDB and JTAG adapters
   later reference
 
 Same dev pattern: write `mock_recovery.go` first (mock returns

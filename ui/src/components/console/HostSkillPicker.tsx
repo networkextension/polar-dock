@@ -11,7 +11,7 @@ export interface PickerChoice {
   hostId: string;
   hostSkillId: number;
   /** Skill kind: "shell" or "vnc". Determines which /open endpoint
-   *  the pane will call. Other byte-streaming kinds (nanokdp) need
+   *  the pane will call. Other byte-streaming kinds (kdp) need
    *  device-specific config and aren't started from this picker. */
   kind: string;
   shell?: string;
@@ -55,7 +55,7 @@ export function HostSkillPicker({ hosts, skillsByHost, onSkillsResolved, onStart
     };
   }, [hostId, skills, onSkillsResolved]);
 
-  // shell + vnc are user-selectable byte-streaming kinds. Nanokdp
+  // shell + vnc are user-selectable byte-streaming kinds. KDP
   // needs device_path which the picker doesn't ask for; see PR #208.
   const usable = useMemo(
     () => (skills || []).filter((s) => s.kind === "shell" || s.kind === "vnc"),

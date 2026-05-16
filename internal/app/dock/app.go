@@ -732,7 +732,7 @@ func (s *Server) registerRoutes() {
 		// deploy tooling can probe a fresh box. See sysinfo.go for
 		// what's exposed vs not.
 		api.GET("/system/info", s.handleSystemInfo)
-		// Knowledge-base (P-library-0a) — see doc/astris-skill-design.md
+		// Knowledge-base (P-library-0a) — see doc/jtag-skill-design.md
 		// §3.5. Global tables; writes admin-only, reads any-logged-in.
 		api.GET("/library/devices", s.AuthMiddleware(), s.handleRevDeviceList)
 		api.GET("/library/devices/recent", s.AuthMiddleware(), s.handleRevDeviceRecent)
