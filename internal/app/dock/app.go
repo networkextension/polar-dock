@@ -698,6 +698,15 @@ func (s *Server) registerRoutes() {
 		api.GET("/llm-configs/shared/:shareId", s.AuthMiddleware(), s.handleLLMConfigGetByShareID)
 		api.PUT("/llm-configs/:id", s.AuthMiddleware(), s.handleLLMConfigUpdate)
 		api.DELETE("/llm-configs/:id", s.AuthMiddleware(), s.handleLLMConfigDelete)
+		// LLM proxy — admin-gated token CRUD. The plaintext is shown
+		// once at create-time and never returnable again.
+		api.GET("/llm-proxy/tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenList)
+		api.POST("/llm-proxy/tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenCreate)
+		api.DELETE("/llm-proxy/tokens/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenRevoke)
+		// Public OpenAI-compatible chat completion endpoint. Auth is
+		// done in-handler via Bearer <plaintext> from the
+		// llm_proxy_tokens table — no cookie/session auth.
+		api.POST("/proxy/v1/chat/completions", s.handleLLMProxyChatCompletions)
 		api.GET("/packtunnel/profiles", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileList)
 		api.GET("/packtunnel/profiles/active", s.AuthMiddleware(), s.handlePackTunnelActiveProfileGet)
 		api.GET("/packtunnel/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileGet)
