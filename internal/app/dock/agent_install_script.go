@@ -137,6 +137,27 @@ if [ -x "$INSTALL_PREFIX/polar-agent" ]; then
   fi
 fi
 
+# ---- libimobiledevice (irecovery) for iOS recovery auto-detect ----
+# Powers the polar-agent recovery watcher (P-recovery-0a): when an
+# iOS device is plugged in DFU/Recovery, the agent auto-upserts it
+# to dock's /api/library/devices. macOS only — brew is the only
+# install path with usable bottle coverage; Linux operators install
+# via apt/yum manually if they care.
+if [ "$OS" = "darwin" ]; then
+  if command -v irecovery >/dev/null 2>&1; then
+    record_ok "libimobiledevice already installed (irecovery on PATH)"
+  elif command -v brew >/dev/null 2>&1; then
+    echo "→ installing libimobiledevice via brew (for iOS recovery auto-detect)..."
+    if brew install libimobiledevice >/dev/null 2>&1; then
+      record_ok "libimobiledevice installed — plug an iOS device in recovery to test"
+    else
+      record_err "brew install libimobiledevice failed — manual: 'brew install libimobiledevice' (network / brew cache issue)"
+    fi
+  else
+    record_err "libimobiledevice skipped: brew not on PATH. Install Homebrew then: brew install libimobiledevice"
+  fi
+fi
+
 {{if .Coders.Kimi.Enabled}}
 # ---- kimi-cli ----
 echo "→ installing kimi-cli (via uv)..."
