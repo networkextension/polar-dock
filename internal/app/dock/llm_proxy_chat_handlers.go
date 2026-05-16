@@ -154,6 +154,9 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 			call.TotalTokens = call.PromptTokens + call.CompletionTokens
 		}
 	}
+	if cost, ok := estimateLLMProxyCallCost(call.ModelResolved, call.PromptTokens, call.CompletionTokens); ok {
+		call.CostUSD = &cost
+	}
 	_ = s.insertLLMProxyCall(call)
 
 	// 7) Render OpenAI-compatible response envelope.
@@ -342,6 +345,9 @@ func (s *Server) streamLLMProxyChatCompletion(c *gin.Context, tok *LLMProxyToken
 		if call.TotalTokens == 0 {
 			call.TotalTokens = call.PromptTokens + call.CompletionTokens
 		}
+	}
+	if cost, ok := estimateLLMProxyCallCost(call.ModelResolved, call.PromptTokens, call.CompletionTokens); ok {
+		call.CostUSD = &cost
 	}
 	_ = s.insertLLMProxyCall(call)
 }

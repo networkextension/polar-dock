@@ -300,6 +300,7 @@ function renderAuditAggregateRow(a: LLMProxyCallAggregate): HTMLTableRowElement 
   tr.appendChild(mk(a.prompt_tokens.toLocaleString()));
   tr.appendChild(mk(a.completion_tokens.toLocaleString()));
   tr.appendChild(mk(a.total_tokens.toLocaleString()));
+  tr.appendChild(mk(a.cost_usd > 0 ? `$${a.cost_usd.toFixed(4)}` : "—"));
   return tr;
 }
 
@@ -316,6 +317,7 @@ function renderAuditCallRow(c: LLMProxyCall): HTMLTableRowElement {
   tr.appendChild(statusTd);
   tr.appendChild(mk(c.model_resolved || c.model_requested || "—"));
   tr.appendChild(mk(`${c.prompt_tokens} / ${c.completion_tokens}`));
+  tr.appendChild(mk(c.cost_usd != null ? `$${c.cost_usd.toFixed(4)}` : "—"));
   tr.appendChild(mk(c.latency_ms > 0 ? `${c.latency_ms}ms` : "—"));
   const errTd = mk(c.error_text || "");
   if (c.error_text) {
