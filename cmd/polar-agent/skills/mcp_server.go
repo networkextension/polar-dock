@@ -35,6 +35,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,10 +45,17 @@ import (
 const (
 	mcpProtocolVersion = "2024-11-05"
 	mcpServerName      = "polar-mcp-server"
-	mcpServerVersion   = "0.1-p0a"
+	mcpServerVersion   = "0.2-p0c"
 	mcpStdoutChunkCap  = 64 << 10
 	mcpDefaultIdleSec  = 1800
 	mcpHardCapSec      = 21600
+
+	// mcpSessionIdleSec is the per-session idle eviction window. The
+	// framework's tick (idleWatchdog) asks every SessionAware adapter
+	// to drop sessions whose last_active is older than this. Default
+	// 30 min matches the per-run idle in mcpDefaultIdleSec — sessions
+	// inside a run can be reaped before the run itself.
+	mcpSessionIdleSec = 1800
 )
 
 // MCPConfig is the per-run config inside skill.start.
@@ -293,13 +302,19 @@ func (r *mcpRun) dispatchLine(line []byte) {
 		if isNotif {
 			return
 		}
-		// Marshal each adapter's tool defs verbatim into the response.
-		// Tools across adapters merge into a single flat catalogue —
-		// the adapter that owns a tool is implicit in the tool name
-		// (e.g. "stub.add" belongs to the "stub" adapter); operators
-		// don't need to address adapters explicitly when calling.
+		// Marshal each adapter's tool defs verbatim into the response,
+		// plus the framework-owned mcp.* meta tools (list_sessions /
+		// close_session) which apply across all adapters that
+		// implement SessionAware.
 		toolList := []map[string]any{}
 		for _, t := range r.allTools() {
+			toolList = append(toolList, map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"inputSchema": t.InputSchema,
+			})
+		}
+		for _, t := range mcpFrameworkTools() {
 			toolList = append(toolList, map[string]any{
 				"name":        t.Name,
 				"description": t.Description,
@@ -317,6 +332,17 @@ func (r *mcpRun) dispatchLine(line []byte) {
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			r.replyError(req.ID, -32602, "invalid params: "+err.Error())
+			return
+		}
+		// Framework meta tools (mcp.list_sessions / mcp.close_session)
+		// don't belong to any adapter — handled directly.
+		if isMCPFrameworkTool(p.Name) {
+			result, callErr := r.callFrameworkTool(p.Name, p.Arguments)
+			if callErr != nil {
+				r.replyError(req.ID, -32000, callErr.Error())
+				return
+			}
+			r.replyResult(req.ID, result)
 			return
 		}
 		adapter := r.findToolAdapter(p.Name)
@@ -394,6 +420,10 @@ func (r *mcpRun) idleWatchdog(ctx context.Context) {
 				r.stop("hard_cap")
 				return
 			}
+			// P0c: reap idle sessions inside still-running adapters.
+			// Tick uses the same 30s cadence; per-session timeout is
+			// mcpSessionIdleSec.
+			r.reapIdleSessions()
 		}
 	}
 }
@@ -437,3 +467,119 @@ func (r *mcpRun) send(ev Event) {
 // Tools are owned by adapters (mcp_adapter_echo.go, mcp_adapter_stub.go,
 // future gdb/lldb/ida/frida/radare2). Skill dispatches via
 // mcpRun.findToolAdapter — see Start() for the load-from-config path.
+
+// ---- framework meta tools (mcp.list_sessions / mcp.close_session) ----
+// These belong to the MCP server itself, not to any adapter. They
+// iterate every loaded adapter that implements SessionAware and union
+// the results. Adapters that don't implement SessionAware contribute
+// nothing — no error.
+
+func mcpFrameworkTools() []MCPToolDef {
+	return []MCPToolDef{
+		{
+			Name:        "mcp.list_sessions",
+			Description: "List all open sessions across every SessionAware adapter currently loaded. Returns id + adapter + opened_at + last_active + adapter-specific metadata.",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+		{
+			Name:        "mcp.close_session",
+			Description: "Close a session by id. Searches every SessionAware adapter; errors if no adapter owns the id.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"session_id": map[string]any{"type": "string"},
+				},
+				"required": []string{"session_id"},
+			},
+		},
+	}
+}
+
+func isMCPFrameworkTool(name string) bool {
+	for _, t := range mcpFrameworkTools() {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *mcpRun) callFrameworkTool(name string, args json.RawMessage) (map[string]any, error) {
+	switch name {
+	case "mcp.list_sessions":
+		all := []SessionInfo{}
+		for _, ad := range r.adapters {
+			if sa, ok := ad.(SessionAware); ok {
+				all = append(all, sa.ListSessions()...)
+			}
+		}
+		return map[string]any{
+			"content": []map[string]any{
+				{"type": "text", "text": fmt.Sprintf("%d open session(s)", len(all))},
+			},
+			"sessions": all,
+		}, nil
+	case "mcp.close_session":
+		var p struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+		// Find the adapter that owns this id.
+		for _, ad := range r.adapters {
+			sa, ok := ad.(SessionAware)
+			if !ok {
+				continue
+			}
+			for _, info := range sa.ListSessions() {
+				if info.ID == p.SessionID {
+					if err := sa.CloseSession(p.SessionID); err != nil {
+						return nil, err
+					}
+					return map[string]any{
+						"content": []map[string]any{{"type": "text", "text": "closed"}},
+						"ok":      true,
+					}, nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("session %q not found", p.SessionID)
+	}
+	return nil, fmt.Errorf("unknown framework tool: %s", name)
+}
+
+// reapIdleSessions runs as part of the existing idleWatchdog tick;
+// asks every SessionAware adapter to drop sessions whose last_active
+// is older than the configured cutoff. Env override
+// POLAR_MCP_SESSION_IDLE_SEC lets the harness set tiny windows
+// (e.g. 2 seconds) so the idle-evict scenario doesn't have to wait
+// the production 30-min default.
+func (r *mcpRun) reapIdleSessions() {
+	cutoff := time.Now().Unix() - sessionIdleSec()
+	for _, ad := range r.adapters {
+		sa, ok := ad.(SessionAware)
+		if !ok {
+			continue
+		}
+		for _, info := range sa.ListSessions() {
+			if info.LastActive < cutoff {
+				log.Printf("[mcp] run=%d evicting idle session %s (adapter=%s, idle=%ds)",
+					r.id, info.ID, info.Adapter, time.Now().Unix()-info.LastActive)
+				_ = sa.CloseSession(info.ID)
+			}
+		}
+	}
+}
+
+func sessionIdleSec() int64 {
+	if v := os.Getenv("POLAR_MCP_SESSION_IDLE_SEC"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return mcpSessionIdleSec
+}

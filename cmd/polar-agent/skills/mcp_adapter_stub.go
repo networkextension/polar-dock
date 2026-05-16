@@ -16,24 +16,67 @@ package skills
 // test surface, not a feature.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
 func init() {
 	RegisterMCPAdapter("stub", func() (MCPAdapter, error) {
-		return &stubAdapter{}, nil
+		return &stubAdapter{sessions: map[string]*stubSession{}}, nil
 	})
 }
 
-type stubAdapter struct{}
+type stubSession struct {
+	id         string
+	openedAt   int64
+	lastActive int64
+	meta       map[string]any
+}
+
+type stubAdapter struct {
+	mu       sync.Mutex
+	sessions map[string]*stubSession
+}
 
 func (s *stubAdapter) Name() string { return "stub" }
 
 func (s *stubAdapter) Tools() []MCPToolDef {
 	return []MCPToolDef{
+		{
+			Name:        "stub.open_session",
+			Description: "Open a new session. Tests the SessionAware sub-interface — returns a session_id usable by other stub.* tools that take one.",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+		{
+			Name:        "stub.close_session",
+			Description: "Close a previously-opened session by id.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"session_id": map[string]any{"type": "string"},
+				},
+				"required": []string{"session_id"},
+			},
+		},
+		{
+			Name:        "stub.session_ping",
+			Description: "Touch a session (resets idle timer) and return its metadata. Errors if session_id is unknown.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"session_id": map[string]any{"type": "string"},
+				},
+				"required": []string{"session_id"},
+			},
+		},
 		{
 			Name:        "stub.add",
 			Description: "Return the sum of two numbers. Test tool — always succeeds with a numeric result.",
@@ -70,6 +113,51 @@ func (s *stubAdapter) Tools() []MCPToolDef {
 
 func (s *stubAdapter) Call(toolName string, args json.RawMessage) (map[string]any, error) {
 	switch toolName {
+	case "stub.open_session":
+		id, err := s.OpenSession(nil)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"content": []map[string]any{
+				{"type": "text", "text": "session opened: " + id},
+			},
+			"session_id": id,
+		}, nil
+	case "stub.close_session":
+		var p struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if err := s.CloseSession(p.SessionID); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "closed"}},
+			"ok":      true,
+		}, nil
+	case "stub.session_ping":
+		var p struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		s.mu.Lock()
+		sess, ok := s.sessions[p.SessionID]
+		if !ok {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("unknown session: %s", p.SessionID)
+		}
+		sess.lastActive = time.Now().Unix()
+		s.mu.Unlock()
+		s.TouchSession(p.SessionID)
+		return map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "pong " + p.SessionID}},
+			"session_id": p.SessionID,
+		}, nil
 	case "stub.add":
 		var p struct {
 			A float64 `json:"a"`
@@ -113,4 +201,65 @@ func (s *stubAdapter) Call(toolName string, args json.RawMessage) (map[string]an
 	}
 }
 
-func (s *stubAdapter) Close() error { return nil }
+func (s *stubAdapter) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// CloseSession on each (idempotent), then drop the map.
+	s.sessions = map[string]*stubSession{}
+	return nil
+}
+
+// --- SessionAware implementation ---
+
+func (s *stubAdapter) OpenSession(meta map[string]any) (string, error) {
+	id := newSessionID()
+	now := time.Now().Unix()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[id] = &stubSession{
+		id:         id,
+		openedAt:   now,
+		lastActive: now,
+		meta:       meta,
+	}
+	return id, nil
+}
+
+func (s *stubAdapter) CloseSession(sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, sessionID) // idempotent: deleting an absent key is a no-op
+	return nil
+}
+
+func (s *stubAdapter) ListSessions() []SessionInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]SessionInfo, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		out = append(out, SessionInfo{
+			ID:         sess.id,
+			Adapter:    "stub",
+			OpenedAt:   sess.openedAt,
+			LastActive: sess.lastActive,
+			Metadata:   sess.meta,
+		})
+	}
+	return out
+}
+
+func (s *stubAdapter) TouchSession(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[sessionID]; ok {
+		sess.lastActive = time.Now().Unix()
+	}
+}
+
+// newSessionID returns "s_" + 16 random hex chars. Short enough to
+// type, long enough to be globally unique within an agent process.
+func newSessionID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "s_" + hex.EncodeToString(b)
+}

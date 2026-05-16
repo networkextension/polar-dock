@@ -104,3 +104,51 @@ func registeredAdapterNames() []string {
 // (gdb missing, frida missing, etc.). The skill treats this as a
 // soft failure: log + skip, keep loading other adapters.
 var errAdapterUnavailable = errors.New("adapter unavailable on this host")
+
+// SessionAware is an OPTIONAL sub-interface for adapters that hold
+// per-attach state (LLDB target, Astris probe attach, gdb subprocess,
+// etc.). Type-asserted by the MCP server at tools/call time so it can
+// validate session_ids + route to the right session state.
+//
+// Stateless adapters (echo) don't implement this. Stub implements it
+// for harness validation.
+//
+// Lifecycle:
+//   1. operator calls a "create" tool (e.g. lldb.attach) — adapter
+//      implementation calls OpenSession to register and returns the
+//      id in the tool result
+//   2. operator calls subsequent tools passing session_id in args —
+//      adapter dispatches by id internally
+//   3. operator calls a "destroy" tool OR the MCP server's idle
+//      watchdog fires — adapter's CloseSession releases resources
+type SessionAware interface {
+	// OpenSession registers a new session and returns its opaque id.
+	// The adapter is free to back this with any state (subprocess,
+	// file handle, etc.). Called from the adapter's "create" tool.
+	OpenSession(meta map[string]any) (string, error)
+
+	// CloseSession releases the session's resources. Idempotent; a
+	// double close is a no-op. Called by the adapter's "destroy"
+	// tool OR by the MCP server's idle watchdog OR by adapter Close
+	// at shutdown.
+	CloseSession(sessionID string) error
+
+	// ListSessions enumerates active sessions for the
+	// mcp.list_sessions framework tool. Returns id + opaque metadata
+	// the adapter wants to surface (target, attached_at, etc.).
+	ListSessions() []SessionInfo
+
+	// TouchSession marks the session as recently active so the idle
+	// watchdog leaves it alone. Adapters call this from any tool
+	// that accepts a session_id.
+	TouchSession(sessionID string)
+}
+
+// SessionInfo is one row of mcp.list_sessions output.
+type SessionInfo struct {
+	ID          string         `json:"id"`
+	Adapter     string         `json:"adapter"`
+	OpenedAt    int64          `json:"opened_at_unix"`     // seconds
+	LastActive  int64          `json:"last_active_unix"`   // seconds
+	Metadata    map[string]any `json:"metadata,omitempty"` // adapter-specific
+}
