@@ -75,20 +75,28 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		}
 	}
 
-	// 4) Resolve upstream LLM config.
-	if tok.DefaultLLMConfigID == nil || *tok.DefaultLLMConfigID <= 0 {
-		s.recordProxyCallFailure(tok, req.Model, "", 0, http.StatusBadRequest, "token has no default_llm_config_id", start)
-		openAIError(c, http.StatusBadRequest, "invalid_request_error", "token has no default LLM configured")
+	// 4) Resolve upstream LLM config — alias route first, then
+	// fall back to the token's default. An alias matches the
+	// client's `model` field exactly (case-sensitive).
+	var resolvedLLMConfigID int64
+	if cfgID, found, lookupErr := s.resolveLLMProxyRoute(tok.ID, req.Model); lookupErr == nil && found {
+		resolvedLLMConfigID = cfgID
+	} else if tok.DefaultLLMConfigID != nil && *tok.DefaultLLMConfigID > 0 {
+		resolvedLLMConfigID = *tok.DefaultLLMConfigID
+	}
+	if resolvedLLMConfigID <= 0 {
+		s.recordProxyCallFailure(tok, req.Model, "", 0, http.StatusBadRequest, "no route + no default_llm_config_id", start)
+		openAIError(c, http.StatusBadRequest, "invalid_request_error", "no alias route matched model="+req.Model+" and token has no default LLM configured")
 		return
 	}
-	cfg, apiKey, err := s.getLLMConfigForOwner(tok.WorkspaceID, *tok.DefaultLLMConfigID)
+	cfg, apiKey, err := s.getLLMConfigForOwner(tok.WorkspaceID, resolvedLLMConfigID)
 	if err != nil {
-		s.recordProxyCallFailure(tok, req.Model, "", *tok.DefaultLLMConfigID, http.StatusInternalServerError, "llm config lookup failed", start)
+		s.recordProxyCallFailure(tok, req.Model, "", resolvedLLMConfigID, http.StatusInternalServerError, "llm config lookup failed", start)
 		openAIError(c, http.StatusInternalServerError, "internal_error", "upstream config lookup failed")
 		return
 	}
 	if cfg == nil {
-		s.recordProxyCallFailure(tok, req.Model, "", *tok.DefaultLLMConfigID, http.StatusBadRequest, "llm config missing", start)
+		s.recordProxyCallFailure(tok, req.Model, "", resolvedLLMConfigID, http.StatusBadRequest, "llm config missing", start)
 		openAIError(c, http.StatusBadRequest, "invalid_request_error", "configured upstream LLM is missing or out of scope")
 		return
 	}

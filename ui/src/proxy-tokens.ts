@@ -13,7 +13,9 @@ import {
   createProxyToken,
   fetchProxyTokenCalls,
   fetchProxyTokenCallsAggregate,
+  fetchProxyTokenRoutes,
   listProxyTokens,
+  replaceProxyTokenRoutes,
   revokeProxyToken,
 } from "./api/llm_proxy.js";
 import { logout } from "./api/session.js";
@@ -21,7 +23,12 @@ import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import type { LLMConfig } from "./types/dashboard.js";
-import type { LLMProxyCall, LLMProxyCallAggregate, LLMProxyToken } from "./types/llm_proxy.js";
+import type {
+  LLMProxyCall,
+  LLMProxyCallAggregate,
+  LLMProxyRoute,
+  LLMProxyToken,
+} from "./types/llm_proxy.js";
 
 initStoredTheme();
 bindThemeSync();
@@ -64,6 +71,17 @@ const auditCallsTbody = byId<HTMLTableSectionElement>("auditCallsTbody");
 const auditCallsEmpty = byId<HTMLElement>("auditCallsEmpty");
 
 let auditCurrentToken: LLMProxyToken | null = null;
+
+const routesModal = byId<HTMLElement>("routesModal");
+const routesTitle = byId<HTMLElement>("routesTitle");
+const routesCloseBtn = byId<HTMLButtonElement>("routesCloseBtn");
+const routesCancelBtn = byId<HTMLButtonElement>("routesCancelBtn");
+const routesSaveBtn = byId<HTMLButtonElement>("routesSaveBtn");
+const routesTbody = byId<HTMLTableSectionElement>("routesTbody");
+const routesAddBtn = byId<HTMLButtonElement>("routesAddBtn");
+const routesError = byId<HTMLElement>("routesError");
+
+let routesCurrentToken: LLMProxyToken | null = null;
 
 let llmConfigById = new Map<number, LLMConfig>();
 
@@ -126,6 +144,14 @@ function renderTokenRow(tok: LLMProxyToken): HTMLTableRowElement {
   auditBtn.addEventListener("click", () => openAuditModal(tok));
   cellActions.appendChild(auditBtn);
   if (!tok.revoked_at) {
+    const routesBtn = document.createElement("button");
+    routesBtn.type = "button";
+    routesBtn.className = "btn-inline btn-secondary";
+    routesBtn.textContent = "路由";
+    routesBtn.style.marginRight = "4px";
+    routesBtn.addEventListener("click", () => openRoutesModal(tok));
+    cellActions.appendChild(routesBtn);
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn-inline btn-secondary";
@@ -345,6 +371,118 @@ function closeAuditModal(): void {
   auditStatus.textContent = "";
 }
 
+function buildLLMConfigSelect(selectedID?: number): HTMLSelectElement {
+  const sel = document.createElement("select");
+  sel.className = "input";
+  sel.style.width = "100%";
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "—— 选择上游 ——";
+  sel.appendChild(empty);
+  for (const cfg of llmConfigById.values()) {
+    if (!cfg.has_api_key) continue;
+    if (cfg.provider_kind && cfg.provider_kind !== "text") continue;
+    const opt = document.createElement("option");
+    opt.value = String(cfg.id);
+    opt.textContent = `${cfg.name} · ${cfg.model}`;
+    if (selectedID != null && cfg.id === selectedID) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  return sel;
+}
+
+function appendRouteRow(alias = "", llmConfigID?: number): void {
+  const tr = document.createElement("tr");
+
+  const aliasTd = document.createElement("td");
+  const aliasInput = document.createElement("input");
+  aliasInput.className = "input";
+  aliasInput.type = "text";
+  aliasInput.placeholder = "e.g. gpt-4o-mini";
+  aliasInput.value = alias;
+  aliasInput.style.width = "100%";
+  aliasTd.appendChild(aliasInput);
+
+  const cfgTd = document.createElement("td");
+  cfgTd.appendChild(buildLLMConfigSelect(llmConfigID));
+
+  const actTd = document.createElement("td");
+  const rmBtn = document.createElement("button");
+  rmBtn.type = "button";
+  rmBtn.className = "btn-inline btn-secondary";
+  rmBtn.textContent = "✕";
+  rmBtn.addEventListener("click", () => tr.remove());
+  actTd.appendChild(rmBtn);
+
+  tr.append(aliasTd, cfgTd, actTd);
+  routesTbody.appendChild(tr);
+}
+
+async function openRoutesModal(tok: LLMProxyToken): Promise<void> {
+  routesCurrentToken = tok;
+  routesTitle.textContent = `别名路由 · ${tok.name}`;
+  routesError.textContent = "";
+  routesTbody.innerHTML = "";
+  routesModal.hidden = false;
+  try {
+    const { data } = await fetchProxyTokenRoutes(tok.id);
+    const routes = data.routes ?? [];
+    if (routes.length === 0) {
+      appendRouteRow();
+    } else {
+      routes.forEach((r) => appendRouteRow(r.alias_model, r.llm_config_id));
+    }
+  } catch (err) {
+    routesError.textContent = `加载失败：${(err as Error).message}`;
+  }
+}
+
+function closeRoutesModal(): void {
+  routesCurrentToken = null;
+  routesModal.hidden = true;
+  routesTbody.innerHTML = "";
+  routesError.textContent = "";
+}
+
+async function onSaveRoutes(): Promise<void> {
+  if (!routesCurrentToken) return;
+  const payload: Array<{ alias_model: string; llm_config_id: number }> = [];
+  const seenAlias = new Set<string>();
+  for (const tr of Array.from(routesTbody.children) as HTMLTableRowElement[]) {
+    const aliasInput = tr.querySelector("input") as HTMLInputElement | null;
+    const cfgSelect = tr.querySelector("select") as HTMLSelectElement | null;
+    if (!aliasInput || !cfgSelect) continue;
+    const alias = aliasInput.value.trim();
+    const cfgID = parseInt(cfgSelect.value, 10);
+    if (!alias) continue;
+    if (!Number.isFinite(cfgID) || cfgID <= 0) {
+      routesError.textContent = `别名 "${alias}" 未选上游`;
+      return;
+    }
+    if (seenAlias.has(alias)) {
+      routesError.textContent = `别名 "${alias}" 重复`;
+      return;
+    }
+    seenAlias.add(alias);
+    payload.push({ alias_model: alias, llm_config_id: cfgID });
+  }
+
+  routesSaveBtn.disabled = true;
+  routesError.textContent = "";
+  try {
+    const { data } = await replaceProxyTokenRoutes(routesCurrentToken.id, { routes: payload });
+    if (data.error) {
+      routesError.textContent = data.error;
+      return;
+    }
+    closeRoutesModal();
+  } catch (err) {
+    routesError.textContent = (err as Error).message;
+  } finally {
+    routesSaveBtn.disabled = false;
+  }
+}
+
 async function copyToClipboard(value: string, btn: HTMLButtonElement): Promise<void> {
   try {
     await navigator.clipboard.writeText(value);
@@ -373,6 +511,10 @@ plaintextBaseCopyBtn.addEventListener("click", () => void copyToClipboard(plaint
 auditCloseBtn.addEventListener("click", closeAuditModal);
 auditRefreshBtn.addEventListener("click", () => void refreshAuditModal());
 auditDays.addEventListener("change", () => void refreshAuditModal());
+routesCloseBtn.addEventListener("click", closeRoutesModal);
+routesCancelBtn.addEventListener("click", closeRoutesModal);
+routesSaveBtn.addEventListener("click", () => void onSaveRoutes());
+routesAddBtn.addEventListener("click", () => appendRouteRow());
 logoutBtn.addEventListener("click", () => void logout().then(() => (window.location.href = "/login.html")));
 
 async function bootstrap(): Promise<void> {

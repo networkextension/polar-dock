@@ -227,6 +227,92 @@ func (s *Server) lookupLLMProxyTokenByHash(hash string) (*LLMProxyToken, error) 
 	return &t, nil
 }
 
+// LLMProxyRoute is one alias_model -> llm_config_id mapping for a
+// token. Listed in (token_id, sort_order) order.
+type LLMProxyRoute struct {
+	TokenID     int64     `json:"token_id"`
+	AliasModel  string    `json:"alias_model"`
+	LLMConfigID int64     `json:"llm_config_id"`
+	SortOrder   int       `json:"sort_order"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+func (s *Server) listLLMProxyRoutes(tokenID int64) ([]LLMProxyRoute, error) {
+	rows, err := s.db.Query(
+		`SELECT token_id, alias_model, llm_config_id, sort_order, created_at
+		   FROM llm_proxy_routes
+		  WHERE token_id = $1
+		  ORDER BY sort_order, alias_model`,
+		tokenID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]LLMProxyRoute, 0)
+	for rows.Next() {
+		var r LLMProxyRoute
+		if err := rows.Scan(&r.TokenID, &r.AliasModel, &r.LLMConfigID, &r.SortOrder, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// replaceLLMProxyRoutes atomically replaces the route set for a
+// token. Callers pass the desired full set; existing rows are
+// deleted and the new ones inserted in one transaction. Empty
+// input clears the table for the token.
+func (s *Server) replaceLLMProxyRoutes(tokenID int64, routes []LLMProxyRoute, now time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM llm_proxy_routes WHERE token_id = $1`, tokenID); err != nil {
+		return err
+	}
+	for i, r := range routes {
+		alias := strings.TrimSpace(r.AliasModel)
+		if alias == "" || r.LLMConfigID <= 0 {
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO llm_proxy_routes (token_id, alias_model, llm_config_id, sort_order, created_at)
+			 VALUES ($1, $2, $3, $4, $5)`,
+			tokenID, alias, r.LLMConfigID, i, now,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// resolveLLMProxyRoute returns the llm_config_id for a given
+// (token_id, alias_model) lookup, or (0, false, nil) when there's
+// no match. Use this in the chat handler before falling back to
+// the token's default_llm_config_id.
+func (s *Server) resolveLLMProxyRoute(tokenID int64, alias string) (int64, bool, error) {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return 0, false, nil
+	}
+	var llmConfigID int64
+	err := s.db.QueryRow(
+		`SELECT llm_config_id FROM llm_proxy_routes
+		  WHERE token_id = $1 AND alias_model = $2`,
+		tokenID, alias,
+	).Scan(&llmConfigID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return llmConfigID, true, nil
+}
+
 func (s *Server) touchLLMProxyTokenLastUsed(id int64, now time.Time) {
 	_, _ = s.db.Exec(`UPDATE llm_proxy_tokens SET last_used_at = $2 WHERE id = $1`, id, now)
 }
