@@ -2301,10 +2301,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_host_skills_host_kind
 	ON host_skills(host_id, kind);
 
 -- Rename legacy wire kind 'nanokdp' → 'kdp' (kernel debug protocol).
--- Idempotent: no-op on fresh installs that never saw the legacy name.
--- Done before the uniqueness index would reject a hypothetical post-
--- rename collision, because the rename targets distinct (host_id,kind)
--- tuples by construction.
+-- Idempotent + collision-safe:
+--   1. If a host already has BOTH a 'nanokdp' and a 'kdp' row (because
+--      an older agent emitted 'nanokdp' AFTER a prior migration already
+--      created the 'kdp' row), drop the legacy 'nanokdp' row first to
+--      avoid (host_id, kind) uniqueness conflicts on the UPDATE
+--   2. Then UPDATE the remaining 'nanokdp' rows to 'kdp'
+DELETE FROM host_skills
+ WHERE kind = 'nanokdp'
+   AND EXISTS (
+     SELECT 1 FROM host_skills h2
+      WHERE h2.host_id = host_skills.host_id AND h2.kind = 'kdp'
+   );
 UPDATE host_skills SET kind = 'kdp' WHERE kind = 'nanokdp';
 
 -- P1b: bot_users.host_skill_id — when set, the bot's reply path is

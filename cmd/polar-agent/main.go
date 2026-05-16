@@ -369,6 +369,16 @@ func runAttach(args []string) int {
 		}
 	}
 
+	// P-recovery-0a: background watcher for iOS devices in DFU /
+	// recovery mode. Polls `irecovery -q`; on detect → POST to
+	// /api/agent/library/devices/upsert. Zero operator config: silent
+	// no-op if irecovery isn't on PATH. sync.Once guards re-entry
+	// when multiple `polar-agent attach` processes run.
+	// Disable via POLAR_AGENT_RECOVERY_DISABLED=true.
+	if os.Getenv("POLAR_AGENT_RECOVERY_DISABLED") != "true" {
+		startRecoveryWatcher(cfg)
+	}
+
 	// VNC skill (B.1 plain TCP relay). Unix-only — primarily targets
 	// macOS Screen Sharing on the agent host (loopback to :5900) but
 	// any LAN-reachable VNC server works. Authentication is end-to-end
