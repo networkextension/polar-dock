@@ -2656,6 +2656,16 @@ CREATE TABLE IF NOT EXISTS llm_proxy_routes (
 );
 CREATE INDEX IF NOT EXISTS idx_llm_proxy_routes_token
     ON llm_proxy_routes(token_id, sort_order);
+
+-- P6: cost ledger. Per-call USD estimate populated by the chat
+-- handler from a hardcoded price table (see llm_proxy_pricing.go).
+-- Best-effort; intended for trend / quota signals, not billing
+-- truth. NULL = pricing unknown for this model/provider.
+ALTER TABLE llm_proxy_calls
+    ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(12,6);
+CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_created
+    ON llm_proxy_calls(workspace_id, created_at DESC)
+    WHERE cost_usd IS NOT NULL;
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

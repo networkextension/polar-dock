@@ -45,7 +45,10 @@ type LLMProxyCall struct {
 	LatencyMS        int       `json:"latency_ms"`
 	StatusCode       int       `json:"status_code"`
 	ErrorText        string    `json:"error_text,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
+	// CostUSD: best-effort USD estimate from llm_proxy_pricing.go.
+	// nil = model not in the price table (vs 0 = free / nothing to bill).
+	CostUSD   *float64  `json:"cost_usd,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 const llmProxyTokenPlaintextPrefix = "polar_proxy_"
@@ -325,7 +328,7 @@ func (s *Server) listLLMProxyCalls(workspaceID string, tokenID int64, limit int)
 		limit = 100
 	}
 	rows, err := s.db.Query(
-		`SELECT id, token_id, workspace_id, model_requested, model_resolved, llm_config_id, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, COALESCE(error_text, ''), created_at
+		`SELECT id, token_id, workspace_id, model_requested, model_resolved, llm_config_id, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, COALESCE(error_text, ''), cost_usd, created_at
 		   FROM llm_proxy_calls
 		  WHERE workspace_id = $1 AND token_id = $2
 		  ORDER BY id DESC
@@ -340,12 +343,17 @@ func (s *Server) listLLMProxyCalls(workspaceID string, tokenID int64, limit int)
 	for rows.Next() {
 		var c LLMProxyCall
 		var llmConfigID sql.NullInt64
-		if err := rows.Scan(&c.ID, &c.TokenID, &c.WorkspaceID, &c.ModelRequested, &c.ModelResolved, &llmConfigID, &c.PromptTokens, &c.CompletionTokens, &c.TotalTokens, &c.LatencyMS, &c.StatusCode, &c.ErrorText, &c.CreatedAt); err != nil {
+		var costUSD sql.NullFloat64
+		if err := rows.Scan(&c.ID, &c.TokenID, &c.WorkspaceID, &c.ModelRequested, &c.ModelResolved, &llmConfigID, &c.PromptTokens, &c.CompletionTokens, &c.TotalTokens, &c.LatencyMS, &c.StatusCode, &c.ErrorText, &costUSD, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		if llmConfigID.Valid {
 			v := llmConfigID.Int64
 			c.LLMConfigID = &v
+		}
+		if costUSD.Valid {
+			v := costUSD.Float64
+			c.CostUSD = &v
 		}
 		out = append(out, c)
 	}
@@ -355,13 +363,14 @@ func (s *Server) listLLMProxyCalls(workspaceID string, tokenID int64, limit int)
 // LLMProxyCallAggregate is one row of the per-model aggregate
 // returned to the audit viewer.
 type LLMProxyCallAggregate struct {
-	Model            string `json:"model"`
-	Calls            int    `json:"calls"`
-	PromptTokens     int    `json:"prompt_tokens"`
-	CompletionTokens int    `json:"completion_tokens"`
-	TotalTokens      int    `json:"total_tokens"`
-	OkCount          int    `json:"ok_count"`
-	ErrorCount       int    `json:"error_count"`
+	Model            string  `json:"model"`
+	Calls            int     `json:"calls"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	OkCount          int     `json:"ok_count"`
+	ErrorCount       int     `json:"error_count"`
+	CostUSD          float64 `json:"cost_usd"`
 }
 
 // aggregateLLMProxyCalls returns per-model aggregates for calls
@@ -378,7 +387,8 @@ func (s *Server) aggregateLLMProxyCalls(workspaceID string, tokenID int64, days 
 		        COALESCE(SUM(completion_tokens), 0)::INT  AS completion_tokens,
 		        COALESCE(SUM(total_tokens), 0)::INT       AS total_tokens,
 		        COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299) AS ok_count,
-		        COUNT(*) FILTER (WHERE status_code >= 400)              AS error_count
+		        COUNT(*) FILTER (WHERE status_code >= 400)              AS error_count,
+		        COALESCE(SUM(cost_usd), 0)::FLOAT8        AS cost_usd
 		   FROM llm_proxy_calls
 		  WHERE workspace_id = $1
 		    AND token_id     = $2
@@ -394,7 +404,7 @@ func (s *Server) aggregateLLMProxyCalls(workspaceID string, tokenID int64, days 
 	out := make([]LLMProxyCallAggregate, 0)
 	for rows.Next() {
 		var a LLMProxyCallAggregate
-		if err := rows.Scan(&a.Model, &a.Calls, &a.PromptTokens, &a.CompletionTokens, &a.TotalTokens, &a.OkCount, &a.ErrorCount); err != nil {
+		if err := rows.Scan(&a.Model, &a.Calls, &a.PromptTokens, &a.CompletionTokens, &a.TotalTokens, &a.OkCount, &a.ErrorCount, &a.CostUSD); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -410,12 +420,16 @@ func (s *Server) insertLLMProxyCall(call *LLMProxyCall) error {
 	if call.LLMConfigID != nil {
 		llmConfigID = sql.NullInt64{Int64: *call.LLMConfigID, Valid: true}
 	}
+	var costUSD sql.NullFloat64
+	if call.CostUSD != nil {
+		costUSD = sql.NullFloat64{Float64: *call.CostUSD, Valid: true}
+	}
 	return s.db.QueryRow(
-		`INSERT INTO llm_proxy_calls (token_id, workspace_id, model_requested, model_resolved, llm_config_id, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, error_text, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		`INSERT INTO llm_proxy_calls (token_id, workspace_id, model_requested, model_resolved, llm_config_id, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, error_text, cost_usd, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 RETURNING id`,
 		call.TokenID, call.WorkspaceID, call.ModelRequested, call.ModelResolved, llmConfigID,
 		call.PromptTokens, call.CompletionTokens, call.TotalTokens,
-		call.LatencyMS, call.StatusCode, call.ErrorText, call.CreatedAt,
+		call.LatencyMS, call.StatusCode, call.ErrorText, costUSD, call.CreatedAt,
 	).Scan(&call.ID)
 }

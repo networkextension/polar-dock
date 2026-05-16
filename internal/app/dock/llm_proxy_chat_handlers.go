@@ -164,6 +164,9 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 			call.TotalTokens = call.PromptTokens + call.CompletionTokens
 		}
 	}
+	if cost, ok := estimateLLMProxyCallCost(call.ModelResolved, call.PromptTokens, call.CompletionTokens); ok {
+		call.CostUSD = &cost
+	}
 	_ = s.insertLLMProxyCall(call)
 	s.metricsRegistry.recordLLMProxyCall(tok.Name, cfg.Model, "nonstream", http.StatusOK, time.Since(start), 0, call.CompletionTokens)
 
@@ -367,6 +370,9 @@ func (s *Server) streamLLMProxyChatCompletion(c *gin.Context, tok *LLMProxyToken
 		if call.TotalTokens == 0 {
 			call.TotalTokens = call.PromptTokens + call.CompletionTokens
 		}
+	}
+	if cost, ok := estimateLLMProxyCallCost(call.ModelResolved, call.PromptTokens, call.CompletionTokens); ok {
+		call.CostUSD = &cost
 	}
 	_ = s.insertLLMProxyCall(call)
 	var ttftSec float64

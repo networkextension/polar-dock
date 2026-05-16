@@ -54,6 +54,9 @@ export type LLMProxyCall = {
   latency_ms: number;
   status_code: number;
   error_text?: string;
+  // P6: best-effort USD estimate; undefined when the model has no
+  // price-table entry.
+  cost_usd?: number;
   created_at: string;
 };
 
@@ -69,6 +72,9 @@ export type LLMProxyCallAggregate = {
   total_tokens: number;
   ok_count: number;
   error_count: number;
+  // P6: SUM(cost_usd) for this model in the window. 0 = no priced
+  // calls (either unknown model or no calls).
+  cost_usd: number;
 };
 
 export type LLMProxyCallAggregateResponse = ErrorResponse & {
