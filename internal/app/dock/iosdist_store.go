@@ -5,7 +5,9 @@ package dock
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -28,8 +30,16 @@ type IOSApp struct {
 	PromotionalText string    `json:"promotional_text"` // ASC localization
 	MarketingURL    string    `json:"marketing_url"`    // ASC localization
 	SupportURL      string    `json:"support_url"`      // ASC localization
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	// Multi-language overrides. JSONB keyed by BCP-47-ish locale code
+	// ("zh-CN" / "en" / "ja" / "ko"). Empty / nil = no override; public
+	// page falls back to the plain Name/Description/PromotionalText
+	// fields. Honored by the public plaza + share page based on
+	// ?lang= query param or Accept-Language header.
+	NameI18N            map[string]string `json:"name_i18n,omitempty"`
+	DescriptionI18N     map[string]string `json:"description_i18n,omitempty"`
+	PromotionalTextI18N map[string]string `json:"promotional_text_i18n,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // IOSSignTask is one re-signing job (zsign run). Status transitions:
@@ -261,7 +271,7 @@ func (s *Server) listPublicIOSApps(limit, offset int) ([]IOSApp, error) {
 		offset = 0
 	}
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, name_i18n, description_i18n, promotional_text_i18n, created_at, updated_at
 		 FROM iosdist_apps WHERE is_public = TRUE ORDER BY updated_at DESC LIMIT $1 OFFSET $2`,
 		limit, offset,
 	)
@@ -272,12 +282,33 @@ func (s *Server) listPublicIOSApps(limit, offset int) ([]IOSApp, error) {
 	var out []IOSApp
 	for rows.Next() {
 		var a IOSApp
-		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		var nameI18N, descI18N, promoI18N sql.NullString
+		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &nameI18N, &descI18N, &promoI18N, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
+		a.NameI18N = parseI18N(nameI18N)
+		a.DescriptionI18N = parseI18N(descI18N)
+		a.PromotionalTextI18N = parseI18N(promoI18N)
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// parseI18N decodes a JSONB column scanned as sql.NullString into a
+// locale → text map. Returns nil for empty / invalid input — callers
+// fall back to the plain single-language field.
+func parseI18N(s sql.NullString) map[string]string {
+	if !s.Valid || strings.TrimSpace(s.String) == "" {
+		return nil
+	}
+	out := map[string]string{}
+	if err := json.Unmarshal([]byte(s.String), &out); err != nil {
+		return nil
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (s *Server) countPublicIOSApps() (int, error) {
@@ -293,17 +324,21 @@ func (s *Server) getIOSAppBySlug(slug string) (*IOSApp, error) {
 		return nil, nil
 	}
 	var a IOSApp
+	var nameI18N, descI18N, promoI18N sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, name_i18n, description_i18n, promotional_text_i18n, created_at, updated_at
 		 FROM iosdist_apps WHERE public_slug = $1`,
 		slug,
-	).Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt)
+	).Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &nameI18N, &descI18N, &promoI18N, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	a.NameI18N = parseI18N(nameI18N)
+	a.DescriptionI18N = parseI18N(descI18N)
+	a.PromotionalTextI18N = parseI18N(promoI18N)
 	return &a, nil
 }
 

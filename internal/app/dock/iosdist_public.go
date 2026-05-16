@@ -29,6 +29,302 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ---- locale resolution + i18n strings ---------------------------------
+//
+// Locale picked in this priority:
+//   1) ?lang= query param (operator-friendly aliases: "english" / "zh_CN")
+//   2) Accept-Language header (first supported language listed)
+//   3) Default "zh-CN" (the page chrome's historical language)
+//
+// Supported set is small + curated — adding a new locale = adding it
+// here + filling messages map. No automatic translation.
+
+const iosdistDefaultLocale = "zh-CN"
+
+var iosdistSupportedLocales = []string{"zh-CN", "en", "ja", "ko"}
+
+// iosdistLocaleAliases normalizes the common ways a query param might
+// arrive ("english", "zh_CN", "Chinese", "中文", "ja-JP", ...) into our
+// canonical BCP-47 codes.
+var iosdistLocaleAliases = map[string]string{
+	"zh":       "zh-CN",
+	"zh-cn":    "zh-CN",
+	"zh_cn":    "zh-CN",
+	"zh-hans":  "zh-CN",
+	"zh_hans":  "zh-CN",
+	"chinese":  "zh-CN",
+	"中文":       "zh-CN",
+	"en":       "en",
+	"en-us":    "en",
+	"en_us":    "en",
+	"en-gb":    "en",
+	"en_gb":    "en",
+	"english":  "en",
+	"ja":       "ja",
+	"ja-jp":    "ja",
+	"ja_jp":    "ja",
+	"japanese": "ja",
+	"ko":       "ko",
+	"ko-kr":    "ko",
+	"ko_kr":    "ko",
+	"korean":   "ko",
+}
+
+// iosdistLocaleFor returns the resolved locale for this request. Always
+// returns a value present in iosdistSupportedLocales.
+func iosdistLocaleFor(c *gin.Context) string {
+	if q := strings.TrimSpace(c.Query("lang")); q != "" {
+		if mapped := iosdistMapLocale(q); mapped != "" {
+			return mapped
+		}
+	}
+	// Accept-Language: comma-separated list like "zh-CN,zh;q=0.9,en;q=0.8".
+	// We do a lazy parse — take the first comma-separated entry whose
+	// alias matches a supported locale.
+	for _, raw := range strings.Split(c.GetHeader("Accept-Language"), ",") {
+		// Strip the q-value if any: "zh;q=0.9" → "zh".
+		part := strings.TrimSpace(raw)
+		if i := strings.IndexByte(part, ';'); i >= 0 {
+			part = strings.TrimSpace(part[:i])
+		}
+		if mapped := iosdistMapLocale(part); mapped != "" {
+			return mapped
+		}
+	}
+	return iosdistDefaultLocale
+}
+
+func iosdistMapLocale(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	if mapped, ok := iosdistLocaleAliases[s]; ok {
+		return mapped
+	}
+	// Try a region-stripped fallback ("zh-tw" → "zh") so unmapped
+	// regional variants still degrade to a known language.
+	if i := strings.IndexAny(s, "-_"); i > 0 {
+		if mapped, ok := iosdistLocaleAliases[s[:i]]; ok {
+			return mapped
+		}
+	}
+	return ""
+}
+
+// pickI18N returns the localized value for `locale` if present, else
+// the fallback. Use for description / promo / app name overrides.
+func pickI18N(m map[string]string, locale, fallback string) string {
+	if m != nil {
+		if v, ok := m[locale]; ok && strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return fallback
+}
+
+// iosdistMessages is the chrome-text dictionary. Add a key here when
+// you add a new UI string anywhere in the public pages so all four
+// locales render the same shape.
+var iosdistMessages = map[string]map[string]string{
+	"zh-CN": {
+		"plaza_title":            "App 广场",
+		"plaza_subtitle":         "浏览所有公开发布的 iOS 应用，点卡片查看详情与安装方式",
+		"plaza_count":            "共 %d 个应用",
+		"plaza_empty":            "暂无公开应用",
+		"plaza_view_detail":      "查看详情 →",
+		"plaza_prev":             "← 上一页",
+		"plaza_next":             "下一页 →",
+		"share_no_version":       "暂无可用版本",
+		"share_install_btn":      "安装",
+		"share_testflight_btn":   "通过 TestFlight 安装",
+		"share_appstore_btn":     "在 App Store 查看",
+		"share_no_install":       "暂无可用安装方式",
+		"share_marketing_link":   "官方网站",
+		"share_support_link":     "技术支持",
+		"share_request_title":    "申请加入测试",
+		"share_request_desc":     "填写邮箱即可申请。提交后我们会通过 App Store Connect 向你发送官方 TestFlight 邀请邮件，按邮件指引在 TestFlight App 内接受邀请即可。",
+		"share_email_ph":         "your@email.com",
+		"share_first_ph":         "名 (可选)",
+		"share_last_ph":          "姓 (可选)",
+		"share_submit":           "提交申请",
+		"share_submitting":       "提交中...",
+		"share_submit_failed":    "提交失败：",
+		"share_invite_sent":      "✓ 邀请已发送，请查收邮箱。",
+		"share_invite_logged":    "已记录你的申请，开发者通过后会尽快邀请你。",
+		"share_install_fail":     "无法生成安装链接，请稍后重试。",
+		"share_install_loading":  "请求中...",
+		"share_whatsnew_label":   "新版本",
+		"share_whatsnew_asc":     "ASC",
+		"share_whatsnew_build":   "本次构建",
+		"share_dev_mode_note":    "iOS 16.4 及以上需在「设置 → 隐私与安全性 → 开发者模式」中开启开发者模式后，方可启动通过 OTA 安装的应用。请在 iPhone 自带 Safari 中打开本页面。",
+		"share_footer_prefix":    "由 iOS 分发平台提供 · ",
+		"share_footer_plaza":     "App 广场",
+		"share_footer_share":     "分享链接",
+		"lang_picker_label":      "语言：",
+	},
+	"en": {
+		"plaza_title":            "App Plaza",
+		"plaza_subtitle":         "Browse every publicly published iOS app. Tap a card for details and install options.",
+		"plaza_count":            "%d apps",
+		"plaza_empty":            "No public apps yet",
+		"plaza_view_detail":      "View details →",
+		"plaza_prev":             "← Prev",
+		"plaza_next":             "Next →",
+		"share_no_version":       "No version available",
+		"share_install_btn":      "Install",
+		"share_testflight_btn":   "Install via TestFlight",
+		"share_appstore_btn":     "View on the App Store",
+		"share_no_install":       "No install option available",
+		"share_marketing_link":   "Website",
+		"share_support_link":     "Support",
+		"share_request_title":    "Request beta access",
+		"share_request_desc":     "Enter your email. We'll forward the request to App Store Connect, which emails you the official TestFlight invitation. Accept it in the TestFlight app to install.",
+		"share_email_ph":         "your@email.com",
+		"share_first_ph":         "First name (optional)",
+		"share_last_ph":          "Last name (optional)",
+		"share_submit":           "Submit",
+		"share_submitting":       "Submitting…",
+		"share_submit_failed":    "Submit failed: ",
+		"share_invite_sent":      "✓ Invitation sent — check your inbox.",
+		"share_invite_logged":    "Request logged. The developer will invite you shortly.",
+		"share_install_fail":     "Failed to generate install link, please retry.",
+		"share_install_loading":  "Requesting…",
+		"share_whatsnew_label":   "What's new",
+		"share_whatsnew_asc":     "ASC",
+		"share_whatsnew_build":   "this build",
+		"share_dev_mode_note":    "iOS 16.4+ requires Developer Mode (Settings → Privacy & Security → Developer Mode) before OTA-installed apps will launch. Open this page in Safari on the iPhone itself.",
+		"share_footer_prefix":    "Powered by the iOS distribution platform · ",
+		"share_footer_plaza":     "App Plaza",
+		"share_footer_share":     "Share link",
+		"lang_picker_label":      "Language: ",
+	},
+	"ja": {
+		"plaza_title":            "App プラザ",
+		"plaza_subtitle":         "公開されている iOS アプリ一覧。カードをタップして詳細とインストール方法を確認できます。",
+		"plaza_count":            "%d 件のアプリ",
+		"plaza_empty":            "公開アプリはまだありません",
+		"plaza_view_detail":      "詳細を見る →",
+		"plaza_prev":             "← 前へ",
+		"plaza_next":             "次へ →",
+		"share_no_version":       "利用可能なバージョンがありません",
+		"share_install_btn":      "インストール",
+		"share_testflight_btn":   "TestFlight でインストール",
+		"share_appstore_btn":     "App Store で見る",
+		"share_no_install":       "利用可能なインストール方法はありません",
+		"share_marketing_link":   "ウェブサイト",
+		"share_support_link":     "サポート",
+		"share_request_title":    "ベータ参加を申請",
+		"share_request_desc":     "メールアドレスを入力してください。App Store Connect から TestFlight の公式招待メールが届きます。TestFlight アプリで招待を承認するとインストールできます。",
+		"share_email_ph":         "your@email.com",
+		"share_first_ph":         "名（任意）",
+		"share_last_ph":          "姓（任意）",
+		"share_submit":           "送信",
+		"share_submitting":       "送信中…",
+		"share_submit_failed":    "送信に失敗しました：",
+		"share_invite_sent":      "✓ 招待を送信しました。メールをご確認ください。",
+		"share_invite_logged":    "申請を受け付けました。開発者が承認次第ご連絡します。",
+		"share_install_fail":     "インストールリンクの生成に失敗しました。再度お試しください。",
+		"share_install_loading":  "リクエスト中…",
+		"share_whatsnew_label":   "新バージョン",
+		"share_whatsnew_asc":     "ASC",
+		"share_whatsnew_build":   "このビルド",
+		"share_dev_mode_note":    "iOS 16.4 以降ではデベロッパモード（設定 → プライバシーとセキュリティ → デベロッパモード）を有効にしないと OTA インストールしたアプリが起動できません。iPhone の Safari でこのページを開いてください。",
+		"share_footer_prefix":    "iOS 配布プラットフォームによる · ",
+		"share_footer_plaza":     "App プラザ",
+		"share_footer_share":     "共有リンク",
+		"lang_picker_label":      "言語：",
+	},
+	"ko": {
+		"plaza_title":            "App 광장",
+		"plaza_subtitle":         "공개된 iOS 앱 모음. 카드를 눌러 상세 정보와 설치 방법을 확인하세요.",
+		"plaza_count":            "총 %d개의 앱",
+		"plaza_empty":            "아직 공개된 앱이 없습니다",
+		"plaza_view_detail":      "자세히 보기 →",
+		"plaza_prev":             "← 이전",
+		"plaza_next":             "다음 →",
+		"share_no_version":       "사용 가능한 버전이 없습니다",
+		"share_install_btn":      "설치",
+		"share_testflight_btn":   "TestFlight 로 설치",
+		"share_appstore_btn":     "App Store 에서 보기",
+		"share_no_install":       "사용 가능한 설치 옵션이 없습니다",
+		"share_marketing_link":   "웹사이트",
+		"share_support_link":     "지원",
+		"share_request_title":    "베타 참가 신청",
+		"share_request_desc":     "이메일을 입력해 주세요. App Store Connect 에서 공식 TestFlight 초대 메일을 보내드립니다. TestFlight 앱에서 수락하면 설치할 수 있습니다.",
+		"share_email_ph":         "your@email.com",
+		"share_first_ph":         "이름 (선택)",
+		"share_last_ph":          "성 (선택)",
+		"share_submit":           "제출",
+		"share_submitting":       "제출 중…",
+		"share_submit_failed":    "제출 실패: ",
+		"share_invite_sent":      "✓ 초대가 전송되었습니다. 이메일을 확인하세요.",
+		"share_invite_logged":    "신청이 기록되었습니다. 개발자가 곧 초대하겠습니다.",
+		"share_install_fail":     "설치 링크 생성에 실패했습니다. 다시 시도해 주세요.",
+		"share_install_loading":  "요청 중…",
+		"share_whatsnew_label":   "새 버전",
+		"share_whatsnew_asc":     "ASC",
+		"share_whatsnew_build":   "이번 빌드",
+		"share_dev_mode_note":    "iOS 16.4+ 에서는 개발자 모드(설정 → 개인정보 보호 및 보안 → 개발자 모드)를 켜야 OTA 로 설치된 앱이 실행됩니다. 이 페이지는 iPhone Safari 에서 여세요.",
+		"share_footer_prefix":    "iOS 배포 플랫폼 제공 · ",
+		"share_footer_plaza":     "App 광장",
+		"share_footer_share":     "공유 링크",
+		"lang_picker_label":      "언어: ",
+	},
+}
+
+// t returns the localized string for `key`. Falls back to the zh-CN
+// dictionary if locale is missing the key (defensive — additions to
+// the zh-CN dict should land first; other locales catch up).
+func t(locale, key string) string {
+	if dict, ok := iosdistMessages[locale]; ok {
+		if v, ok := dict[key]; ok {
+			return v
+		}
+	}
+	if v, ok := iosdistMessages[iosdistDefaultLocale][key]; ok {
+		return v
+	}
+	return key
+}
+
+// langPickerHTML renders a small inline "EN / 中文 / 日本語 / 한국어"
+// chooser. Each link sets ?lang= preserving the rest of the query
+// string. Active locale gets an underline.
+func langPickerHTML(c *gin.Context, currentLocale string) string {
+	labels := map[string]string{
+		"zh-CN": "中文",
+		"en":    "English",
+		"ja":    "日本語",
+		"ko":    "한국어",
+	}
+	// Preserve any other query params (page=, etc.) when switching lang.
+	base := c.Request.URL.Path
+	otherQuery := c.Request.URL.Query()
+	otherQuery.Del("lang")
+	suffix := ""
+	if len(otherQuery) > 0 {
+		suffix = "&" + otherQuery.Encode()
+	}
+	var b strings.Builder
+	b.WriteString(`<div class="lang-picker"><span class="lang-label">`)
+	b.WriteString(html.EscapeString(t(currentLocale, "lang_picker_label")))
+	b.WriteString(`</span>`)
+	for i, code := range iosdistSupportedLocales {
+		if i > 0 {
+			b.WriteString(`<span class="lang-sep"> · </span>`)
+		}
+		active := ""
+		if code == currentLocale {
+			active = " active"
+		}
+		fmt.Fprintf(&b, `<a class="lang-link%s" href="%s?lang=%s%s">%s</a>`,
+			active, html.EscapeString(base), code, html.EscapeString(suffix), html.EscapeString(labels[code]))
+	}
+	b.WriteString(`</div>`)
+	return b.String()
+}
+
 // ---- public plaza (discovery) -------------------------------------------
 
 const iosdistPlazaPageSize = 24
@@ -55,17 +351,28 @@ func (s *Server) handleIOSPublicPlaza(c *gin.Context) {
 
 func (s *Server) renderIOSPlazaPage(c *gin.Context, apps []IOSApp, page, total int) string {
 	base := s.installPublicBaseURL(c)
+	locale := iosdistLocaleFor(c)
+	// Preserve ?lang= across pagination links so the language sticks.
+	langSuffix := ""
+	if c.Query("lang") != "" {
+		langSuffix = "&lang=" + c.Query("lang")
+	}
 
 	cardsHTML := strings.Builder{}
 	if len(apps) == 0 {
-		cardsHTML.WriteString(`<div class="empty">暂无公开应用</div>`)
+		cardsHTML.WriteString(`<div class="empty">` + html.EscapeString(t(locale, "plaza_empty")) + `</div>`)
 	} else {
 		for _, a := range apps {
+			// Pick localized name + description first; fall back to the
+			// plain single-language fields when the operator hasn't
+			// added a translation for this locale yet.
+			displayName := pickI18N(a.NameI18N, locale, a.Name)
+			displayDesc := pickI18N(a.DescriptionI18N, locale, a.Description)
 			iconHTML := `<div class="card-icon-fb">📱</div>`
 			if a.IconURL != "" {
-				iconHTML = fmt.Sprintf(`<img class="card-icon" src="%s" alt="%s" />`, html.EscapeString(a.IconURL), html.EscapeString(a.Name))
+				iconHTML = fmt.Sprintf(`<img class="card-icon" src="%s" alt="%s" />`, html.EscapeString(a.IconURL), html.EscapeString(displayName))
 			}
-			desc := strings.TrimSpace(a.Description)
+			desc := strings.TrimSpace(displayDesc)
 			if len([]rune(desc)) > 80 {
 				r := []rune(desc)
 				desc = string(r[:80]) + "…"
@@ -74,8 +381,14 @@ func (s *Server) renderIOSPlazaPage(c *gin.Context, apps []IOSApp, page, total i
 			if desc != "" {
 				descHTML = `<div class="card-desc">` + html.EscapeString(desc) + `</div>`
 			}
+			// Card link inherits ?lang= so clicking through to the
+			// detail page lands in the same locale.
+			cardHref := "/iosdist/share/" + html.EscapeString(a.PublicSlug)
+			if c.Query("lang") != "" {
+				cardHref += "?lang=" + c.Query("lang")
+			}
 			cardsHTML.WriteString(fmt.Sprintf(`
-<a class="card" href="/iosdist/share/%s">
+<a class="card" href="%s">
   <div class="card-head">
     %s
     <div class="card-text">
@@ -84,13 +397,14 @@ func (s *Server) renderIOSPlazaPage(c *gin.Context, apps []IOSApp, page, total i
     </div>
   </div>
   %s
-  <div class="card-footer">查看详情 →</div>
+  <div class="card-footer">%s</div>
 </a>`,
-				html.EscapeString(a.PublicSlug),
+				cardHref,
 				iconHTML,
-				html.EscapeString(a.Name),
+				html.EscapeString(displayName),
 				html.EscapeString(a.BundleID),
 				descHTML,
+				html.EscapeString(t(locale, "plaza_view_detail")),
 			))
 		}
 	}
@@ -101,24 +415,24 @@ func (s *Server) renderIOSPlazaPage(c *gin.Context, apps []IOSApp, page, total i
 	if totalPages > 1 {
 		var prev, next string
 		if page > 1 {
-			prev = fmt.Sprintf(`<a class="pager-btn" href="?page=%d">← 上一页</a>`, page-1)
+			prev = fmt.Sprintf(`<a class="pager-btn" href="?page=%d%s">%s</a>`, page-1, langSuffix, html.EscapeString(t(locale, "plaza_prev")))
 		} else {
-			prev = `<span class="pager-btn pager-btn-disabled">← 上一页</span>`
+			prev = `<span class="pager-btn pager-btn-disabled">` + html.EscapeString(t(locale, "plaza_prev")) + `</span>`
 		}
 		if page < totalPages {
-			next = fmt.Sprintf(`<a class="pager-btn" href="?page=%d">下一页 →</a>`, page+1)
+			next = fmt.Sprintf(`<a class="pager-btn" href="?page=%d%s">%s</a>`, page+1, langSuffix, html.EscapeString(t(locale, "plaza_next")))
 		} else {
-			next = `<span class="pager-btn pager-btn-disabled">下一页 →</span>`
+			next = `<span class="pager-btn pager-btn-disabled">` + html.EscapeString(t(locale, "plaza_next")) + `</span>`
 		}
 		pagerHTML = fmt.Sprintf(`<div class="pager">%s<span class="pager-info">%d / %d</span>%s</div>`, prev, page, totalPages, next)
 	}
 
 	_ = base
 	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="zh-CN"><head>
+<html lang="%s"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>App 广场</title>
+<title>%s</title>
 <style>
 *{box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:0;background:#f2f2f7;color:#1c1c1e;-webkit-font-smoothing:antialiased}
@@ -126,6 +440,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;m
 .head{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:20px}
 h1{margin:0;font-size:30px;font-weight:700;letter-spacing:-0.02em}
 .subtitle{color:#8e8e93;font-size:14px}
+.lang-picker{margin-bottom:16px;font-size:13px;color:#8e8e93}
+.lang-label{margin-right:6px}
+.lang-link{color:#007aff;text-decoration:none}
+.lang-link.active{color:#1c1c1e;font-weight:600;text-decoration:underline}
+.lang-sep{color:#c7c7cc}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
 .card{display:flex;flex-direction:column;justify-content:space-between;background:#fff;border-radius:18px;padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.04);text-decoration:none;color:inherit;transition:transform .18s,box-shadow .18s;min-height:160px}
 .card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,.08)}
@@ -148,22 +467,29 @@ h1{margin:0;font-size:30px;font-weight:700;letter-spacing:-0.02em}
   .pager-btn{color:#0a84ff}
   .pager-btn-disabled{background:transparent;color:#48484a}
   .empty{color:#aeaeb2}
+  .lang-link.active{color:#f2f2f7}
 }
 </style>
 </head><body>
 <div class="wrap">
+  %s
   <div class="head">
     <div>
-      <h1>App 广场</h1>
-      <div class="subtitle">浏览所有公开发布的 iOS 应用，点卡片查看详情与安装方式</div>
+      <h1>%s</h1>
+      <div class="subtitle">%s</div>
     </div>
-    <div class="subtitle">共 %d 个应用</div>
+    <div class="subtitle">%s</div>
   </div>
   <div class="grid">%s</div>
   %s
 </div>
 </body></html>`,
-		total,
+		html.EscapeString(locale),
+		html.EscapeString(t(locale, "plaza_title")),
+		langPickerHTML(c, locale),
+		html.EscapeString(t(locale, "plaza_title")),
+		html.EscapeString(t(locale, "plaza_subtitle")),
+		html.EscapeString(fmt.Sprintf(t(locale, "plaza_count"), total)),
 		cardsHTML.String(),
 		pagerHTML,
 	)
@@ -210,14 +536,18 @@ func (s *Server) lookupPublicAppForRequest(c *gin.Context) (*IOSApp, *IOSVersion
 func (s *Server) renderIOSSharePage(c *gin.Context, app *IOSApp, latest *IOSVersion) string {
 	base := s.installPublicBaseURL(c)
 	shareURL := base + "/iosdist/share/" + app.PublicSlug
+	locale := iosdistLocaleFor(c)
 
-	displayName := html.EscapeString(app.Name)
-	if latest != nil && latest.IPADisplayName != "" {
+	// Localized name: app.NameI18N[locale] → app.Name → latest IPA's
+	// display name (the IPA-embedded name is the source of truth for
+	// "what shows on the home screen" even if i18n is missing).
+	displayName := html.EscapeString(pickI18N(app.NameI18N, locale, app.Name))
+	if latest != nil && latest.IPADisplayName != "" && pickI18N(app.NameI18N, locale, "") == "" {
 		displayName = html.EscapeString(latest.IPADisplayName)
 	}
 	bundle := html.EscapeString(app.BundleID)
 
-	versionLine := "暂无可用版本"
+	versionLine := t(locale, "share_no_version")
 	sizeLine := ""
 	minOSLine := ""
 	releaseNotesHTML := ""
@@ -253,26 +583,26 @@ func (s *Server) renderIOSSharePage(c *gin.Context, app *IOSApp, latest *IOSVers
 	// (we only emit the buttons that actually have a destination).
 	var actionsHTML strings.Builder
 	if canOTAInstall {
-		actionsHTML.WriteString(`<button id="installBtn" class="btn primary" type="button">安装</button>`)
+		actionsHTML.WriteString(`<button id="installBtn" class="btn primary" type="button">` + html.EscapeString(t(locale, "share_install_btn")) + `</button>`)
 	}
 	if app.TestFlightURL != "" {
-		actionsHTML.WriteString(fmt.Sprintf(`<a class="btn" href="%s" target="_blank" rel="noopener">通过 TestFlight 安装</a>`, html.EscapeString(app.TestFlightURL)))
+		actionsHTML.WriteString(fmt.Sprintf(`<a class="btn" href="%s" target="_blank" rel="noopener">%s</a>`, html.EscapeString(app.TestFlightURL), html.EscapeString(t(locale, "share_testflight_btn"))))
 	}
 	if app.ASCAppID != "" {
-		actionsHTML.WriteString(fmt.Sprintf(`<a class="btn" href="https://apps.apple.com/app/id%s" target="_blank" rel="noopener">在 App Store 查看</a>`, html.EscapeString(app.ASCAppID)))
+		actionsHTML.WriteString(fmt.Sprintf(`<a class="btn" href="https://apps.apple.com/app/id%s" target="_blank" rel="noopener">%s</a>`, html.EscapeString(app.ASCAppID), html.EscapeString(t(locale, "share_appstore_btn"))))
 	}
 	if actionsHTML.Len() == 0 {
-		actionsHTML.WriteString(`<span class="muted">暂无可用安装方式</span>`)
+		actionsHTML.WriteString(`<span class="muted">` + html.EscapeString(t(locale, "share_no_install")) + `</span>`)
 	}
 
 	// Secondary links: marketing site + support page. Rendered as a
 	// quieter secondary row below primary CTAs.
 	var linksHTML strings.Builder
 	if strings.TrimSpace(app.MarketingURL) != "" {
-		linksHTML.WriteString(fmt.Sprintf(`<a class="link" href="%s" target="_blank" rel="noopener">官方网站</a>`, html.EscapeString(app.MarketingURL)))
+		linksHTML.WriteString(fmt.Sprintf(`<a class="link" href="%s" target="_blank" rel="noopener">%s</a>`, html.EscapeString(app.MarketingURL), html.EscapeString(t(locale, "share_marketing_link"))))
 	}
 	if strings.TrimSpace(app.SupportURL) != "" {
-		linksHTML.WriteString(fmt.Sprintf(`<a class="link" href="%s" target="_blank" rel="noopener">技术支持</a>`, html.EscapeString(app.SupportURL)))
+		linksHTML.WriteString(fmt.Sprintf(`<a class="link" href="%s" target="_blank" rel="noopener">%s</a>`, html.EscapeString(app.SupportURL), html.EscapeString(t(locale, "share_support_link"))))
 	}
 	linksRowHTML := ""
 	if linksHTML.Len() > 0 {
@@ -281,31 +611,40 @@ func (s *Server) renderIOSSharePage(c *gin.Context, app *IOSApp, latest *IOSVers
 
 	requestFormHTML := ""
 	if app.ASCBetaGroupID != "" {
-		requestFormHTML = `
+		requestFormHTML = fmt.Sprintf(`
 <section class="card">
-  <h3>申请加入测试</h3>
-  <p class="muted">填写邮箱即可申请。提交后我们会通过 App Store Connect 向你发送官方 TestFlight 邀请邮件，按邮件指引在 TestFlight App 内接受邀请即可。</p>
+  <h3>%s</h3>
+  <p class="muted">%s</p>
   <form id="requestForm">
-    <input id="reqEmail" type="email" required placeholder="your@email.com" />
+    <input id="reqEmail" type="email" required placeholder="%s" />
     <div class="row">
-      <input id="reqFirst" type="text" placeholder="名 (可选)" />
-      <input id="reqLast" type="text" placeholder="姓 (可选)" />
+      <input id="reqFirst" type="text" placeholder="%s" />
+      <input id="reqLast" type="text" placeholder="%s" />
     </div>
-    <button class="btn primary" type="submit">提交申请</button>
+    <button class="btn primary" type="submit">%s</button>
     <div id="reqStatus" class="status"></div>
   </form>
-</section>`
+</section>`,
+			html.EscapeString(t(locale, "share_request_title")),
+			html.EscapeString(t(locale, "share_request_desc")),
+			html.EscapeString(t(locale, "share_email_ph")),
+			html.EscapeString(t(locale, "share_first_ph")),
+			html.EscapeString(t(locale, "share_last_ph")),
+			html.EscapeString(t(locale, "share_submit")),
+		)
 	}
 
 	// Promotional text is small italic above the longer description (App
 	// Store visual analog). Description is the main body. Keywords show
-	// as subtle pills near the bundle line.
+	// as subtle pills near the bundle line. Both honor i18n overrides.
 	descHTML := ""
-	if strings.TrimSpace(app.PromotionalText) != "" {
-		descHTML += `<p class="promo">` + html.EscapeString(app.PromotionalText) + `</p>`
+	promoLocalized := pickI18N(app.PromotionalTextI18N, locale, app.PromotionalText)
+	descLocalized := pickI18N(app.DescriptionI18N, locale, app.Description)
+	if strings.TrimSpace(promoLocalized) != "" {
+		descHTML += `<p class="promo">` + html.EscapeString(promoLocalized) + `</p>`
 	}
-	if strings.TrimSpace(app.Description) != "" {
-		descHTML += `<p class="desc">` + html.EscapeString(app.Description) + `</p>`
+	if strings.TrimSpace(descLocalized) != "" {
+		descHTML += `<p class="desc">` + html.EscapeString(descLocalized) + `</p>`
 	}
 
 	keywordsHTML := ""
@@ -327,15 +666,16 @@ func (s *Server) renderIOSSharePage(c *gin.Context, app *IOSApp, latest *IOSVers
 	// platform-uploaded version's release_notes when ASC didn't supply
 	// any.
 	whatsNewBody := strings.TrimSpace(app.WhatsNew)
-	whatsNewSource := "ASC"
+	whatsNewSource := t(locale, "share_whatsnew_asc")
 	if whatsNewBody == "" && latest != nil && strings.TrimSpace(latest.ReleaseNotes) != "" {
 		whatsNewBody = latest.ReleaseNotes
-		whatsNewSource = "本次构建"
+		whatsNewSource = t(locale, "share_whatsnew_build")
 	}
 	whatsNewHTML := ""
 	if whatsNewBody != "" {
 		whatsNewHTML = fmt.Sprintf(
-			`<section class="card whatsnew"><h3>新版本 <span class="src">· %s</span></h3><div class="notes">%s</div></section>`,
+			`<section class="card whatsnew"><h3>%s <span class="src">· %s</span></h3><div class="notes">%s</div></section>`,
+			html.EscapeString(t(locale, "share_whatsnew_label")),
 			html.EscapeString(whatsNewSource),
 			html.EscapeString(whatsNewBody),
 		)
@@ -343,20 +683,22 @@ func (s *Server) renderIOSSharePage(c *gin.Context, app *IOSApp, latest *IOSVers
 	releaseNotesHTML = "" // moved into whatsNewHTML above; clear the old slot
 
 	// Inline script: install button hits POST /install, redirects to itms-services://
-	// The test request form posts JSON.
+	// The test request form posts JSON. Localized message strings are
+	// injected via the format args below — script body itself is
+	// language-agnostic.
 	scriptTpl := `
 const installBtn = document.getElementById("installBtn");
 if (installBtn) {
   installBtn.addEventListener("click", async () => {
-    installBtn.disabled = true; installBtn.textContent = "请求中...";
+    installBtn.disabled = true; installBtn.textContent = %q;
     try {
       const r = await fetch("%s/iosdist/share/%s/install", { method: "POST" });
       if (!r.ok) throw new Error("install token failed");
       const data = await r.json();
       window.location.href = data.itms_services;
     } catch (e) {
-      alert("无法生成安装链接，请稍后重试。");
-      installBtn.disabled = false; installBtn.textContent = "安装";
+      alert(%q);
+      installBtn.disabled = false; installBtn.textContent = %q;
     }
   });
 }
@@ -365,7 +707,7 @@ if (form) {
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const status = document.getElementById("reqStatus");
-    status.textContent = "提交中...";
+    status.textContent = %q;
     try {
       const r = await fetch("%s/iosdist/share/%s/test-request", {
         method: "POST",
@@ -377,21 +719,30 @@ if (form) {
         }),
       });
       const data = await r.json();
-      if (!r.ok) throw new Error(data.error || "提交失败");
-      status.textContent = data.delivered === false
-        ? "已记录你的申请，开发者通过后会尽快邀请你。"
-        : "✓ 邀请已发送，请查收邮箱。";
+      if (!r.ok) throw new Error(data.error || %q);
+      status.textContent = data.delivered === false ? %q : %q;
       form.reset();
     } catch (e) {
-      status.textContent = "提交失败：" + e.message;
+      status.textContent = %q + e.message;
     }
   });
 }
 `
-	script := fmt.Sprintf(scriptTpl, base, app.PublicSlug, base, app.PublicSlug)
+	script := fmt.Sprintf(scriptTpl,
+		t(locale, "share_install_loading"),
+		base, app.PublicSlug,
+		t(locale, "share_install_fail"),
+		t(locale, "share_install_btn"),
+		t(locale, "share_submitting"),
+		base, app.PublicSlug,
+		t(locale, "share_submit_failed"),
+		t(locale, "share_invite_logged"),
+		t(locale, "share_invite_sent"),
+		t(locale, "share_submit_failed"),
+	)
 
 	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="zh-CN"><head>
+<html lang="%s"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>%s</title>
@@ -431,6 +782,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;m
 .status{font-size:13px;color:#8e8e93;min-height:1em}
 .tip{margin:24px 0;padding:14px 16px;background:#fff8e1;border-radius:12px;font-size:12px;color:#5d4e15;line-height:1.6}
 .footer{margin:24px 0 8px;text-align:center;font-size:12px;color:#aeaeb2}
+.lang-picker{margin:0 0 16px;font-size:12px;color:#8e8e93;text-align:right}
+.lang-label{margin-right:6px}
+.lang-link{color:#007aff;text-decoration:none}
+.lang-link.active{color:#1c1c1e;font-weight:600;text-decoration:underline}
+.lang-sep{color:#c7c7cc}
 @media(prefers-color-scheme:dark){
   body{background:#000;color:#f2f2f7}
   .hero,.card,.btn,.notes,.kw{background:#1c1c1e;box-shadow:none}
@@ -440,10 +796,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;m
   .bundle,.muted,.meta,.desc,.promo,.status,.notes,.kw,.whatsnew .src{color:#aeaeb2}
   .link{color:#0a84ff}
   .tip{background:#3a2f15;color:#f0d97a}
+  .lang-link.active{color:#f2f2f7}
 }
 </style>
 </head><body>
 <div class="wrap">
+  %s
   <div class="hero">
     %s
     <div style="flex:1;min-width:0">
@@ -464,13 +822,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;m
   %s
   %s
   <div class="tip">
-    iOS 16.4 及以上需在「设置 → 隐私与安全性 → 开发者模式」中开启开发者模式后，方可启动通过 OTA 安装的应用。请在 iPhone 自带 Safari 中打开本页面。
+    %s
   </div>
-  <div class="footer">由 iOS 分发平台提供 · <a href="/iosdist/plaza" style="color:inherit;text-decoration:underline">App 广场</a> · <a href="%s" style="color:inherit;text-decoration:underline">分享链接</a></div>
+  <div class="footer">%s<a href="/iosdist/plaza" style="color:inherit;text-decoration:underline">%s</a> · <a href="%s" style="color:inherit;text-decoration:underline">%s</a></div>
 </div>
 <script>%s</script>
 </body></html>`,
+		html.EscapeString(locale),
 		displayName, displayName, html.EscapeString(shareURL),
+		langPickerHTML(c, locale),
 		iconHTML,
 		displayName,
 		bundle,
@@ -484,7 +844,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;m
 		releaseNotesHTML,
 		whatsNewHTML,
 		requestFormHTML,
+		html.EscapeString(t(locale, "share_dev_mode_note")),
+		html.EscapeString(t(locale, "share_footer_prefix")),
+		html.EscapeString(t(locale, "share_footer_plaza")),
 		html.EscapeString(shareURL),
+		html.EscapeString(t(locale, "share_footer_share")),
 		script,
 	)
 }
