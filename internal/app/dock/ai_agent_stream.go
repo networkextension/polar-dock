@@ -97,6 +97,26 @@ func (a *aiAgent) requestStreamingChatCompletion(ctx context.Context, runtimeCon
 	return out, err
 }
 
+// requestStreamingChatCompletionWithUsage is the same dispatch as
+// requestStreamingChatCompletion but exposes the upstream usage
+// block to the caller. The LLM proxy needs this so the audit row
+// can record prompt/completion tokens.
+func (a *aiAgent) requestStreamingChatCompletionWithUsage(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
+	payload.Stream = true
+	provider := detectAIProvider(runtimeConfig.BaseURL)
+	start := time.Now()
+	out, usage, err := a.requestStreamingChatCompletionInner(ctx, runtimeConfig, payload, onDelta)
+	prompt, completion := 0, 0
+	if usage != nil {
+		prompt = usage.PromptTokens
+		completion = usage.CompletionTokens
+	}
+	if a.server != nil {
+		a.server.metricsRegistry.recordLLMCall(string(provider), runtimeConfig.Model, runtimeConfig.Endpoint, time.Since(start), err, prompt, completion)
+	}
+	return out, usage, err
+}
+
 func (a *aiAgent) requestStreamingChatCompletionInner(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
 	switch detectAIProvider(runtimeConfig.BaseURL) {
 	case aiProviderAnthropic:

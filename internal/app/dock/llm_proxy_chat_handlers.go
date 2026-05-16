@@ -3,6 +3,8 @@ package dock
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -60,13 +62,6 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		openAIError(c, http.StatusBadRequest, "invalid_request_error", "messages must be non-empty")
 		return
 	}
-	if req.Stream {
-		// P0 doesn't support streaming. Returning 400 (not 501) so OpenAI
-		// SDKs that auto-retry on 5xx don't hammer us.
-		openAIError(c, http.StatusBadRequest, "invalid_request_error", "stream=true not yet supported by this proxy")
-		return
-	}
-
 	// 3) Resolve upstream LLM config.
 	if tok.DefaultLLMConfigID == nil || *tok.DefaultLLMConfigID <= 0 {
 		s.recordProxyCallFailure(tok, req.Model, "", 0, http.StatusBadRequest, "token has no default_llm_config_id", start)
@@ -97,7 +92,7 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		Model:         cfg.Model,
 		SystemPrompt:  cfg.SystemPrompt,
 		ProxyURL:      cfg.ProxyURL,
-		Streaming:     false,
+		Streaming:     req.Stream,
 		LLMConfigID:   cfg.ID,
 		LLMConfigName: cfg.Name,
 		Endpoint:      "llm_proxy",
@@ -106,6 +101,10 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		Model:     cfg.Model,
 		Messages:  req.Messages,
 		MaxTokens: req.MaxTokens,
+	}
+	if req.Stream {
+		s.streamLLMProxyChatCompletion(c, tok, cfg, runtimeConfig, payload, req.Model, start)
+		return
 	}
 	resp, err := s.aiAgent.requestChatCompletion(runtimeConfig, payload)
 	if err != nil {
@@ -184,4 +183,144 @@ func randHex(nBytes int) string {
 	b := make([]byte, nBytes)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// streamLLMProxyChatCompletion fans the upstream stream to the client
+// as OpenAI-compatible SSE frames (object="chat.completion.chunk").
+//
+// Frame sequence emitted:
+//  1. initial role frame: choices[0].delta = {"role":"assistant"}
+//  2. one content frame per upstream delta (delta = {"content":"..."})
+//  3. terminal finish frame: choices[0].finish_reason="stop"
+//  4. optional usage frame (choices=[], usage=...) when the upstream
+//     provider reported it
+//  5. literal "data: [DONE]\n\n"
+//
+// Audit is written once after the stream completes (success or error).
+func (s *Server) streamLLMProxyChatCompletion(c *gin.Context, tok *LLMProxyToken, cfg *LLMConfig, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, modelRequested string, start time.Time) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+	c.Writer.Flush()
+
+	chatID := "chatcmpl-" + randHex(12)
+	created := time.Now().Unix()
+	modelResolved := cfg.Model
+
+	emit := func(frame map[string]any) bool {
+		blob, err := json.Marshal(frame)
+		if err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", blob); err != nil {
+			return false
+		}
+		c.Writer.Flush()
+		return true
+	}
+
+	mkChunk := func(delta map[string]any, finishReason *string) map[string]any {
+		choice := map[string]any{
+			"index": 0,
+			"delta": delta,
+		}
+		if finishReason != nil {
+			choice["finish_reason"] = *finishReason
+		} else {
+			choice["finish_reason"] = nil
+		}
+		return map[string]any{
+			"id":      chatID,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   modelResolved,
+			"choices": []any{choice},
+		}
+	}
+
+	// 1) role frame
+	if !emit(mkChunk(map[string]any{"role": "assistant"}, nil)) {
+		s.recordProxyCallFailure(tok, modelRequested, modelResolved, cfg.ID, http.StatusGone, "client disconnected before stream started", start)
+		return
+	}
+
+	// Ask upstream to include usage on the terminal frame when it can.
+	payload.StreamOptions = &aiStreamOptions{IncludeUsage: true}
+
+	// 2..N) content deltas
+	_, usage, err := s.aiAgent.requestStreamingChatCompletionWithUsage(
+		c.Request.Context(),
+		runtimeConfig,
+		payload,
+		func(delta string) {
+			if delta == "" {
+				return
+			}
+			_ = emit(mkChunk(map[string]any{"content": delta}, nil))
+		},
+	)
+	if err != nil {
+		// Try to deliver an error frame; even if it fails the audit
+		// row still records the upstream failure.
+		_ = emit(map[string]any{
+			"error": map[string]any{
+				"message": "upstream LLM error: " + err.Error(),
+				"type":    "upstream_error",
+				"code":    "upstream_error",
+			},
+		})
+		_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+		c.Writer.Flush()
+		s.recordProxyCallFailure(tok, modelRequested, modelResolved, cfg.ID, http.StatusBadGateway, "upstream: "+err.Error(), start)
+		return
+	}
+
+	// 3) terminal finish frame
+	stop := "stop"
+	_ = emit(mkChunk(map[string]any{}, &stop))
+
+	// 4) usage frame (only when upstream gave us one)
+	if usage != nil {
+		usageFrame := map[string]any{
+			"id":      chatID,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   modelResolved,
+			"choices": []any{},
+			"usage": map[string]any{
+				"prompt_tokens":     usage.PromptTokens,
+				"completion_tokens": usage.CompletionTokens,
+				"total_tokens":      usage.TotalTokens,
+			},
+		}
+		_ = emit(usageFrame)
+	}
+
+	// 5) sentinel
+	_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+	c.Writer.Flush()
+
+	// Audit + last-used.
+	s.touchLLMProxyTokenLastUsed(tok.ID, time.Now().UTC())
+	call := &LLMProxyCall{
+		TokenID:        tok.ID,
+		WorkspaceID:    tok.WorkspaceID,
+		ModelRequested: modelRequested,
+		ModelResolved:  modelResolved,
+		LLMConfigID:    ptrInt64(cfg.ID),
+		LatencyMS:      int(time.Since(start).Milliseconds()),
+		StatusCode:     http.StatusOK,
+		CreatedAt:      time.Now().UTC(),
+	}
+	if usage != nil {
+		call.PromptTokens = usage.PromptTokens
+		call.CompletionTokens = usage.CompletionTokens
+		call.TotalTokens = usage.TotalTokens
+		if call.TotalTokens == 0 {
+			call.TotalTokens = call.PromptTokens + call.CompletionTokens
+		}
+	}
+	_ = s.insertLLMProxyCall(call)
 }
