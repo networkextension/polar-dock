@@ -731,6 +731,26 @@ func (s *Server) registerRoutes() {
 		// deploy tooling can probe a fresh box. See sysinfo.go for
 		// what's exposed vs not.
 		api.GET("/system/info", s.handleSystemInfo)
+		// Knowledge-base (P-library-0a) — see doc/astris-skill-design.md
+		// §3.5. Global tables; writes admin-only, reads any-logged-in.
+		api.GET("/library/devices", s.AuthMiddleware(), s.handleRevDeviceList)
+		api.GET("/library/devices/recent", s.AuthMiddleware(), s.handleRevDeviceRecent)
+		api.GET("/library/devices/:id", s.AuthMiddleware(), s.handleRevDeviceGet)
+		api.POST("/library/devices", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevDeviceUpsert)
+		api.DELETE("/library/devices/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevDeviceDelete)
+		api.GET("/library/firmwares", s.AuthMiddleware(), s.handleRevFirmwareList)
+		api.GET("/library/firmwares/matching", s.AuthMiddleware(), s.handleRevFirmwareMatching)
+		api.GET("/library/firmwares/:id", s.AuthMiddleware(), s.handleRevFirmwareGet)
+		api.POST("/library/firmwares", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFirmwareCreate)
+		api.DELETE("/library/firmwares/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFirmwareDelete)
+		api.GET("/library/functions", s.AuthMiddleware(), s.handleRevFunctionList)
+		api.GET("/library/functions/lookup-by-address", s.AuthMiddleware(), s.handleRevFunctionLookupByAddress)
+		api.GET("/library/functions/lookup-by-symbol", s.AuthMiddleware(), s.handleRevFunctionLookupBySymbol)
+		api.GET("/library/functions/search", s.AuthMiddleware(), s.handleRevFunctionSearch)
+		api.GET("/library/functions/match-signature", s.AuthMiddleware(), s.handleRevFunctionMatchSignature)
+		api.GET("/library/functions/:id", s.AuthMiddleware(), s.handleRevFunctionGet)
+		api.POST("/library/functions", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFunctionCreate)
+		api.DELETE("/library/functions/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFunctionDelete)
 		api.GET("/packtunnel/profiles", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileList)
 		api.GET("/packtunnel/profiles/active", s.AuthMiddleware(), s.handlePackTunnelActiveProfileGet)
 		api.GET("/packtunnel/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileGet)
