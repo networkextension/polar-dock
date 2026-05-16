@@ -63,12 +63,17 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		openAIError(c, http.StatusBadRequest, "invalid_request_error", "messages must be non-empty")
 		return
 	}
+	mode := "nonstream"
+	if req.Stream {
+		mode = "stream"
+	}
 	// 3) Rate limit gate. Uses the token's stored rate_limit_rpm; 0
 	// means unlimited. On reject we still write an audit row with
 	// status=429 so the operator can see who's hammering the proxy.
 	if s.llmProxyRateLimiter != nil {
 		if ok, retryAfter := s.llmProxyRateLimiter.allow(tok.ID, tok.RateLimitRPM); !ok {
 			s.recordProxyCallFailure(tok, req.Model, "", 0, http.StatusTooManyRequests, "rate limit exceeded", start)
+			s.metricsRegistry.recordLLMProxyCall(tok.Name, req.Model, mode, http.StatusTooManyRequests, time.Since(start), 0, 0)
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 			openAIError(c, http.StatusTooManyRequests, "rate_limit_exceeded", "token rate limit exceeded; retry in "+strconv.Itoa(retryAfter)+"s")
 			return
@@ -86,22 +91,26 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 	}
 	if resolvedLLMConfigID <= 0 {
 		s.recordProxyCallFailure(tok, req.Model, "", 0, http.StatusBadRequest, "no route + no default_llm_config_id", start)
+		s.metricsRegistry.recordLLMProxyCall(tok.Name, req.Model, mode, http.StatusBadRequest, time.Since(start), 0, 0)
 		openAIError(c, http.StatusBadRequest, "invalid_request_error", "no alias route matched model="+req.Model+" and token has no default LLM configured")
 		return
 	}
 	cfg, apiKey, err := s.getLLMConfigForOwner(tok.WorkspaceID, resolvedLLMConfigID)
 	if err != nil {
 		s.recordProxyCallFailure(tok, req.Model, "", resolvedLLMConfigID, http.StatusInternalServerError, "llm config lookup failed", start)
+		s.metricsRegistry.recordLLMProxyCall(tok.Name, req.Model, mode, http.StatusInternalServerError, time.Since(start), 0, 0)
 		openAIError(c, http.StatusInternalServerError, "internal_error", "upstream config lookup failed")
 		return
 	}
 	if cfg == nil {
 		s.recordProxyCallFailure(tok, req.Model, "", resolvedLLMConfigID, http.StatusBadRequest, "llm config missing", start)
+		s.metricsRegistry.recordLLMProxyCall(tok.Name, req.Model, mode, http.StatusBadRequest, time.Since(start), 0, 0)
 		openAIError(c, http.StatusBadRequest, "invalid_request_error", "configured upstream LLM is missing or out of scope")
 		return
 	}
 	if strings.TrimSpace(apiKey) == "" {
 		s.recordProxyCallFailure(tok, req.Model, cfg.Model, cfg.ID, http.StatusBadGateway, "upstream missing api key", start)
+		s.metricsRegistry.recordLLMProxyCall(tok.Name, cfg.Model, mode, http.StatusBadGateway, time.Since(start), 0, 0)
 		openAIError(c, http.StatusBadGateway, "upstream_error", "upstream LLM is not configured (missing api key)")
 		return
 	}
@@ -130,6 +139,7 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 	resp, err := s.aiAgent.requestChatCompletion(runtimeConfig, payload)
 	if err != nil {
 		s.recordProxyCallFailure(tok, req.Model, cfg.Model, cfg.ID, http.StatusBadGateway, "upstream: "+err.Error(), start)
+		s.metricsRegistry.recordLLMProxyCall(tok.Name, cfg.Model, "nonstream", http.StatusBadGateway, time.Since(start), 0, 0)
 		openAIError(c, http.StatusBadGateway, "upstream_error", "upstream LLM error: "+err.Error())
 		return
 	}
@@ -155,6 +165,7 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		}
 	}
 	_ = s.insertLLMProxyCall(call)
+	s.metricsRegistry.recordLLMProxyCall(tok.Name, cfg.Model, "nonstream", http.StatusOK, time.Since(start), 0, call.CompletionTokens)
 
 	// 7) Render OpenAI-compatible response envelope.
 	c.JSON(http.StatusOK, gin.H{
@@ -186,6 +197,10 @@ func (s *Server) recordProxyCallFailure(tok *LLMProxyToken, modelRequested, mode
 		ErrorText:      errText,
 		CreatedAt:      time.Now().UTC(),
 	})
+	// NOTE: Prometheus metric is emitted by the CALLER (not here),
+	// because only the caller knows the mode (stream vs nonstream).
+	// Recording it here would mis-label stream failures as
+	// nonstream.
 }
 
 func openAIError(c *gin.Context, status int, code, message string) {
@@ -263,12 +278,17 @@ func (s *Server) streamLLMProxyChatCompletion(c *gin.Context, tok *LLMProxyToken
 
 	// 1) role frame
 	if !emit(mkChunk(map[string]any{"role": "assistant"}, nil)) {
+		elapsed := time.Since(start)
 		s.recordProxyCallFailure(tok, modelRequested, modelResolved, cfg.ID, http.StatusGone, "client disconnected before stream started", start)
+		s.metricsRegistry.recordLLMProxyCall(tok.Name, modelResolved, "stream", http.StatusGone, elapsed, 0, 0)
 		return
 	}
 
 	// Ask upstream to include usage on the terminal frame when it can.
 	payload.StreamOptions = &aiStreamOptions{IncludeUsage: true}
+
+	// TTFT capture — first non-empty content delta from upstream.
+	var firstDeltaAt time.Time
 
 	// 2..N) content deltas
 	_, usage, err := s.aiAgent.requestStreamingChatCompletionWithUsage(
@@ -278,6 +298,9 @@ func (s *Server) streamLLMProxyChatCompletion(c *gin.Context, tok *LLMProxyToken
 		func(delta string) {
 			if delta == "" {
 				return
+			}
+			if firstDeltaAt.IsZero() {
+				firstDeltaAt = time.Now()
 			}
 			_ = emit(mkChunk(map[string]any{"content": delta}, nil))
 		},
@@ -294,7 +317,9 @@ func (s *Server) streamLLMProxyChatCompletion(c *gin.Context, tok *LLMProxyToken
 		})
 		_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
 		c.Writer.Flush()
+		elapsed := time.Since(start)
 		s.recordProxyCallFailure(tok, modelRequested, modelResolved, cfg.ID, http.StatusBadGateway, "upstream: "+err.Error(), start)
+		s.metricsRegistry.recordLLMProxyCall(tok.Name, modelResolved, "stream", http.StatusBadGateway, elapsed, 0, 0)
 		return
 	}
 
@@ -344,4 +369,9 @@ func (s *Server) streamLLMProxyChatCompletion(c *gin.Context, tok *LLMProxyToken
 		}
 	}
 	_ = s.insertLLMProxyCall(call)
+	var ttftSec float64
+	if !firstDeltaAt.IsZero() {
+		ttftSec = firstDeltaAt.Sub(start).Seconds()
+	}
+	s.metricsRegistry.recordLLMProxyCall(tok.Name, modelResolved, "stream", http.StatusOK, time.Since(start), ttftSec, call.CompletionTokens)
 }

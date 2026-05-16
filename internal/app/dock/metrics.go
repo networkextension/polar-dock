@@ -47,6 +47,25 @@ type metrics struct {
 	agentAttached      *prometheus.GaugeVec
 	researchDispatches *prometheus.CounterVec
 	iosdistBuilds      *prometheus.CounterVec
+
+	// LLM proxy instrumentation (P0 = audit row in DB; this is the
+	// real-time slice for Grafana). e2e covers the wall time the
+	// client experienced; ttft is set only on streaming success
+	// frames carrying the first content delta. completionTokens is
+	// a histogram because per-request size matters more than rate
+	// for spotting "is the model truncating" anomalies.
+	llmProxyE2E         *prometheus.HistogramVec
+	llmProxyTTFT        *prometheus.HistogramVec
+	llmProxyCompletion  *prometheus.HistogramVec
+	llmProxyRequests    *prometheus.CounterVec
+
+	// Upstream-health probe gauge — set to 1 when a synthetic
+	// completion call to the upstream returns 200 within
+	// timeout, 0 when it errors or times out. Sampled by the
+	// prober goroutine (see llm_proxy_probe.go), NOT updated on
+	// production proxy traffic — keeps the signal stable even
+	// when no real customer is calling.
+	llmUpstreamUp *prometheus.GaugeVec
 }
 
 // llmLatencyBuckets are tuned for chat-completion calls, which run from
@@ -133,14 +152,90 @@ func newMetrics() *metrics {
 			},
 			[]string{"sign_method", "status"},
 		),
+		llmProxyE2E: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "polar_llm_proxy_e2e_seconds",
+				Help:    "End-to-end latency for /api/proxy/v1/chat/completions, labelled by token name, model, mode (stream|nonstream) and status.",
+				Buckets: llmLatencyBuckets,
+			},
+			[]string{"token", "model", "mode", "status"},
+		),
+		llmProxyTTFT: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "polar_llm_proxy_ttft_seconds",
+				Help:    "Time-to-first-token for streaming /chat/completions. Recorded only when the first content delta arrives.",
+				Buckets: []float64{0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10},
+			},
+			[]string{"token", "model"},
+		),
+		llmProxyCompletion: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "polar_llm_proxy_completion_tokens",
+				Help:    "Completion tokens returned per /chat/completions call (excludes 4xx/5xx).",
+				Buckets: []float64{16, 64, 256, 1024, 4096, 16384, 65536},
+			},
+			[]string{"token", "model"},
+		),
+		llmProxyRequests: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_llm_proxy_requests_total",
+				Help: "Count of /api/proxy/v1/chat/completions calls labelled by token, model, mode and HTTP status code.",
+			},
+			[]string{"token", "model", "mode", "status"},
+		),
+		llmUpstreamUp: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "polar_llm_upstream_up",
+				Help: "1 = the synthetic probe call to this llm_configs row returned 200 within timeout; 0 = error/timeout. Updated every 30s by the prober goroutine.",
+			},
+			[]string{"config_id", "name", "model"},
+		),
 	}
 	reg.MustRegister(
 		m.httpRequests, m.httpLatency,
 		m.goroutines, m.dbPoolOpen, m.dbPoolUse, m.dbPoolIdle,
 		m.llmRequests, m.llmLatency, m.llmTokens,
 		m.agentAttached, m.researchDispatches, m.iosdistBuilds,
+		m.llmProxyE2E, m.llmProxyTTFT, m.llmProxyCompletion, m.llmProxyRequests,
+		m.llmUpstreamUp,
 	)
 	return m
+}
+
+// recordLLMProxyCall is the dock-side hook for the LLM proxy chat handler.
+// Called on every terminal state (success or failure). When mode == "stream"
+// and ttftSec > 0, also records TTFT. completionTokens is recorded
+// independently so 4xx/5xx samples (which produce no tokens) don't drag the
+// histogram floor.
+func (m *metrics) recordLLMProxyCall(tokenName, model, mode string, status int, e2e time.Duration, ttftSec float64, completionTokens int) {
+	if m == nil {
+		return
+	}
+	tokenName = labelOr(tokenName, "unknown")
+	model = labelOr(model, "unknown")
+	mode = labelOr(mode, "nonstream")
+	statusStr := strconv.Itoa(status)
+	m.llmProxyE2E.WithLabelValues(tokenName, model, mode, statusStr).Observe(e2e.Seconds())
+	m.llmProxyRequests.WithLabelValues(tokenName, model, mode, statusStr).Inc()
+	if mode == "stream" && ttftSec > 0 {
+		m.llmProxyTTFT.WithLabelValues(tokenName, model).Observe(ttftSec)
+	}
+	if status >= 200 && status < 300 && completionTokens > 0 {
+		m.llmProxyCompletion.WithLabelValues(tokenName, model).Observe(float64(completionTokens))
+	}
+}
+
+// setLLMUpstreamUp updates the gauge for one upstream config. Called by
+// the prober (not by chat traffic).
+func (m *metrics) setLLMUpstreamUp(configID int64, name, model string, up bool) {
+	if m == nil {
+		return
+	}
+	v := 0.0
+	if up {
+		v = 1.0
+	}
+	m.llmUpstreamUp.WithLabelValues(strconv.FormatInt(configID, 10), labelOr(name, "unknown"), labelOr(model, "unknown")).Set(v)
 }
 
 // recordLLMCall records one LLM chat-completion attempt. err non-nil ⇒
