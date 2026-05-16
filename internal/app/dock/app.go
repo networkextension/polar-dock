@@ -120,6 +120,10 @@ type Server struct {
 	// /metrics endpoint itself is gated by metricsToken being set.
 	metricsRegistry *metrics
 	metricsToken    string
+
+	// LLM proxy in-memory rate limiter. Per-token sliding window;
+	// see llm_proxy_rate_limit.go.
+	llmProxyRateLimiter *llmProxyRateLimiter
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -398,6 +402,7 @@ func NewServer(cfg Config) (*Server, error) {
 	go server.runVideoPollWorker(server.backgroundCtx)
 
 	server.metricsRegistry = newMetrics()
+	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
 	server.startMetricsSampler()
 

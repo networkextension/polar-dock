@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,7 +63,19 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		openAIError(c, http.StatusBadRequest, "invalid_request_error", "messages must be non-empty")
 		return
 	}
-	// 3) Resolve upstream LLM config.
+	// 3) Rate limit gate. Uses the token's stored rate_limit_rpm; 0
+	// means unlimited. On reject we still write an audit row with
+	// status=429 so the operator can see who's hammering the proxy.
+	if s.llmProxyRateLimiter != nil {
+		if ok, retryAfter := s.llmProxyRateLimiter.allow(tok.ID, tok.RateLimitRPM); !ok {
+			s.recordProxyCallFailure(tok, req.Model, "", 0, http.StatusTooManyRequests, "rate limit exceeded", start)
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+			openAIError(c, http.StatusTooManyRequests, "rate_limit_exceeded", "token rate limit exceeded; retry in "+strconv.Itoa(retryAfter)+"s")
+			return
+		}
+	}
+
+	// 4) Resolve upstream LLM config.
 	if tok.DefaultLLMConfigID == nil || *tok.DefaultLLMConfigID <= 0 {
 		s.recordProxyCallFailure(tok, req.Model, "", 0, http.StatusBadRequest, "token has no default_llm_config_id", start)
 		openAIError(c, http.StatusBadRequest, "invalid_request_error", "token has no default LLM configured")
@@ -85,7 +98,7 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// 4) Dispatch.
+	// 5) Dispatch.
 	runtimeConfig := aiRuntimeConfig{
 		APIKey:        apiKey,
 		BaseURL:       cfg.BaseURL,
@@ -113,7 +126,7 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// 5) Audit + last-used.
+	// 6) Audit + last-used.
 	s.touchLLMProxyTokenLastUsed(tok.ID, time.Now().UTC())
 	call := &LLMProxyCall{
 		TokenID:        tok.ID,
@@ -135,7 +148,7 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 	}
 	_ = s.insertLLMProxyCall(call)
 
-	// 6) Render OpenAI-compatible response envelope.
+	// 7) Render OpenAI-compatible response envelope.
 	c.JSON(http.StatusOK, gin.H{
 		"id":      "chatcmpl-" + randHex(12),
 		"object":  "chat.completion",
