@@ -66,6 +66,11 @@ type metrics struct {
 	// production proxy traffic — keeps the signal stable even
 	// when no real customer is calling.
 	llmUpstreamUp *prometheus.GaugeVec
+
+	// P4: count of /api/proxy/v1/chat/completions calls rejected
+	// for monthly USD quota exhaustion. Labelled by token so
+	// operator can spot which one is hitting the cap.
+	llmProxyQuotaExceeded *prometheus.CounterVec
 }
 
 // llmLatencyBuckets are tuned for chat-completion calls, which run from
@@ -190,6 +195,13 @@ func newMetrics() *metrics {
 			},
 			[]string{"config_id", "name", "model"},
 		),
+		llmProxyQuotaExceeded: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_llm_proxy_quota_exceeded_total",
+				Help: "Count of /api/proxy/v1/chat/completions calls rejected because the token's monthly USD quota was exhausted.",
+			},
+			[]string{"token"},
+		),
 	}
 	reg.MustRegister(
 		m.httpRequests, m.httpLatency,
@@ -197,9 +209,17 @@ func newMetrics() *metrics {
 		m.llmRequests, m.llmLatency, m.llmTokens,
 		m.agentAttached, m.researchDispatches, m.iosdistBuilds,
 		m.llmProxyE2E, m.llmProxyTTFT, m.llmProxyCompletion, m.llmProxyRequests,
-		m.llmUpstreamUp,
+		m.llmUpstreamUp, m.llmProxyQuotaExceeded,
 	)
 	return m
+}
+
+// recordLLMProxyQuotaExceeded bumps the per-token quota-rejection counter.
+func (m *metrics) recordLLMProxyQuotaExceeded(tokenName string) {
+	if m == nil {
+		return
+	}
+	m.llmProxyQuotaExceeded.WithLabelValues(labelOr(tokenName, "unknown")).Inc()
 }
 
 // recordLLMProxyCall is the dock-side hook for the LLM proxy chat handler.

@@ -128,6 +128,10 @@ type Server struct {
 	// LLM upstream health prober — synthetic-call goroutine that
 	// updates polar_llm_upstream_up gauges every 30s.
 	llmProxyProber *llmProxyProber
+
+	// Per-token monthly cost tracker (P4). 60s in-memory cache of
+	// SUM(cost_usd) for the current UTC month.
+	llmProxyQuota *llmProxyQuotaTracker
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -411,6 +415,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
 	server.llmProxyProber.start()
+	server.llmProxyQuota = newLLMProxyQuotaTracker(server)
 
 	server.router = gin.Default()
 	// Increase max upload size for video files (default gin limit is 32 MiB)
