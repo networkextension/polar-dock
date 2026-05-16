@@ -40,3 +40,38 @@ export type LLMProxyTokenCreateResponse = ErrorResponse & {
 export type LLMProxyTokenRevokeResponse = ErrorResponse & {
   token?: LLMProxyToken;
 };
+
+export type LLMProxyCall = {
+  id: number;
+  token_id: number;
+  workspace_id: string;
+  model_requested: string;
+  model_resolved: string;
+  llm_config_id?: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+  status_code: number;
+  error_text?: string;
+  created_at: string;
+};
+
+export type LLMProxyCallListResponse = ErrorResponse & {
+  calls?: LLMProxyCall[];
+};
+
+export type LLMProxyCallAggregate = {
+  model: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  ok_count: number;
+  error_count: number;
+};
+
+export type LLMProxyCallAggregateResponse = ErrorResponse & {
+  aggregate?: LLMProxyCallAggregate[];
+  days?: number;
+};

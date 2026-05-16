@@ -2,6 +2,8 @@
 
 import { requestJson } from "./http.js";
 import type {
+  LLMProxyCallAggregateResponse,
+  LLMProxyCallListResponse,
   LLMProxyTokenCreatePayload,
   LLMProxyTokenCreateResponse,
   LLMProxyTokenListResponse,
@@ -23,4 +25,16 @@ export async function revokeProxyToken(id: number) {
   return requestJson<LLMProxyTokenRevokeResponse>(`/api/llm-proxy/tokens/${id}`, {
     method: "DELETE",
   });
+}
+
+export async function fetchProxyTokenCalls(id: number, limit = 100) {
+  return requestJson<LLMProxyCallListResponse>(
+    `/api/llm-proxy/tokens/${id}/calls?limit=${limit}`,
+  );
+}
+
+export async function fetchProxyTokenCallsAggregate(id: number, days = 7) {
+  return requestJson<LLMProxyCallAggregateResponse>(
+    `/api/llm-proxy/tokens/${id}/calls/aggregate?days=${days}`,
+  );
 }

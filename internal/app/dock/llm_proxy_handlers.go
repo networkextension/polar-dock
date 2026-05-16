@@ -76,6 +76,65 @@ func (s *Server) handleLLMProxyTokenCreate(c *gin.Context) {
 	})
 }
 
+// GET /api/llm-proxy/tokens/:id/calls?limit=N
+func (s *Server) handleLLMProxyTokenCalls(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 id"})
+		return
+	}
+	// Ownership check: token must belong to the workspace.
+	tok, err := s.getLLMProxyToken(workspaceID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if tok == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "token 不存在"})
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	calls, err := s.listLLMProxyCalls(workspaceID, id, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"calls": calls})
+}
+
+// GET /api/llm-proxy/tokens/:id/calls/aggregate?days=N
+func (s *Server) handleLLMProxyTokenCallsAggregate(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 id"})
+		return
+	}
+	tok, err := s.getLLMProxyToken(workspaceID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if tok == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "token 不存在"})
+		return
+	}
+	days, _ := strconv.Atoi(c.Query("days"))
+	agg, err := s.aggregateLLMProxyCalls(workspaceID, id, days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"aggregate": agg, "days": days})
+}
+
 func (s *Server) handleLLMProxyTokenRevoke(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
