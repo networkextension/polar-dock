@@ -1,6 +1,6 @@
 这个架构方向非常硬核，而且切中了目前 AI Agent 迈向“完全自主落地（Fully Autonomous Execution）”的核心痛点。你做的不单单是一个任务分发平台，而是一个给 AI Agent 用的 **“云端沉淀式超操作系统/云原生工作站”**。
 
-通过结合 Git 工作流与低底层的调试工具（LLDB/KDP/Astris/IDA），你实际上是在为 Agent 构建一套“闭环感知-执行-纠错”的工程环境。
+通过结合 Git 工作流与低底层的调试工具（LLDB/KDP/JTAG/IDA），你实际上是在为 Agent 构建一套“闭环感知-执行-纠错”的工程环境。
 
 以下是对你目前架构、调优方向以及后续引入底层调试工具（Skill）的深度评估和建议：
 
@@ -23,14 +23,14 @@
 
 ## 2. 后续 Skill 扩展评估：引入高级调试与逆向工具
 
-将 **LLDB / NanoKDP / Astris / IDA** 作为 Skill 挂载给 Agent，这是一个**极具远见且极高门槛**的想法。传统的 AI 顶多写写代码、看看 Web 上层报错，而你直接把 Agent 带入了**系统级（Kernel/Native）调试和逆向**的领域。
+将 **LLDB / KDP / JTAG / IDA** 作为 Skill 挂载给 Agent，这是一个**极具远见且极高门槛**的想法。传统的 AI 顶多写写代码、看看 Web 上层报错，而你直接把 Agent 带入了**系统级（Kernel/Native）调试和逆向**的领域。
 
 ### 🛠 工具链挂载的潜力与挑战
 
 | 工具 | 适用场景（Agent 视角的红利） | 核心挑战与落地建议 |
 | --- | --- | --- |
 | **LLDB** | 各种 Native 应用（C/C++/Swift/OC）的崩溃分析、内存泄漏追踪、变量实时注入。 | **不要让 Agent 瞎猜指令。** 必须把 LLDB 封装成高层 API（例如 `get_backtrace`、`read_variable`、`set_breakpoint`）。如果直接给 Agent 一个裸的 LLDB TTY，它很容易陷入无休止的命令语法报错死循环中。 |
-| **NanoKDP / Astris** | macOS/iOS 内核级（XNU）调试、硬件级/仿真器级（Apple Silicon JTAG/SWD 类）底层调试。 | **环境隔离与确定性。** 这类调试通常伴随着系统的 Panic 和挂起。如果 Agent 触发了 Kernel Panic，你的平台必须有能力通过自动化手段（如 DFU 自动化、ANVIL/Hypervisor 重启）瞬间拉起干净的环境，否则平台可用性会雪崩。 |
+| **KDP / JTAG** | macOS/iOS 内核级（XNU）调试、硬件级/仿真器级（Apple Silicon JTAG/SWD 类）底层调试。 | **环境隔离与确定性。** 这类调试通常伴随着系统的 Panic 和挂起。如果 Agent 触发了 Kernel Panic，你的平台必须有能力通过自动化手段（如 DFU 自动化、ANVIL/Hypervisor 重启）瞬间拉起干净的环境，否则平台可用性会雪崩。 |
 | **IDA Pro / Ghidra** | 闭源组件逆向、协议分析、安全漏洞挖掘、没有源码情况下的 Hotfix。 | **反汇编/反编译文本量爆炸。** IDA 的伪代码或汇编量极大，直接塞给 LLM 会瞬间撑爆上下文（Context Window）。需要开发 Skill 插件，让 Agent 能够“按需索取”（例如：只反编译指定函数、生成控制流图 CFG 摘要）。 |
 
 ---

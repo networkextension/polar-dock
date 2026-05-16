@@ -106,7 +106,7 @@ func registeredAdapterNames() []string {
 var errAdapterUnavailable = errors.New("adapter unavailable on this host")
 
 // SessionAware is an OPTIONAL sub-interface for adapters that hold
-// per-attach state (LLDB target, Astris probe attach, gdb subprocess,
+// per-attach state (LLDB target, JTAG probe attach, gdb subprocess,
 // etc.). Type-asserted by the MCP server at tools/call time so it can
 // validate session_ids + route to the right session state.
 //

@@ -2300,6 +2300,13 @@ CREATE INDEX IF NOT EXISTS idx_host_skills_host ON host_skills(host_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_host_skills_host_kind
 	ON host_skills(host_id, kind);
 
+-- Rename legacy wire kind 'nanokdp' → 'kdp' (kernel debug protocol).
+-- Idempotent: no-op on fresh installs that never saw the legacy name.
+-- Done before the uniqueness index would reject a hypothetical post-
+-- rename collision, because the rename targets distinct (host_id,kind)
+-- tuples by construction.
+UPDATE host_skills SET kind = 'kdp' WHERE kind = 'nanokdp';
+
 -- P1b: bot_users.host_skill_id — when set, the bot's reply path is
 -- dispatched via that host's skill (host_skills + host_skill_runs)
 -- instead of the legacy polar-agent attach passthrough. NULL =
@@ -2340,7 +2347,7 @@ CREATE INDEX IF NOT EXISTS idx_skill_runs_active
 	ON host_skill_runs(status) WHERE status IN ('starting', 'running');
 -- P2 (Shell): per-run JSONB blob for skill-specific metadata not worth
 -- a dedicated column. Today: operator_user_id, initial_cwd. Forward-
--- compatible for proxy/wireguard/nanokdp daemons. Additive + idempotent.
+-- compatible for proxy/wireguard/kdp daemons. Additive + idempotent.
 ALTER TABLE host_skill_runs
 	ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb;
 
@@ -2668,7 +2675,7 @@ CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_created
     WHERE cost_usd IS NOT NULL;
 
 -- ============================================================
--- Knowledge base (P-library-0a) — see doc/astris-skill-design.md §3.5
+-- Knowledge base (P-library-0a) — see doc/jtag-skill-design.md §3.5
 --
 -- Three global tables (NOT workspace-scoped — the "network effect
 -- across operators" is the point):

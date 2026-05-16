@@ -91,7 +91,7 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		// auto-picks. Whitelisted server-side too so an attacker
 		// can't smuggle an arbitrary binary path into the env.
 		Shell string `json:"shell"`
-		// P5 (Nanokdp): when the bound skill kind is nanokdp, these
+		// P5 (KDP): when the bound skill kind is kdp, these
 		// supersede the shell-specific fields above.
 		DevicePath string `json:"device_path"`
 		Baud       int    `json:"baud"`
@@ -134,9 +134,9 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		return
 	}
 
-	// Build skill.start config blob. Agent's shell.go / nanokdp.go
+	// Build skill.start config blob. Agent's shell.go / kdp.go
 	// fill sane defaults for any omitted field. The dispatch kind
-	// comes from the host_skills row (not hardcoded) so Nanokdp +
+	// comes from the host_skills row (not hardcoded) so KDP +
 	// future byte-streaming skills route through this same endpoint.
 	startCfg := map[string]any{}
 	if req.Rows > 0 {
@@ -158,7 +158,7 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 		startCfg["shell"] = pref
 	}
 	// P5: pass through device_path + baud when the bound skill is
-	// nanokdp. The req struct above doesn't yet have these fields;
+	// kdp. The req struct above doesn't yet have these fields;
 	// see the next handler revision.
 	if strings.TrimSpace(req.DevicePath) != "" {
 		startCfg["device_path"] = req.DevicePath
@@ -168,7 +168,7 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	}
 
 	// Resolve the host_skill row's kind so we dispatch as whatever
-	// the operator bound (shell / nanokdp / future byte-streaming).
+	// the operator bound (shell / kdp / future byte-streaming).
 	info, err := s.getHostSkillForDispatch(skillID)
 	if err != nil || info == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "resolve host_skill kind"})
@@ -222,7 +222,7 @@ func (s *Server) handleHostShellOpen(c *gin.Context) {
 	// Wait briefly for the agent to confirm the run started (or fail
 	// fast). Avoids the race where the browser's WS upgrade arrives
 	// AFTER the supervisor has already removed the session because the
-	// agent rejected the dispatch (e.g. nanokdp without device_path).
+	// agent rejected the dispatch (e.g. kdp without device_path).
 	// 1500ms covers loopback + pty.Start + first byte; longer pty
 	// startups would race regardless and fall back to a 404 on WS.
 	select {

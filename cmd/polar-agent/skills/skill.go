@@ -1,6 +1,6 @@
 // Package skills defines the contract for polar-agent's
 // dynamically-enabled capabilities (coder, shell, proxy, wireguard,
-// nanokdp, …). See doc/host-module-design.md for the design
+// kdp, …). See doc/host-module-design.md for the design
 // rationale; doc/host-module-dev.md for the phase plan.
 //
 // Phase 0 (this file) ships only the Skill interface + an in-memory
@@ -27,7 +27,7 @@ const (
 	KindShell     SkillKind = "shell"
 	KindProxy     SkillKind = "proxy"
 	KindWireGuard SkillKind = "wireguard"
-	KindNanoKDP   SkillKind = "nanokdp"
+	KindKDP   SkillKind = "kdp"
 	KindMCPServer SkillKind = "mcp-server"
 	KindVNC       SkillKind = "vnc"
 )

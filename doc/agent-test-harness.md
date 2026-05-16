@@ -33,7 +33,7 @@ nginx 任何一个.
                   │  ↓ envelope dispatch       │
                   │  ↓ skills registry         │
                   │    (shell, vnc, coder,     │
-                  │     nanokdp, proxy, wg,    │
+                  │     kdp, proxy, wg,    │
                   │     mcp-server …)          │
                   └────────────────────────────┘
                   (NO /ws/agent dock connection;

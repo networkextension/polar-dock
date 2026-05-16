@@ -18,7 +18,7 @@ independently. Phase 6 is wrap-up (docs + retiring legacy paths).
 | P2    | Shell skill — pty + bidi WS                          | 500 Go + 250 TS | P0 | medium (terminal UX) |
 | P3    | Proxy skill — sing-box-managed HTTP/SOCKS5           | 300 Go + 80 TS | P0 | low |
 | P4    | WireGuard skill — wg-quick                           | 400 Go + 150 TS | P0 | medium (peer config UX) |
-| P5    | Nanokdp skill — interactive serial console with `?` routing | 450 Go + 180 TS | P0 + P2 (shell reused) | low |
+| P5    | KDP skill — interactive serial console with `?` routing | 450 Go + 180 TS | P0 + P2 (shell reused) | low |
 | P6    | Polish: retire bare `polar-agent attach`, deprecate `bot_users.agent_token` direct path | 100 Go + audit | P1–P5 | low |
 
 P0 + P1 are the gates. Once those merge, downstream phases can be
@@ -197,9 +197,9 @@ install-script output:
 echo "%polar-agent ALL=(root) NOPASSWD: /opt/homebrew/bin/wg-quick" | sudo tee /etc/sudoers.d/polar-agent-wg
 ```
 
-## Phase 5 — Nanokdp skill
+## Phase 5 — KDP skill
 
-See [nanokdp interactive chat design — separate brief, TBD]. Shell
+See [kdp interactive chat design — separate brief, TBD]. Shell
 (P2) infrastructure is reused; only the routing rule (`?` prefix → AI
 context, else → pty stdin) is skill-specific.
 
@@ -207,10 +207,10 @@ context, else → pty stdin) is skill-specific.
 
 | # | Task | File |
 |---|---|---|
-| 5.1 | `Nanokdp` skill: spawn nanokdp in pty + ring buffer of last 100 lines | `cmd/polar-agent/skills/nanokdp.go` |
+| 5.1 | `KDP` skill: spawn kdp in pty + ring buffer of last 100 lines | `cmd/polar-agent/skills/kdp.go` |
 | 5.2 | Routing rule: input starting with `?` or `/ai` → AI request with buffer as context; else → pty stdin | same |
-| 5.3 | Skill config: device path, baud (default 115200,N,8,1), KDP UDP port | `ui/src/hosts/skill-forms/nanokdp.ts` |
-| 5.4 | Reuses chat WS for output streaming (same as shell, different render: typed `nanokdp_output` instead of pure bytes) | UI |
+| 5.3 | Skill config: device path, baud (default 115200,N,8,1), KDP UDP port | `ui/src/hosts/skill-forms/kdp.ts` |
+| 5.4 | Reuses chat WS for output streaming (same as shell, different render: typed `kdp_output` instead of pure bytes) | UI |
 | 5.5 | Tests: route correctness, buffer overflow, exit-on-disconnect | `*_test.go` |
 
 ## Phase 6 — Polish / retire legacy
@@ -235,7 +235,7 @@ cmd/polar-agent/
 │   ├── shell.go               # P2
 │   ├── proxy.go               # P3
 │   ├── wireguard.go           # P4
-│   ├── nanokdp.go             # P5
+│   ├── kdp.go             # P5
 │   └── *_test.go              # unit tests for each
 ├── attach.go                  # extended in P0 (advertise) + P1 (legacy shim)
 └── ...
@@ -258,10 +258,10 @@ ui/src/
 │   │   ├── shell.ts           # P2
 │   │   ├── proxy.ts           # P3
 │   │   ├── wireguard.ts       # P4
-│   │   └── nanokdp.ts         # P5
+│   │   └── kdp.ts         # P5
 │   └── skill-views/           # NEW — per-skill live views (e.g. terminal for shell)
 │       ├── shell.ts           # P2
-│       └── nanokdp.ts         # P5
+│       └── kdp.ts         # P5
 └── ...
 
 ui/public/
@@ -326,7 +326,7 @@ POST   /api/hosts/:id/skills/:skill_id/stop       # explicit stop
 
 # WS (P0 reuse + P2 add)
 /ws/agent                                         # existing — extended with skill.* message types
-/ws/host/:id/skill/:run_id/stream                 # P2+ — for skill-specific bidi (shell/nanokdp)
+/ws/host/:id/skill/:run_id/stream                 # P2+ — for skill-specific bidi (shell/kdp)
 ```
 
 All under `RequireWorkspace` middleware; mutations require
@@ -340,7 +340,7 @@ Once P0 lands, adding a new skill kind is:
    interface. Register it in `init()` via `skills.Register(...)`.
 2. New form widget `ui/src/hosts/skill-forms/<kind>.ts` exporting a
    default object `{label, fields[], validate(config), summarize(config)}`.
-3. (If skill has a live view, like shell or nanokdp:) new
+3. (If skill has a live view, like shell or kdp:) new
    `skill-views/<kind>.ts` exporting a `mount(el, runID)` function.
 4. Add an entry to `KNOWN_SKILL_KINDS` in `ui/src/hosts/types.ts`.
 5. Phase docs under `doc/host-skill-<kind>.md`.

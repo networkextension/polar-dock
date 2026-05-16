@@ -225,7 +225,7 @@ Each phase = one PR, mergeable independently.
    the protocol surface is small enough to vendor if upstream stalls.
 2. **First non-GDB adapter** — after P0 lands, the natural next pick
    is LLDB DAP (Mac-native, matches the user's dev box). If the
-   primary use-case is iOS reversing on the nanokdp box, IDA-Python
+   primary use-case is iOS reversing on the kdp box, IDA-Python
    may jump the queue. Confirm before P2 starts.
 3. **Per-call vs per-session billing model** — the LLM-agent path
    counts tokens; we don't currently count *tool* invocations.
