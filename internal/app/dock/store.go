@@ -1914,7 +1914,15 @@ ALTER TABLE iosdist_apps
 	ADD COLUMN IF NOT EXISTS whats_new TEXT NOT NULL DEFAULT '',
 	ADD COLUMN IF NOT EXISTS promotional_text TEXT NOT NULL DEFAULT '',
 	ADD COLUMN IF NOT EXISTS marketing_url TEXT NOT NULL DEFAULT '',
-	ADD COLUMN IF NOT EXISTS support_url TEXT NOT NULL DEFAULT '';
+	ADD COLUMN IF NOT EXISTS support_url TEXT NOT NULL DEFAULT '',
+	-- name_i18n / description_i18n / promotional_text_i18n: JSONB keyed by
+	-- BCP-47-ish locale ("zh-CN", "en", "ja", "ko", ...). Public plaza +
+	-- share page resolve via ?lang= query then Accept-Language header.
+	-- Missing key for the requested locale falls back to the plain
+	-- (legacy single-language) field. NULL means "no i18n configured".
+	ADD COLUMN IF NOT EXISTS name_i18n JSONB,
+	ADD COLUMN IF NOT EXISTS description_i18n JSONB,
+	ADD COLUMN IF NOT EXISTS promotional_text_i18n JSONB;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_iosdist_apps_public_slug
 	ON iosdist_apps(public_slug) WHERE public_slug <> '';
 
