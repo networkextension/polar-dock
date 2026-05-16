@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -186,6 +187,27 @@ var scenarios = []scenario{
 		name: "mcp-adapter-unknown",
 		desc: "adapters:['nonesuch'] → run starts with empty catalogue + skipped_adapters in state",
 		run:  scenarioMCPAdapterUnknown,
+	},
+	// --- MCP P0c — persistent sessions in the framework ---
+	{
+		name: "mcp-session-create",
+		desc: "stub.open_session → session_id returned + appears in mcp.list_sessions",
+		run:  scenarioMCPSessionCreate,
+	},
+	{
+		name: "mcp-session-close",
+		desc: "mcp.close_session by id → session removed from list",
+		run:  scenarioMCPSessionClose,
+	},
+	{
+		name: "mcp-session-bad-id",
+		desc: "mcp.close_session with unknown id → JSON-RPC error",
+		run:  scenarioMCPSessionBadID,
+	},
+	{
+		name: "mcp-session-idle-evict",
+		desc: "POLAR_MCP_SESSION_IDLE_SEC=1 + sleep > 30s tick → session auto-evicted",
+		run:  scenarioMCPSessionIdleEvict,
 	},
 }
 
@@ -1270,8 +1292,10 @@ func scenarioMCPStubError(ctx context.Context, c *client) error {
 func scenarioMCPAdapterUnknown(ctx context.Context, c *client) error {
 	const runID = 315
 	// Adapters list with a name that nobody registered. Skill should
-	// still start (soft-fail on the missing one), just with an empty
-	// catalogue + skipped_adapters in the state event.
+	// still start (soft-fail on the missing one). The catalogue
+	// contains ONLY the framework meta tools (mcp.list_sessions /
+	// mcp.close_session) since no adapter loaded — no adapter-owned
+	// tools surface.
 	if err := startMCPRunWithAdapters(c, runID, []string{"nonesuch-adapter-zzz"}); err != nil {
 		return err
 	}
@@ -1283,8 +1307,185 @@ func scenarioMCPAdapterUnknown(ctx context.Context, c *client) error {
 	if err != nil {
 		return err
 	}
-	if len(tools) > 0 {
-		return fmt.Errorf("expected empty tools catalogue when all adapters skipped, got %v", tools)
+	for _, t := range tools {
+		// Framework tools (mcp.*) are allowed; any other name means an
+		// adapter loaded that shouldn't have.
+		if !strings.HasPrefix(t, "mcp.") {
+			return fmt.Errorf("expected only mcp.* framework tools when all adapters skipped, got %v", tools)
+		}
+	}
+	return nil
+}
+
+func scenarioMCPSessionCreate(ctx context.Context, c *client) error {
+	const runID = 320
+	if err := startMCPRunWithAdapters(c, runID, []string{"stub"}); err != nil {
+		return err
+	}
+	// Open a session via stub.open_session.
+	resp, err := sendMCPRequest(c, runID, 1, "tools/call", map[string]any{
+		"name":      "stub.open_session",
+		"arguments": map[string]any{},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("open_session error: %d %s", resp.Error.Code, resp.Error.Message)
+	}
+	var result struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(result.SessionID, "s_") {
+		return fmt.Errorf("expected session_id prefix s_, got: %q", result.SessionID)
+	}
+	// Confirm it appears in mcp.list_sessions.
+	resp, err = sendMCPRequest(c, runID, 2, "tools/call", map[string]any{
+		"name":      "mcp.list_sessions",
+		"arguments": map[string]any{},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("list_sessions error: %s", resp.Error.Message)
+	}
+	var listResult struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(resp.Result, &listResult); err != nil {
+		return err
+	}
+	found := false
+	for _, s := range listResult.Sessions {
+		if s["id"] == result.SessionID && s["adapter"] == "stub" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("session %s not in list_sessions: %v", result.SessionID, listResult.Sessions)
+	}
+	return nil
+}
+
+func scenarioMCPSessionClose(ctx context.Context, c *client) error {
+	const runID = 321
+	if err := startMCPRunWithAdapters(c, runID, []string{"stub"}); err != nil {
+		return err
+	}
+	resp, err := sendMCPRequest(c, runID, 1, "tools/call", map[string]any{
+		"name":      "stub.open_session",
+		"arguments": map[string]any{},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	var r1 struct {
+		SessionID string `json:"session_id"`
+	}
+	_ = json.Unmarshal(resp.Result, &r1)
+	if r1.SessionID == "" {
+		return fmt.Errorf("no session_id from open: %s", string(resp.Result))
+	}
+	// Close it via the framework tool.
+	resp, err = sendMCPRequest(c, runID, 2, "tools/call", map[string]any{
+		"name":      "mcp.close_session",
+		"arguments": map[string]any{"session_id": r1.SessionID},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("close_session error: %s", resp.Error.Message)
+	}
+	// List should be empty.
+	resp, err = sendMCPRequest(c, runID, 3, "tools/call", map[string]any{
+		"name":      "mcp.list_sessions",
+		"arguments": map[string]any{},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	var listResult struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	_ = json.Unmarshal(resp.Result, &listResult)
+	for _, s := range listResult.Sessions {
+		if s["id"] == r1.SessionID {
+			return fmt.Errorf("session %s still present after close: %v", r1.SessionID, s)
+		}
+	}
+	return nil
+}
+
+func scenarioMCPSessionBadID(ctx context.Context, c *client) error {
+	const runID = 322
+	if err := startMCPRunWithAdapters(c, runID, []string{"stub"}); err != nil {
+		return err
+	}
+	resp, err := sendMCPRequest(c, runID, 1, "tools/call", map[string]any{
+		"name":      "mcp.close_session",
+		"arguments": map[string]any{"session_id": "s_does_not_exist_zzz"},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	if resp.Error == nil {
+		return fmt.Errorf("expected JSON-RPC error for unknown session_id")
+	}
+	if !strings.Contains(resp.Error.Message, "not found") {
+		return fmt.Errorf("expected 'not found' in error message, got: %q", resp.Error.Message)
+	}
+	return nil
+}
+
+func scenarioMCPSessionIdleEvict(ctx context.Context, c *client) error {
+	// This scenario is slow (~35s) because the idleWatchdog ticks every
+	// 30 seconds inside the agent and we can't control that without
+	// adding more knobs. POLAR_MCP_SESSION_IDLE_SEC=1 gates the
+	// per-session cutoff; the tick rate stays 30s. Skip when running
+	// quick smoke tests.
+	if os.Getenv("POLAR_SKIP_SLOW_SCENARIOS") == "1" {
+		return fmt.Errorf("SKIPPED — set POLAR_SKIP_SLOW_SCENARIOS=0 to run (35s+)")
+	}
+	const runID = 323
+	if err := startMCPRunWithAdapters(c, runID, []string{"stub"}); err != nil {
+		return err
+	}
+	resp, err := sendMCPRequest(c, runID, 1, "tools/call", map[string]any{
+		"name":      "stub.open_session",
+		"arguments": map[string]any{},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	var r1 struct {
+		SessionID string `json:"session_id"`
+	}
+	_ = json.Unmarshal(resp.Result, &r1)
+	// Wait for ≥1 watchdog tick AFTER the per-session idle expires.
+	// agent test-serve was launched with POLAR_MCP_SESSION_IDLE_SEC=1
+	// (set by orchestrate via env passthrough); tick = 30s; pad to 35s.
+	time.Sleep(35 * time.Second)
+	resp, err = sendMCPRequest(c, runID, 2, "tools/call", map[string]any{
+		"name":      "mcp.list_sessions",
+		"arguments": map[string]any{},
+	}, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	var listResult struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	_ = json.Unmarshal(resp.Result, &listResult)
+	for _, s := range listResult.Sessions {
+		if s["id"] == r1.SessionID {
+			return fmt.Errorf("session %s NOT evicted after 35s with idle=1s", r1.SessionID)
+		}
 	}
 	return nil
 }
