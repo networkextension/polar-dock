@@ -36,24 +36,48 @@ import (
 // each scrape to fork uname + df + sysctl.
 
 type SystemHostInfo struct {
-	Hostname      string            `json:"hostname"`
-	OS            string            `json:"os"`
-	Arch          string            `json:"arch"`
-	Uname         string            `json:"uname,omitempty"`
+	Hostname      string                `json:"hostname"`
+	OS            string                `json:"os"`
+	Arch          string                `json:"arch"`
+	Uname         string                `json:"uname,omitempty"`
 	Version       SystemHostVersionInfo `json:"version"`
-	UptimeSeconds int64             `json:"uptime_seconds"`
+	UptimeSeconds int64                 `json:"uptime_seconds"`
 	IPs           []SystemHostIPInfo    `json:"ip_addresses"`
 	Disks         []SystemHostDiskInfo  `json:"disks"`
 	Memory        SystemHostMemoryInfo  `json:"memory"`
 	CPU           SystemHostCPUInfo     `json:"cpu"`
-	SampledAt     time.Time         `json:"sampled_at"`
+	// Runtime: live dock-process state. NOT cached — refreshed on
+	// every call even when the rest of the snapshot is served from
+	// cache, because goroutines / heap change second-to-second.
+	Runtime   *SystemHostRuntimeInfo `json:"runtime,omitempty"`
+	SampledAt time.Time              `json:"sampled_at"`
 }
 
 type SystemHostVersionInfo struct {
 	GitSHA    string `json:"git_sha,omitempty"`
+	GitBranch string `json:"git_branch,omitempty"`
+	GitDirty  bool   `json:"git_dirty,omitempty"`
 	BuildTime string `json:"build_time,omitempty"`
 	Go        string `json:"go"`
 	Module    string `json:"module,omitempty"`
+}
+
+// SystemHostRuntimeInfo — live dock process state. Used by ops to
+// spot leaks (rising goroutines/heap) or DB pool exhaustion.
+type SystemHostRuntimeInfo struct {
+	ProcessUptimeSeconds int64                `json:"process_uptime_seconds"`
+	Goroutines           int                  `json:"goroutines"`
+	HeapAllocBytes       uint64               `json:"heap_alloc_bytes"`
+	HeapSysBytes         uint64               `json:"heap_sys_bytes"`
+	GCRuns               uint32               `json:"gc_runs"`
+	DBPool               *SystemHostDBPoolInfo `json:"db_pool,omitempty"`
+}
+
+type SystemHostDBPoolInfo struct {
+	Open      int   `json:"open"`
+	InUse     int   `json:"in_use"`
+	Idle      int   `json:"idle"`
+	WaitCount int64 `json:"wait_count"`
 }
 
 type SystemHostIPInfo struct {
@@ -86,7 +110,14 @@ type SystemHostCPUInfo struct {
 //                      -X gin-auth-app/internal/app/dock.buildBuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)'
 var (
 	buildGitSHA    = ""
+	buildGitBranch = ""
+	buildGitDirty  = "" // "true" = dirty working tree at build time
 	buildBuildTime = ""
+
+	// processStartTime is set at package init; runtime exposes
+	// (now - processStartTime) as the dock's own uptime, which is
+	// distinct from OS uptime.
+	processStartTime = time.Now()
 )
 
 const sysInfoCacheTTL = 5 * time.Second
@@ -98,27 +129,59 @@ var (
 )
 
 // gatherSystemInfoCached returns the cached snapshot if fresh, otherwise
-// refreshes. Cheap to call from the HTTP handler.
-func gatherSystemInfoCached() *SystemHostInfo {
+// refreshes. Cheap to call from the HTTP handler. The Runtime sub-struct
+// is always refreshed even on cache hit — process state changes
+// second-to-second.
+func (s *Server) gatherSystemInfoCached() *SystemHostInfo {
+	var base *SystemHostInfo
 	if cached := sysInfoCache.Load(); cached != nil {
 		at := time.Unix(0, sysInfoCacheAt.Load())
 		if time.Since(at) < sysInfoCacheTTL {
-			return cached
+			base = cached
 		}
 	}
-	sysInfoMu.Lock()
-	defer sysInfoMu.Unlock()
-	// Double-check under lock — another goroutine may have just refreshed.
-	if cached := sysInfoCache.Load(); cached != nil {
-		at := time.Unix(0, sysInfoCacheAt.Load())
-		if time.Since(at) < sysInfoCacheTTL {
-			return cached
+	if base == nil {
+		sysInfoMu.Lock()
+		defer sysInfoMu.Unlock()
+		// Double-check under lock — another goroutine may have just refreshed.
+		if cached := sysInfoCache.Load(); cached != nil {
+			at := time.Unix(0, sysInfoCacheAt.Load())
+			if time.Since(at) < sysInfoCacheTTL {
+				base = cached
+			}
+		}
+		if base == nil {
+			base = gatherSystemInfo()
+			sysInfoCache.Store(base)
+			sysInfoCacheAt.Store(time.Now().UnixNano())
 		}
 	}
-	fresh := gatherSystemInfo()
-	sysInfoCache.Store(fresh)
-	sysInfoCacheAt.Store(time.Now().UnixNano())
-	return fresh
+	// Refresh runtime sub-struct on every call (cheap).
+	cloned := *base
+	cloned.Runtime = s.gatherRuntimeInfo()
+	return &cloned
+}
+
+func (s *Server) gatherRuntimeInfo() *SystemHostRuntimeInfo {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	r := &SystemHostRuntimeInfo{
+		ProcessUptimeSeconds: int64(time.Since(processStartTime).Seconds()),
+		Goroutines:           runtime.NumGoroutine(),
+		HeapAllocBytes:       ms.HeapAlloc,
+		HeapSysBytes:         ms.HeapSys,
+		GCRuns:               ms.NumGC,
+	}
+	if s != nil && s.db != nil {
+		stats := s.db.Stats()
+		r.DBPool = &SystemHostDBPoolInfo{
+			Open:      stats.OpenConnections,
+			InUse:     stats.InUse,
+			Idle:      stats.Idle,
+			WaitCount: stats.WaitCount,
+		}
+	}
+	return r
 }
 
 func gatherSystemInfo() *SystemHostInfo {
@@ -133,6 +196,8 @@ func gatherSystemInfo() *SystemHostInfo {
 	}
 	si.Version = SystemHostVersionInfo{
 		GitSHA:    buildGitSHA,
+		GitBranch: buildGitBranch,
+		GitDirty:  strings.EqualFold(buildGitDirty, "true"),
 		BuildTime: buildBuildTime,
 		Go:        runtime.Version(),
 	}

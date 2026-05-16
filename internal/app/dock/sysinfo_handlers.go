@@ -13,6 +13,6 @@ import (
 // Cache: 5s server-side (see sysinfo.go) so each scrape doesn't fork
 // uname + df + sysctl.
 func (s *Server) handleSystemInfo(c *gin.Context) {
-	si := gatherSystemInfoCached()
+	si := s.gatherSystemInfoCached()
 	c.JSON(http.StatusOK, si)
 }
