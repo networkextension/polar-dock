@@ -722,6 +722,10 @@ func (s *Server) registerRoutes() {
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.
 		api.POST("/proxy/v1/chat/completions", s.handleLLMProxyChatCompletions)
+		// Public system-info endpoint — intentionally no auth so
+		// deploy tooling can probe a fresh box. See sysinfo.go for
+		// what's exposed vs not.
+		api.GET("/system/info", s.handleSystemInfo)
 		api.GET("/packtunnel/profiles", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileList)
 		api.GET("/packtunnel/profiles/active", s.AuthMiddleware(), s.handlePackTunnelActiveProfileGet)
 		api.GET("/packtunnel/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileGet)

@@ -4924,3 +4924,72 @@ textarea:focus-visible,
   font-style: italic;
 }
 
+
+/* System info widget (dashboard) — see ui/src/lib/dashboard-widgets.ts. */
+.sysinfo-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.sysinfo-row { display: contents; }
+.sysinfo-row .sysinfo-k {
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+}
+.sysinfo-row .sysinfo-v code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.sysinfo-uname {
+  max-width: 100%;
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.sysinfo-ips { display: flex; flex-wrap: wrap; gap: 4px; }
+.sysinfo-ip { white-space: nowrap; }
+.sysinfo-iface {
+  color: var(--text-muted, #888);
+  font-weight: normal;
+  margin-left: 2px;
+}
+.sysinfo-disks {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sysinfo-disk-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+.sysinfo-mount {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.sysinfo-disk-meta {
+  color: var(--text-muted, #888);
+  font-size: 11px;
+}
+.sysinfo-disk-bar {
+  margin-top: 2px;
+  height: 4px;
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.sysinfo-disk-bar-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
