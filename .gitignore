@@ -19,3 +19,7 @@ doc/posts.json
 *.terminal
 ai.env
 cf.env
+
+# Internal research / source-of-design notes — not for public
+# distribution. Kept locally; not pushed to the open repo.
+doc/internal/
