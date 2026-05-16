@@ -155,6 +155,54 @@
       </div>
     </div>
 
+    <!-- Audit log viewer modal -->
+    <div id="auditModal" class="lp-modal" hidden>
+      <div class="lp-modal-card" style="max-width: 900px;">
+        <div class="lp-modal-head">
+          <span class="lp-modal-title" id="auditTitle">审计日志</span>
+          <button id="auditCloseBtn" type="button" class="lp-modal-close">✕</button>
+        </div>
+        <div class="lp-modal-body">
+          <div class="toolbar" style="margin-bottom: 12px; gap: 8px;">
+            <label class="meta-subtitle" for="auditDays">时间范围：</label>
+            <select id="auditDays" class="input" style="width: auto; max-width: 140px;">
+              <option value="1">最近 1 天</option>
+              <option value="7" selected>最近 7 天</option>
+              <option value="30">最近 30 天</option>
+            </select>
+            <button id="auditRefreshBtn" type="button" class="btn-inline btn-secondary">⟲ 刷新</button>
+            <span id="auditStatus" class="meta-subtitle"></span>
+          </div>
+
+          <div class="settings-section-card" style="margin-bottom: 12px;">
+            <div class="settings-section-title">按模型聚合</div>
+            <table id="auditAggregateTable" class="lp-table" style="width: 100%; margin-top: 6px;" hidden>
+              <thead>
+                <tr>
+                  <th>模型</th><th>调用</th><th>OK</th><th>失败</th><th>prompt</th><th>completion</th><th>total</th>
+                </tr>
+              </thead>
+              <tbody id="auditAggregateTbody"></tbody>
+            </table>
+            <div id="auditAggregateEmpty" class="meta-subtitle" hidden>该时段无调用记录。</div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="settings-section-title">最近调用</div>
+            <table id="auditCallsTable" class="lp-table" style="width: 100%; margin-top: 6px;" hidden>
+              <thead>
+                <tr>
+                  <th>时间</th><th>状态</th><th>模型</th><th>tokens (P/C)</th><th>延迟</th><th>错误</th>
+                </tr>
+              </thead>
+              <tbody id="auditCallsTbody"></tbody>
+            </table>
+            <div id="auditCallsEmpty" class="meta-subtitle" hidden>无调用记录。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Plaintext-shown-once modal -->
     <div id="plaintextModal" class="lp-modal" hidden>
       <div class="lp-modal-card" style="max-width: 600px;">

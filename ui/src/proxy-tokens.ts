@@ -11,6 +11,8 @@
 import { fetchLLMConfigs } from "./api/dashboard.js";
 import {
   createProxyToken,
+  fetchProxyTokenCalls,
+  fetchProxyTokenCallsAggregate,
   listProxyTokens,
   revokeProxyToken,
 } from "./api/llm_proxy.js";
@@ -19,7 +21,7 @@ import { byId } from "./lib/dom.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import type { LLMConfig } from "./types/dashboard.js";
-import type { LLMProxyToken } from "./types/llm_proxy.js";
+import type { LLMProxyCall, LLMProxyCallAggregate, LLMProxyToken } from "./types/llm_proxy.js";
 
 initStoredTheme();
 bindThemeSync();
@@ -47,6 +49,21 @@ const plaintextBaseURL = byId<HTMLInputElement>("plaintextBaseURL");
 const plaintextCopyBtn = byId<HTMLButtonElement>("plaintextCopyBtn");
 const plaintextBaseCopyBtn = byId<HTMLButtonElement>("plaintextBaseCopyBtn");
 const plaintextDoneBtn = byId<HTMLButtonElement>("plaintextDoneBtn");
+
+const auditModal = byId<HTMLElement>("auditModal");
+const auditTitle = byId<HTMLElement>("auditTitle");
+const auditCloseBtn = byId<HTMLButtonElement>("auditCloseBtn");
+const auditDays = byId<HTMLSelectElement>("auditDays");
+const auditRefreshBtn = byId<HTMLButtonElement>("auditRefreshBtn");
+const auditStatus = byId<HTMLElement>("auditStatus");
+const auditAggregateTable = byId<HTMLTableElement>("auditAggregateTable");
+const auditAggregateTbody = byId<HTMLTableSectionElement>("auditAggregateTbody");
+const auditAggregateEmpty = byId<HTMLElement>("auditAggregateEmpty");
+const auditCallsTable = byId<HTMLTableElement>("auditCallsTable");
+const auditCallsTbody = byId<HTMLTableSectionElement>("auditCallsTbody");
+const auditCallsEmpty = byId<HTMLElement>("auditCallsEmpty");
+
+let auditCurrentToken: LLMProxyToken | null = null;
 
 let llmConfigById = new Map<number, LLMConfig>();
 
@@ -100,6 +117,14 @@ function renderTokenRow(tok: LLMProxyToken): HTMLTableRowElement {
   cellStatus.textContent = tok.revoked_at ? `🔴 已撤销 ${fmtRelative(tok.revoked_at)}` : "✓ 启用";
 
   const cellActions = document.createElement("td");
+  // Audit available on all rows (even revoked — historical view).
+  const auditBtn = document.createElement("button");
+  auditBtn.type = "button";
+  auditBtn.className = "btn-inline btn-secondary";
+  auditBtn.textContent = "审计";
+  auditBtn.style.marginRight = "4px";
+  auditBtn.addEventListener("click", () => openAuditModal(tok));
+  cellActions.appendChild(auditBtn);
   if (!tok.revoked_at) {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -233,6 +258,93 @@ async function onRevoke(tok: LLMProxyToken): Promise<void> {
   }
 }
 
+function renderAuditAggregateRow(a: LLMProxyCallAggregate): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  const mk = (text: string) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    return td;
+  };
+  tr.appendChild(mk(a.model || "—"));
+  tr.appendChild(mk(String(a.calls)));
+  tr.appendChild(mk(String(a.ok_count)));
+  const errTd = mk(String(a.error_count));
+  if (a.error_count > 0) errTd.style.color = "var(--danger, #c00)";
+  tr.appendChild(errTd);
+  tr.appendChild(mk(a.prompt_tokens.toLocaleString()));
+  tr.appendChild(mk(a.completion_tokens.toLocaleString()));
+  tr.appendChild(mk(a.total_tokens.toLocaleString()));
+  return tr;
+}
+
+function renderAuditCallRow(c: LLMProxyCall): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  const mk = (text: string) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    return td;
+  };
+  tr.appendChild(mk(fmtRelative(c.created_at)));
+  const statusTd = mk(String(c.status_code));
+  if (c.status_code >= 400) statusTd.style.color = "var(--danger, #c00)";
+  tr.appendChild(statusTd);
+  tr.appendChild(mk(c.model_resolved || c.model_requested || "—"));
+  tr.appendChild(mk(`${c.prompt_tokens} / ${c.completion_tokens}`));
+  tr.appendChild(mk(c.latency_ms > 0 ? `${c.latency_ms}ms` : "—"));
+  const errTd = mk(c.error_text || "");
+  if (c.error_text) {
+    errTd.style.color = "var(--danger, #c00)";
+    errTd.title = c.error_text;
+  }
+  tr.appendChild(errTd);
+  return tr;
+}
+
+async function refreshAuditModal(): Promise<void> {
+  if (!auditCurrentToken) return;
+  const tokenID = auditCurrentToken.id;
+  const days = parseInt(auditDays.value, 10) || 7;
+
+  auditStatus.textContent = "加载中...";
+  try {
+    const [aggResp, callsResp] = await Promise.all([
+      fetchProxyTokenCallsAggregate(tokenID, days),
+      fetchProxyTokenCalls(tokenID, 100),
+    ]);
+
+    auditAggregateTbody.innerHTML = "";
+    const aggList = aggResp.data.aggregate ?? [];
+    aggList.forEach((a) => auditAggregateTbody.appendChild(renderAuditAggregateRow(a)));
+    auditAggregateTable.hidden = aggList.length === 0;
+    auditAggregateEmpty.hidden = aggList.length !== 0;
+
+    auditCallsTbody.innerHTML = "";
+    const callsList = callsResp.data.calls ?? [];
+    callsList.forEach((c) => auditCallsTbody.appendChild(renderAuditCallRow(c)));
+    auditCallsTable.hidden = callsList.length === 0;
+    auditCallsEmpty.hidden = callsList.length !== 0;
+
+    auditStatus.textContent = `聚合 ${aggList.length} 行 / 最近 ${callsList.length} 次`;
+  } catch (err) {
+    auditStatus.textContent = `加载失败：${(err as Error).message}`;
+  }
+}
+
+function openAuditModal(tok: LLMProxyToken): void {
+  auditCurrentToken = tok;
+  auditTitle.textContent = `审计日志 · ${tok.name} (${tok.prefix}…)`;
+  auditModal.hidden = false;
+  void refreshAuditModal();
+}
+
+function closeAuditModal(): void {
+  auditCurrentToken = null;
+  auditModal.hidden = true;
+  auditAggregateTbody.innerHTML = "";
+  auditCallsTbody.innerHTML = "";
+  auditStatus.textContent = "";
+}
+
 async function copyToClipboard(value: string, btn: HTMLButtonElement): Promise<void> {
   try {
     await navigator.clipboard.writeText(value);
@@ -258,6 +370,9 @@ plaintextDoneBtn.addEventListener("click", () => {
 });
 plaintextCopyBtn.addEventListener("click", () => void copyToClipboard(plaintextValue.value, plaintextCopyBtn));
 plaintextBaseCopyBtn.addEventListener("click", () => void copyToClipboard(plaintextBaseURL.value, plaintextBaseCopyBtn));
+auditCloseBtn.addEventListener("click", closeAuditModal);
+auditRefreshBtn.addEventListener("click", () => void refreshAuditModal());
+auditDays.addEventListener("change", () => void refreshAuditModal());
 logoutBtn.addEventListener("click", () => void logout().then(() => (window.location.href = "/login.html")));
 
 async function bootstrap(): Promise<void> {

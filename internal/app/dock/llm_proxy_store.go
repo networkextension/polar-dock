@@ -231,6 +231,91 @@ func (s *Server) touchLLMProxyTokenLastUsed(id int64, now time.Time) {
 	_, _ = s.db.Exec(`UPDATE llm_proxy_tokens SET last_used_at = $2 WHERE id = $1`, id, now)
 }
 
+// listLLMProxyCalls returns up to `limit` most-recent audit rows
+// for a token within the given workspace. Caller verifies admin +
+// workspace-scope ownership before calling.
+func (s *Server) listLLMProxyCalls(workspaceID string, tokenID int64, limit int) ([]LLMProxyCall, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.Query(
+		`SELECT id, token_id, workspace_id, model_requested, model_resolved, llm_config_id, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, COALESCE(error_text, ''), created_at
+		   FROM llm_proxy_calls
+		  WHERE workspace_id = $1 AND token_id = $2
+		  ORDER BY id DESC
+		  LIMIT $3`,
+		workspaceID, tokenID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]LLMProxyCall, 0)
+	for rows.Next() {
+		var c LLMProxyCall
+		var llmConfigID sql.NullInt64
+		if err := rows.Scan(&c.ID, &c.TokenID, &c.WorkspaceID, &c.ModelRequested, &c.ModelResolved, &llmConfigID, &c.PromptTokens, &c.CompletionTokens, &c.TotalTokens, &c.LatencyMS, &c.StatusCode, &c.ErrorText, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		if llmConfigID.Valid {
+			v := llmConfigID.Int64
+			c.LLMConfigID = &v
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// LLMProxyCallAggregate is one row of the per-model aggregate
+// returned to the audit viewer.
+type LLMProxyCallAggregate struct {
+	Model            string `json:"model"`
+	Calls            int    `json:"calls"`
+	PromptTokens     int    `json:"prompt_tokens"`
+	CompletionTokens int    `json:"completion_tokens"`
+	TotalTokens      int    `json:"total_tokens"`
+	OkCount          int    `json:"ok_count"`
+	ErrorCount       int    `json:"error_count"`
+}
+
+// aggregateLLMProxyCalls returns per-model aggregates for calls
+// made by a token in the trailing `days` days. Caller verifies admin
+// + workspace-scope ownership.
+func (s *Server) aggregateLLMProxyCalls(workspaceID string, tokenID int64, days int) ([]LLMProxyCallAggregate, error) {
+	if days <= 0 || days > 365 {
+		days = 7
+	}
+	rows, err := s.db.Query(
+		`SELECT model_resolved,
+		        COUNT(*)                                  AS calls,
+		        COALESCE(SUM(prompt_tokens), 0)::INT      AS prompt_tokens,
+		        COALESCE(SUM(completion_tokens), 0)::INT  AS completion_tokens,
+		        COALESCE(SUM(total_tokens), 0)::INT       AS total_tokens,
+		        COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299) AS ok_count,
+		        COUNT(*) FILTER (WHERE status_code >= 400)              AS error_count
+		   FROM llm_proxy_calls
+		  WHERE workspace_id = $1
+		    AND token_id     = $2
+		    AND created_at  >= NOW() - ($3 || ' days')::INTERVAL
+		  GROUP BY model_resolved
+		  ORDER BY calls DESC`,
+		workspaceID, tokenID, days,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]LLMProxyCallAggregate, 0)
+	for rows.Next() {
+		var a LLMProxyCallAggregate
+		if err := rows.Scan(&a.Model, &a.Calls, &a.PromptTokens, &a.CompletionTokens, &a.TotalTokens, &a.OkCount, &a.ErrorCount); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 func (s *Server) insertLLMProxyCall(call *LLMProxyCall) error {
 	if call == nil {
 		return fmt.Errorf("nil call")
