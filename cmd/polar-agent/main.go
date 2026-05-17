@@ -379,6 +379,12 @@ func runAttach(args []string) int {
 		startRecoveryWatcher(cfg)
 	}
 
+	// P-library-0b: tell the skills package about the agent's dock
+	// (server, token). The `library` MCP adapter reads from this at
+	// Start time. Done unconditionally; if the adapter isn't loaded
+	// in the operator's skill config it doesn't matter.
+	skills.SetLibraryAdapterConfig(cfg.Server, cfg.Token)
+
 	// VNC skill (B.1 plain TCP relay). Unix-only — primarily targets
 	// macOS Screen Sharing on the agent host (loopback to :5900) but
 	// any LAN-reachable VNC server works. Authentication is end-to-end
