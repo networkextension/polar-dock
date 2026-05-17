@@ -2750,6 +2750,117 @@ CREATE TABLE IF NOT EXISTS rev_functions (
 CREATE INDEX IF NOT EXISTS ix_rev_functions_fw ON rev_functions(firmware_id);
 CREATE INDEX IF NOT EXISTS ix_rev_functions_symbol ON rev_functions(symbol);
 CREATE INDEX IF NOT EXISTS ix_rev_functions_addr ON rev_functions(firmware_id, address);
+
+-- ============================================================
+-- wg-mac join control plane — see doc/JOIN_PROTOCOL.md
+--
+-- Tailscale-style mesh: admin issues a join token, operator runs
+-- curl-bash install.sh, device gets a 10.88.<S>.<D>/32 wg IP +
+-- a per-device peer list. Polar is server-only; the C wg_core /
+-- wgctl client lives in a separate repo and its bundle is
+-- uploaded here for /v1/bundle to serve.
+-- ============================================================
+
+-- Hub singleton: one row, id=1. Operator sets these before first
+-- device join. Until configured, /v1/register still works but the
+-- peer list will reference an unreachable hub — UI warns.
+CREATE TABLE IF NOT EXISTS wg_hub (
+    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    pubkey TEXT NOT NULL DEFAULT '',
+    endpoint TEXT NOT NULL DEFAULT '',
+    wg_ip TEXT NOT NULL DEFAULT '10.88.0.1',
+    mesh_cidr TEXT NOT NULL DEFAULT '10.88.0.0/16',
+    keepalive_sec INT NOT NULL DEFAULT 25,
+    refresh_sec INT NOT NULL DEFAULT 300,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO wg_hub (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- Per-LAN partition. s_index = the <S> in 10.88.<S>.<D>. Auto-
+-- allocated when the server first sees a new (public_ip, lan_cidr)
+-- combo, or explicitly addressed by operator-chosen slug.
+CREATE TABLE IF NOT EXISTS wg_sites (
+    id BIGSERIAL PRIMARY KEY,
+    slug TEXT UNIQUE NOT NULL,
+    s_index INT UNIQUE NOT NULL CHECK (s_index BETWEEN 1 AND 254),
+    label TEXT NOT NULL DEFAULT '',
+    public_ip TEXT NOT NULL DEFAULT '',
+    lan_cidr TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_wg_sites_public_ip ON wg_sites(public_ip);
+
+-- Admin-issued enroll tokens. Single-use; consumed by /v1/register
+-- (bound to device + pubkey). Plaintext shown ONCE at create time.
+CREATE TABLE IF NOT EXISTS wg_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    label TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    expires_at TIMESTAMPTZ,
+    consumed_at TIMESTAMPTZ,
+    consumed_by_device_id BIGINT,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by_user_id TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ix_wg_tokens_unused
+    ON wg_tokens(token_hash) WHERE consumed_at IS NULL AND revoked_at IS NULL;
+
+-- One row per joined device. d_index unique per site.
+CREATE TABLE IF NOT EXISTS wg_devices (
+    id BIGSERIAL PRIMARY KEY,
+    device_id TEXT NOT NULL UNIQUE,
+    site_id BIGINT NOT NULL REFERENCES wg_sites(id),
+    d_index INT NOT NULL CHECK (d_index BETWEEN 2 AND 254),
+    device_ip TEXT NOT NULL UNIQUE,
+    pubkey TEXT NOT NULL UNIQUE,
+    hostname TEXT NOT NULL DEFAULT '',
+    os TEXT NOT NULL DEFAULT '',
+    arch TEXT NOT NULL DEFAULT '',
+    agent_ver TEXT NOT NULL DEFAULT '',
+    wg_listen_port INT NOT NULL DEFAULT 51820,
+    lan_addrs_json JSONB,
+    wg_endpoint TEXT NOT NULL DEFAULT '',
+    token_hash TEXT NOT NULL,
+    token_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ,
+    removed_at TIMESTAMPTZ,
+    UNIQUE (site_id, d_index)
+);
+CREATE INDEX IF NOT EXISTS ix_wg_devices_site ON wg_devices(site_id) WHERE removed_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_wg_devices_token_hash ON wg_devices(token_hash) WHERE removed_at IS NULL;
+
+-- Bundles uploaded by admin, served by /v1/bundle. Content-addressed
+-- under <uploadDir>/wg-bundles/<sha[:2]>/<sha>.
+CREATE TABLE IF NOT EXISTS wg_bundles (
+    id BIGSERIAL PRIMARY KEY,
+    version TEXT UNIQUE NOT NULL,
+    blob_uri TEXT NOT NULL,
+    blob_sha256 TEXT UNIQUE NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    is_latest BOOLEAN NOT NULL DEFAULT FALSE,
+    notes TEXT NOT NULL DEFAULT '',
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    added_by_user_id TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_wg_bundles_latest ON wg_bundles(is_latest) WHERE is_latest = TRUE;
+
+-- Heartbeat log (append-only). Aggregates / latest values are
+-- mirrored onto wg_devices.last_seen_at + .wg_endpoint by the
+-- heartbeat handler.
+CREATE TABLE IF NOT EXISTS wg_heartbeats (
+    id BIGSERIAL PRIMARY KEY,
+    device_id BIGINT NOT NULL REFERENCES wg_devices(id) ON DELETE CASCADE,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    rx_bytes BIGINT,
+    tx_bytes BIGINT,
+    last_handshake_sec BIGINT,
+    wg_endpoint TEXT NOT NULL DEFAULT '',
+    lan_addrs_json JSONB
+);
+CREATE INDEX IF NOT EXISTS ix_wg_heartbeats_device_ts ON wg_heartbeats(device_id, received_at DESC);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

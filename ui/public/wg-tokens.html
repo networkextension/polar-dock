@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WG Mesh — Polar-</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/polaris-logo.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="lp-page">
+    <div class="lp-app">
+      <aside class="lp-sidebar lp-sidebar-wide">
+        <a class="lp-brand" href="/dashboard.html" data-site-brand>
+          <img data-site-icon alt="" />
+          <span class="lp-brand-name" data-site-name>Polar-</span>
+        </a>
+
+        <nav class="lp-nav">
+          <a class="lp-nav-item" href="/dashboard.html"><span class="lp-nav-icon" data-icon="layout-dashboard">⊞</span><span>Dashboard</span></a>
+          <a class="lp-nav-item" href="/teams.html"><span class="lp-nav-icon" data-icon="users-round">⌂</span><span>工作区</span></a>
+          <a class="lp-nav-item" href="/hosts.html"><span class="lp-nav-icon" data-icon="server">▣</span><span>主机</span></a>
+          <a class="lp-nav-item" href="/library.html" hidden data-admin-nav><span class="lp-nav-icon" data-icon="book">📚</span><span>知识库</span></a>
+          <a class="lp-nav-item" href="/proxy-tokens.html" hidden data-admin-nav><span class="lp-nav-icon" data-icon="key">🔑</span><span>API Tokens</span></a>
+          <a class="lp-nav-item active" href="/wg-tokens.html" hidden data-admin-nav><span class="lp-nav-icon" data-icon="network">🔐</span><span>WG Mesh</span></a>
+          <a class="lp-nav-item" href="/system.html"><span class="lp-nav-icon" data-icon="cpu">⚙</span><span>系统信息</span></a>
+          <a class="lp-nav-item" href="/admin.html" hidden data-admin-nav><span class="lp-nav-icon" data-icon="users-cog">☍</span><span>用户管理</span></a>
+        </nav>
+
+        <div class="lp-sidebar-foot">
+          <div class="lp-foot-avatar" id="lpFootAvatar">A</div>
+          <div class="lp-foot-info">
+            <div class="lp-foot-name" id="lpFootName">—</div>
+            <div class="lp-foot-role" id="lpFootRole">—</div>
+          </div>
+          <div class="lp-sidebar-foot-actions">
+            <button id="logoutBtn" class="lp-foot-icon-btn" type="button" title="Log out"><span data-icon="log-out"></span></button>
+          </div>
+        </div>
+      </aside>
+
+      <div class="lp-main">
+        <div class="lp-topbar">
+          <span class="lp-topbar-title">WG Mesh · 入网管理</span>
+          <div class="lp-topbar-end" style="display:flex; gap:6px;">
+            <button class="lp-tab lp-tab-active" data-tab="tokens" id="tabTokens">🔑 Tokens</button>
+            <button class="lp-tab" data-tab="devices" id="tabDevices">💻 Devices</button>
+            <button class="lp-tab" data-tab="bundles" id="tabBundles">📦 Bundles</button>
+          </div>
+        </div>
+
+        <div class="lp-content" style="padding: 12px; overflow-y:auto;">
+
+          <!-- Hub config card -->
+          <section class="lp-preview-main" style="margin-bottom: 12px;">
+            <div class="lp-preview-head">
+              <span class="badge">Hub</span>
+              <span id="hubStatusBadge" class="lp-mode-badge">—</span>
+              <span style="flex:1;"></span>
+              <button id="hubRefreshBtn" class="btn-inline btn-secondary" type="button">⟲</button>
+              <button id="hubConfigBtn" class="btn-inline btn-primary" type="button">⚙ 配置</button>
+            </div>
+            <div class="lp-preview-body">
+              <div id="hubInfo" class="meta-subtitle">加载中...</div>
+              <div id="hubNotConfiguredWarning" class="settings-section-card" style="margin-top:8px; border-color: var(--danger, #c00);" hidden>
+                <strong style="color: var(--danger, #c00);">⚠ Hub 未配置。</strong>
+                必须先填写 pubkey + endpoint，才能让设备拿到真正可用的 mesh peer 列表。Phase 1 假定 single-hub。
+              </div>
+            </div>
+          </section>
+
+          <!-- Tokens tab -->
+          <section id="paneTokens" class="lp-pane">
+            <div class="lp-preview-main">
+              <div class="lp-preview-head">
+                <span class="badge">入网 Token</span>
+                <span id="tokensSummary" class="lp-mode-badge">—</span>
+                <span style="flex:1;"></span>
+                <button id="tokensRefreshBtn" class="btn-inline btn-secondary" type="button">⟲</button>
+                <button id="newTokenBtn" class="btn-inline btn-primary" type="button">+ 新建 Token</button>
+              </div>
+              <div class="lp-preview-body">
+                <p class="meta-subtitle" style="margin: 0 0 12px 0;">
+                  操作员把 token 带在 <code>curl … /v1/install | sudo bash -s -- --token=&lt;token&gt;</code> 里。
+                  plaintext 只在创建时显示一次。
+                </p>
+                <table id="tokensTable" class="lp-table" hidden>
+                  <thead>
+                    <tr>
+                      <th>标签</th><th>前缀</th><th>过期</th><th>状态</th><th>设备</th><th>创建</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="tokensTbody"></tbody>
+                </table>
+                <div id="tokensEmpty" class="meta-subtitle" hidden>暂无 token。点 + 新建。</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Devices tab -->
+          <section id="paneDevices" class="lp-pane" hidden>
+            <div class="lp-preview-main">
+              <div class="lp-preview-head">
+                <span class="badge">入网设备</span>
+                <span id="devicesSummary" class="lp-mode-badge">—</span>
+                <span style="flex:1;"></span>
+                <label class="meta-subtitle" style="display:inline-flex; gap:4px; align-items:center;">
+                  <input id="includeRemovedCheck" type="checkbox" /> 显示已下线
+                </label>
+                <button id="devicesRefreshBtn" class="btn-inline btn-secondary" type="button">⟲</button>
+              </div>
+              <div class="lp-preview-body">
+                <table id="devicesTable" class="lp-table" hidden>
+                  <thead>
+                    <tr>
+                      <th>设备 ID</th><th>Hostname</th><th>站点</th><th>wg IP</th><th>Endpoint</th><th>Agent</th><th>最近心跳</th><th>状态</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="devicesTbody"></tbody>
+                </table>
+                <div id="devicesEmpty" class="meta-subtitle" hidden>暂无设备。等第一台 mac 跑完 install.sh 后会出现在这里。</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Bundles tab -->
+          <section id="paneBundles" class="lp-pane" hidden>
+            <div class="lp-preview-main">
+              <div class="lp-preview-head">
+                <span class="badge">wg-mac 安装包</span>
+                <span id="bundlesSummary" class="lp-mode-badge">—</span>
+                <span style="flex:1;"></span>
+                <button id="bundlesRefreshBtn" class="btn-inline btn-secondary" type="button">⟲</button>
+                <button id="uploadBundleBtn" class="btn-inline btn-primary" type="button">⬆ 上传 bundle</button>
+              </div>
+              <div class="lp-preview-body">
+                <p class="meta-subtitle" style="margin: 0 0 12px 0;">
+                  Bundle 是 wg-mac (wg_core + wgctl) 的 tar.gz，install.sh 会从 <code>/v1/bundle/&lt;version&gt;</code> 拉取。
+                  标记 <code>is_latest</code> 的版本是 <code>/v1/install</code> 默认 baked-in 的 BUNDLE_VERSION。
+                </p>
+                <table id="bundlesTable" class="lp-table" hidden>
+                  <thead>
+                    <tr>
+                      <th>Version</th><th>SHA</th><th>Size</th><th>Latest</th><th>Notes</th><th>Added</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="bundlesTbody"></tbody>
+                </table>
+                <div id="bundlesEmpty" class="meta-subtitle" hidden>暂无 bundle。点 ⬆ 上传第一个。</div>
+              </div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Hub config modal -->
+    <div id="hubModal" class="lp-modal" hidden>
+      <div class="lp-modal-card" style="max-width: 600px;">
+        <div class="lp-modal-head">
+          <span class="lp-modal-title">配置 Hub</span>
+          <button id="hubCloseBtn" type="button" class="lp-modal-close">✕</button>
+        </div>
+        <div class="lp-modal-body">
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="hubPubkey">Hub Pubkey</label>
+            <input id="hubPubkey" class="input" type="text" style="font-family: ui-monospace, Menlo, monospace;" placeholder="DwyGEhX…=" />
+            <div class="meta-subtitle" style="margin-top:4px;">Hub 主机 <code>wg show wgc0 public-key</code> 的输出。</div>
+          </div>
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="hubEndpoint">Endpoint</label>
+            <input id="hubEndpoint" class="input" type="text" placeholder="vpn.example.net:51820" />
+          </div>
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="hubWGIP">Hub wg IP</label>
+            <input id="hubWGIP" class="input" type="text" value="10.88.0.1" />
+          </div>
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="hubMeshCIDR">Mesh CIDR</label>
+            <input id="hubMeshCIDR" class="input" type="text" value="10.88.0.0/16" />
+          </div>
+          <div style="display:flex; gap:8px;">
+            <div class="settings-section-card" style="flex:1;">
+              <label class="settings-section-title" for="hubKeepalive">PersistentKeepalive (秒)</label>
+              <input id="hubKeepalive" class="input" type="number" min="0" value="25" />
+            </div>
+            <div class="settings-section-card" style="flex:1;">
+              <label class="settings-section-title" for="hubRefresh">Refresh (秒)</label>
+              <input id="hubRefresh" class="input" type="number" min="30" value="300" />
+            </div>
+          </div>
+          <div id="hubError" class="status-text" style="color: var(--danger, #c00); margin-top:8px;"></div>
+        </div>
+        <div class="lp-modal-foot">
+          <button id="hubCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
+          <button id="hubSaveBtn" type="button" class="btn-inline btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create token modal -->
+    <div id="createTokenModal" class="lp-modal" hidden>
+      <div class="lp-modal-card" style="max-width: 480px;">
+        <div class="lp-modal-head">
+          <span class="lp-modal-title">新建入网 Token</span>
+          <button id="createTokenCloseBtn" type="button" class="lp-modal-close">✕</button>
+        </div>
+        <div class="lp-modal-body">
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="createTokenLabel">标签</label>
+            <input id="createTokenLabel" class="input" type="text" placeholder="e.g. yarshure-mac" />
+            <div class="meta-subtitle" style="margin-top:4px;">freeform，方便审计 + 列表识别。</div>
+          </div>
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="createTokenTTL">TTL (天)</label>
+            <input id="createTokenTTL" class="input" type="number" min="0" value="90" />
+            <div class="meta-subtitle" style="margin-top:4px;">0 = 永不过期。</div>
+          </div>
+          <div id="createTokenError" class="status-text" style="color: var(--danger, #c00);"></div>
+        </div>
+        <div class="lp-modal-foot">
+          <button id="createTokenCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
+          <button id="createTokenSubmitBtn" type="button" class="btn-inline btn-primary">创建</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Plaintext-shown-once modal -->
+    <div id="plaintextModal" class="lp-modal" hidden>
+      <div class="lp-modal-card" style="max-width: 640px;">
+        <div class="lp-modal-head">
+          <span class="lp-modal-title">✓ Token 已创建</span>
+        </div>
+        <div class="lp-modal-body">
+          <p class="meta-subtitle" style="margin: 0 0 12px 0;">
+            <strong style="color: var(--danger, #c00);">这是 plaintext，只显示一次。</strong>
+            关闭后无法找回。
+          </p>
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <div class="settings-section-title">Bearer Token</div>
+            <div style="display:flex; gap:6px; margin-top:4px;">
+              <input id="plaintextValue" class="input" type="text" readonly style="font-family: ui-monospace, Menlo, monospace; font-size: 12px;" />
+              <button id="plaintextCopyBtn" type="button" class="btn-inline btn-secondary">📋</button>
+            </div>
+          </div>
+          <div class="settings-section-card">
+            <div class="settings-section-title">一键安装命令</div>
+            <textarea id="plaintextInstallCmd" class="input" readonly rows="2" style="font-family: ui-monospace, Menlo, monospace; font-size: 11px; resize: vertical; min-height: 56px;"></textarea>
+            <button id="plaintextInstallCopyBtn" type="button" class="btn-inline btn-secondary" style="margin-top:6px;">📋 复制命令</button>
+          </div>
+        </div>
+        <div class="lp-modal-foot">
+          <button id="plaintextDoneBtn" type="button" class="btn-inline btn-primary">完成</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Upload bundle modal -->
+    <div id="uploadBundleModal" class="lp-modal" hidden>
+      <div class="lp-modal-card" style="max-width: 560px;">
+        <div class="lp-modal-head">
+          <span class="lp-modal-title">上传 wg-mac Bundle</span>
+          <button id="uploadBundleCloseBtn" type="button" class="lp-modal-close">✕</button>
+        </div>
+        <div class="lp-modal-body">
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="uploadBundleFile">tar.gz 文件</label>
+            <input id="uploadBundleFile" class="input" type="file" accept=".tar.gz,.tgz" />
+          </div>
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="uploadBundleVersion">Version (留空 = 自动 yyyymmdd-shaXX)</label>
+            <input id="uploadBundleVersion" class="input" type="text" placeholder="20260517-abc12345" />
+          </div>
+          <div class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="uploadBundleNotes">备注 (可选)</label>
+            <input id="uploadBundleNotes" class="input" type="text" placeholder="例如 bump WG_MAX_PEERS 8→64" />
+          </div>
+          <div class="settings-section-card">
+            <label class="settings-section-title" style="display:flex; gap:6px; align-items:center;">
+              <input id="uploadBundleSetLatest" type="checkbox" checked /> 立即标记为 latest
+            </label>
+            <div class="meta-subtitle" style="margin-top:4px;">install.sh 的 <code>BUNDLE_VERSION</code> 会指向 latest。</div>
+          </div>
+          <div id="uploadBundleError" class="status-text" style="color: var(--danger, #c00); margin-top:8px;"></div>
+        </div>
+        <div class="lp-modal-foot">
+          <button id="uploadBundleCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
+          <button id="uploadBundleSubmitBtn" type="button" class="btn-inline btn-primary">上传</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/scripts/wg-tokens.js"></script>
+  </body>
+</html>
