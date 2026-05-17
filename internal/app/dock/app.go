@@ -672,6 +672,7 @@ func (s *Server) registerRoutes() {
 	{
 		v1.POST("/register", s.handleWGRegister)
 		v1.GET("/peers", s.handleWGPeers)
+		v1.GET("/hub/peers", s.handleWGHubPeers)
 		v1.POST("/heartbeat", s.handleWGHeartbeat)
 		v1.POST("/leave", s.handleWGLeave)
 		v1.POST("/token/refresh", s.handleWGTokenRefresh)
@@ -746,10 +747,12 @@ func (s *Server) registerRoutes() {
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.
 		api.POST("/proxy/v1/chat/completions", s.handleLLMProxyChatCompletions)
-		// wg-mac join admin (see doc/JOIN_PROTOCOL.md). Public /v1/*
+		// wg-mac Phase 2 admin (see doc/JOIN_PROTOCOL.md). Public /v1/*
 		// counterparts are wired at the root router below.
-		api.GET("/admin/wg-hub", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubGet)
-		api.PUT("/admin/wg-hub", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubUpdate)
+		api.GET("/admin/wg-hubs", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubList)
+		api.PUT("/admin/wg-hubs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubUpdate)
+		api.DELETE("/admin/wg-hubs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubDelete)
+		api.POST("/admin/wg-hubs/:id/reset-bind", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubResetBind)
 		api.GET("/admin/wg-tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGTokenList)
 		api.POST("/admin/wg-tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGTokenCreate)
 		api.DELETE("/admin/wg-tokens/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGTokenRevoke)

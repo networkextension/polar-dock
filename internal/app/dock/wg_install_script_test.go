@@ -110,3 +110,71 @@ func TestValidatePubkey(t *testing.T) {
 		t.Errorf("normal pubkey rejected: %v", err)
 	}
 }
+
+// lanCIDRNetwork normalizes device-IP CIDRs to network CIDRs so
+// multiple boxes on the same LAN deterministically share a site.
+func TestLanCIDRNetwork(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"192.168.11.42/24", "192.168.11.0/24"},
+		{"192.168.11.42/16", "192.168.0.0/16"},
+		{"10.0.0.1/8", "10.0.0.0/8"},
+		{"172.16.5.10/12", "172.16.0.0/12"},
+		{"", ""},
+		{"junk", ""},
+		{"192.168.1.1", ""},
+	}
+	for _, c := range cases {
+		if got := lanCIDRNetwork(c.in); got != c.want {
+			t.Errorf("lanCIDRNetwork(%q): got %q want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestParseMeshCIDRAndDeviceIP(t *testing.T) {
+	mesh, err := parseMeshCIDR("10.88.0.0/24")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	cases := []struct {
+		d    int
+		want string
+	}{
+		{1, "10.88.0.1"},
+		{2, "10.88.0.2"},
+		{254, "10.88.0.254"},
+	}
+	for _, c := range cases {
+		if got := mesh.deviceIP(c.d); got != c.want {
+			t.Errorf("deviceIP(%d): got %q want %q", c.d, got, c.want)
+		}
+	}
+	// Different /24 base.
+	mesh2, err := parseMeshCIDR("192.168.50.0/24")
+	if err != nil {
+		t.Fatalf("parse2: %v", err)
+	}
+	if got := mesh2.deviceIP(7); got != "192.168.50.7" {
+		t.Errorf("custom /24 deviceIP(7): %q", got)
+	}
+	// Empty / invalid.
+	if _, err := parseMeshCIDR(""); err == nil {
+		t.Errorf("empty CIDR accepted")
+	}
+	if _, err := parseMeshCIDR("not-a-cidr"); err == nil {
+		t.Errorf("garbage CIDR accepted")
+	}
+	if _, err := parseMeshCIDR("fd00::/64"); err == nil {
+		t.Errorf("IPv6 accepted (should require v4)")
+	}
+}
+
+func TestHubWGIPFromCIDR(t *testing.T) {
+	got, err := hubWGIPFromCIDR("10.88.0.0/24")
+	if err != nil || got != "10.88.0.1" {
+		t.Errorf("default mesh: got %q err %v", got, err)
+	}
+	got, err = hubWGIPFromCIDR("192.168.50.0/24")
+	if err != nil || got != "192.168.50.1" {
+		t.Errorf("custom /24: got %q err %v", got, err)
+	}
+}

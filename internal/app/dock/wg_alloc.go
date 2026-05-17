@@ -1,17 +1,13 @@
 package dock
 
-// Site + device-IP allocator for /v1/register.
+// Phase 2 allocator for /v1/register. Role-aware:
+//   - token.role = "hub": claim the hub slot (pubkey + bound_device_id)
+//     on the token's pre-stamped wg_hubs row; device_ip = hub.wg_ip
+//     (typically the .1 of mesh_cidr); site = "<hub.slug>:hub" at s_index=0.
+//   - token.role = "device": allocate within token.hub_id's mesh_cidr;
+//     site = auto by (publicIP, lanCIDR network) per-hub.
 //
-// One transaction does:
-//   1. Resolve (or auto-create) the wg_sites row for this device's LAN.
-//   2. Pick the lowest free d_index in [2,254] within that site.
-//   3. Bind the supplied join token (mark consumed_at) to the new
-//      wg_devices row.
-//
-// SERIALIZABLE isolation guards against two concurrent registers
-// picking the same d_index; the handler retries once on serialization
-// failure. Idempotent re-register with the same (pubkey, token) hits
-// the early-return path and never touches the d_index allocator.
+// One SERIALIZABLE transaction per register; retried once on PG 40001.
 
 import (
 	"context"
@@ -19,50 +15,45 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 )
 
-// wgRegisterInput is the parsed shape of POST /v1/register's body.
-// Kept distinct from the JSON wire shape to keep allocator logic
-// testable without going through gin.
 type wgRegisterInput struct {
-	Token        string      // plaintext as sent by client
-	Pubkey       string      // wg pubkey (base64)
+	Token        string
+	Pubkey       string
 	Hostname     string
 	OS           string
 	Arch         string
 	AgentVer     string
 	LANAddrs     []WGLanAddr
 	WGListenPort int
-	// Override site_slug; when empty the allocator auto-picks based on
-	// (publicIP, first LAN /24).
+	// SiteSlug overrides the auto-by-LAN site allocation. Empty = auto.
 	SiteSlug string
-	// PublicIP observed by the server (X-Forwarded-For chain or the
-	// peer address). Used as part of the auto-site cache key.
+	// PublicIP observed by the server (X-Forwarded-For chain or RemoteAddr).
 	PublicIP string
 }
 
-// wgAllocateResult is what the handler turns into the /v1/register
-// JSON response: the freshly-created device + the token's expires_at
-// (if any) so the client knows when to refresh.
 type wgAllocateResult struct {
 	Device         *WGDevice
-	PlaintextToken string // returned to caller; never persisted plaintext
+	Hub            *WGHub
+	Role           string // "hub" | "device"
+	PlaintextToken string
 	TokenExpiresAt *time.Time
 }
 
-// Sentinel errors mapped to HTTP status by the handler.
 var (
 	errWGTokenInvalid       = errors.New("token invalid")
 	errWGTokenAlreadyBound  = errors.New("token already bound to another device")
 	errWGPubkeyTaken        = errors.New("pubkey already registered to a different device/token")
-	errWGSiteExhausted      = errors.New("site exhausted (d_index 2..254 full); manual site sharding required")
-	errWGSiteSlotsExhausted = errors.New("no free s_index in 1..254; mesh is full")
+	errWGSiteExhausted      = errors.New("site exhausted (d_index range full); manual site sharding required")
+	errWGSiteSlotsExhausted = errors.New("no free s_index in 1..254; hub mesh is full")
+	errWGHubAlreadyBound    = errors.New("hub slot already claimed by another device; revoke its token + leave first")
+	errWGHubNotConfigured   = errors.New("target hub has no live binding yet; ask operator to run the hub-token install first")
+	errWGTokenNoHub         = errors.New("token has no hub_id; reissue")
 )
 
-// allocateWGDevice is the entry point. Runs steps 1–3 above. On
-// serialization failure (PG 40001), retries once.
 func (s *Server) allocateWGDevice(ctx context.Context, in wgRegisterInput) (*wgAllocateResult, error) {
 	if err := validatePubkey(in.Pubkey); err != nil {
 		return nil, err
@@ -81,9 +72,6 @@ func (s *Server) allocateWGDevice(ctx context.Context, in wgRegisterInput) (*wgA
 			return res, nil
 		}
 		lastErr = err
-		// PG SQLSTATE 40001 = serialization_failure. Generic message
-		// match since the driver-specific *pq.Error type isn't pulled
-		// into this file. Cheap enough.
 		if !strings.Contains(err.Error(), "could not serialize") {
 			return nil, err
 		}
@@ -106,78 +94,100 @@ func (s *Server) doAllocate(ctx context.Context, in wgRegisterInput) (*wgAllocat
 	if tok == nil {
 		return nil, errWGTokenInvalid
 	}
-
-	// Idempotent path: the same pubkey is re-registering with the same
-	// token. Return the existing device row untouched. Catches the
-	// common case where install.sh re-runs after a partial install.
-	pubkey := strings.TrimSpace(in.Pubkey)
-	var existing *WGDevice
-	{
-		row := tx.QueryRow(`SELECT `+wgDeviceColumns+` FROM wg_devices WHERE pubkey = $1`, pubkey)
-		d, err := scanWGDevice(row, false)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
-		if d != nil {
-			existing = d
-		}
+	if tok.HubID == nil {
+		return nil, errWGTokenNoHub
 	}
-	if existing != nil {
-		// Existing pubkey + same token row → idempotent re-register.
+	hub, err := getWGHubByIDTx(tx, *tok.HubID)
+	if err != nil {
+		return nil, err
+	}
+	if hub == nil {
+		return nil, errWGTokenNoHub
+	}
+
+	// Idempotent re-register (same pubkey + same token).
+	pubkey := strings.TrimSpace(in.Pubkey)
+	if existing, err := lookupDeviceByPubkeyTx(tx, pubkey); err != nil {
+		return nil, err
+	} else if existing != nil {
 		if existing.TokenHash == hashWGToken(in.Token) && existing.RemovedAt == nil {
-			// Refresh lan_addrs / hostname / agent_ver in case install
-			// is being re-run after a roam — purely a UI nicety.
-			lanJSON, _ := json.Marshal(in.LANAddrs)
-			if _, err := tx.Exec(
-				`UPDATE wg_devices
-				    SET hostname = $2, os = $3, arch = $4, agent_ver = $5,
-				        lan_addrs_json = $6, wg_listen_port = $7
-				  WHERE id = $1`,
-				existing.ID,
-				strings.TrimSpace(in.Hostname), strings.TrimSpace(in.OS), strings.TrimSpace(in.Arch),
-				strings.TrimSpace(in.AgentVer), nullJSONB(lanJSON), in.WGListenPort,
-			); err != nil {
-				return nil, err
-			}
-			if err := tx.Commit(); err != nil {
-				return nil, err
-			}
-			// Re-read so the returned struct reflects the update.
-			refreshed, err := s.getWGDeviceByID(existing.ID)
-			if err != nil {
-				return nil, err
-			}
-			return &wgAllocateResult{
-				Device:         refreshed,
-				PlaintextToken: in.Token,
-				TokenExpiresAt: tok.ExpiresAt,
-			}, nil
+			return s.refreshExistingDevice(tx, existing, in, tok, hub)
 		}
-		// Same pubkey, different token → operator probably reused a wg
-		// keypair on a new device. Block — keys are supposed to be
-		// per-device.
 		return nil, errWGPubkeyTaken
 	}
 
-	// Token already bound to a different device → 409.
 	if tok.ConsumedAt != nil {
 		return nil, errWGTokenAlreadyBound
 	}
 
-	// Resolve site.
-	site, err := s.resolveOrCreateWGSite(tx, in)
+	switch tok.Role {
+	case "hub":
+		return s.bindHubDevice(tx, in, tok, hub)
+	case "device":
+		return s.allocateDevice(tx, in, tok, hub)
+	default:
+		return nil, fmt.Errorf("unknown token role %q", tok.Role)
+	}
+}
+
+// refreshExistingDevice handles the idempotent re-register case:
+// install.sh re-running against the same token + pubkey should not
+// re-allocate; it just refreshes hostname/agent_ver/lan_addrs.
+func (s *Server) refreshExistingDevice(tx *sql.Tx, existing *WGDevice, in wgRegisterInput, tok *WGToken, hub *WGHub) (*wgAllocateResult, error) {
+	lanJSON, _ := json.Marshal(in.LANAddrs)
+	if _, err := tx.Exec(
+		`UPDATE wg_devices
+		    SET hostname = $2, os = $3, arch = $4, agent_ver = $5,
+		        lan_addrs_json = $6, wg_listen_port = $7
+		  WHERE id = $1`,
+		existing.ID,
+		strings.TrimSpace(in.Hostname), strings.TrimSpace(in.OS), strings.TrimSpace(in.Arch),
+		strings.TrimSpace(in.AgentVer), nullJSONB(lanJSON), in.WGListenPort,
+	); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	refreshed, err := s.getWGDeviceByID(existing.ID)
 	if err != nil {
 		return nil, err
 	}
+	role := "device"
+	if hub.BoundDeviceID != nil && *hub.BoundDeviceID == existing.ID {
+		role = "hub"
+	}
+	return &wgAllocateResult{
+		Device:         refreshed,
+		Hub:            hub,
+		Role:           role,
+		PlaintextToken: in.Token,
+		TokenExpiresAt: tok.ExpiresAt,
+	}, nil
+}
 
-	// Pick lowest free d_index in [2,254].
-	dIndex, err := pickFreeDIndex(tx, site.ID)
+// bindHubDevice claims the hub slot for the calling device. Inserts
+// wg_devices at hub.wg_ip in a dedicated "<hub_slug>:hub" site
+// (auto-created at s_index=0), then sets hub.pubkey + bound_device_id.
+func (s *Server) bindHubDevice(tx *sql.Tx, in wgRegisterInput, tok *WGToken, hub *WGHub) (*wgAllocateResult, error) {
+	if hub.BoundDeviceID != nil {
+		return nil, errWGHubAlreadyBound
+	}
+	site, err := getOrCreateSiteTx(tx, hub.ID, hub.Slug+":hub", 0, "hub site", in.PublicIP, "")
 	if err != nil {
 		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s:%d", strings.TrimSpace(in.PublicIP), in.WGListenPort)
+	if strings.TrimSpace(in.PublicIP) == "" {
+		endpoint = fmt.Sprintf("%s:%d", firstLANIP(firstLANCIDR(in.LANAddrs)), in.WGListenPort)
 	}
 
 	deviceID := newWGDeviceID()
-	deviceIP := fmt.Sprintf("10.88.%d.%d", site.SIndex, dIndex)
+	deviceIP := hub.WGIP
+	if deviceIP == "" {
+		ip, _ := hubWGIPFromCIDR(hub.MeshCIDR)
+		deviceIP = ip
+	}
 	lanJSON, _ := json.Marshal(in.LANAddrs)
 	tokenHash := hashWGToken(in.Token)
 	now := time.Now().UTC()
@@ -185,11 +195,82 @@ func (s *Server) doAllocate(ctx context.Context, in wgRegisterInput) (*wgAllocat
 	var newID int64
 	err = tx.QueryRow(
 		`INSERT INTO wg_devices (
-		    device_id, site_id, d_index, device_ip, pubkey, hostname, os, arch, agent_ver,
-		    wg_listen_port, lan_addrs_json, token_hash, token_expires_at, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		    device_id, hub_id, site_id, d_index, device_ip, pubkey, hostname, os, arch, agent_ver,
+		    wg_listen_port, lan_addrs_json, wg_endpoint, token_hash, token_expires_at, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		 RETURNING id`,
-		deviceID, site.ID, dIndex, deviceIP, pubkey,
+		deviceID, hub.ID, site.ID, 1, deviceIP, strings.TrimSpace(in.Pubkey),
+		strings.TrimSpace(in.Hostname), strings.TrimSpace(in.OS), strings.TrimSpace(in.Arch), strings.TrimSpace(in.AgentVer),
+		in.WGListenPort, nullJSONB(lanJSON), endpoint, tokenHash, tok.ExpiresAt, now,
+	).Scan(&newID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := updateWGHubBindTx(tx, hub.ID, in.Pubkey, endpoint, newID, now); err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE wg_tokens SET consumed_at = $2, consumed_by_device_id = $3 WHERE id = $1`,
+		tok.ID, now, newID,
+	); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	dev, err := s.getWGDeviceByID(newID)
+	if err != nil {
+		return nil, err
+	}
+	dev.HubSlug = hub.Slug
+	dev.SiteSlug = site.Slug
+	hub, _ = s.getWGHubByID(hub.ID)
+	return &wgAllocateResult{
+		Device:         dev,
+		Hub:            hub,
+		Role:           "hub",
+		PlaintextToken: in.Token,
+		TokenExpiresAt: tok.ExpiresAt,
+	}, nil
+}
+
+// allocateDevice allocates a regular device IP within the target hub's
+// mesh. Site is hashed by (publicIP, network-masked LAN CIDR) so same-
+// LAN boxes bunch into one site.
+func (s *Server) allocateDevice(tx *sql.Tx, in wgRegisterInput, tok *WGToken, hub *WGHub) (*wgAllocateResult, error) {
+	if !hub.Configured() {
+		return nil, errWGHubNotConfigured
+	}
+	mesh, err := parseMeshCIDR(hub.MeshCIDR)
+	if err != nil {
+		return nil, fmt.Errorf("hub mesh_cidr invalid: %w", err)
+	}
+	site, err := s.resolveOrCreateWGSite(tx, hub.ID, in, mesh)
+	if err != nil {
+		return nil, err
+	}
+	dIndex, err := pickFreeDIndex(tx, site.ID)
+	if err != nil {
+		return nil, err
+	}
+	deviceID := newWGDeviceID()
+	deviceIP := mesh.deviceIP(dIndex)
+	lanJSON, _ := json.Marshal(in.LANAddrs)
+	tokenHash := hashWGToken(in.Token)
+	now := time.Now().UTC()
+
+	var newID int64
+	err = tx.QueryRow(
+		`INSERT INTO wg_devices (
+		    device_id, hub_id, site_id, d_index, device_ip, pubkey, hostname, os, arch, agent_ver,
+		    wg_listen_port, lan_addrs_json, token_hash, token_expires_at, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		 RETURNING id`,
+		deviceID, hub.ID, site.ID, dIndex, deviceIP, strings.TrimSpace(in.Pubkey),
 		strings.TrimSpace(in.Hostname), strings.TrimSpace(in.OS), strings.TrimSpace(in.Arch), strings.TrimSpace(in.AgentVer),
 		in.WGListenPort, nullJSONB(lanJSON), tokenHash, tok.ExpiresAt, now,
 	).Scan(&newID)
@@ -212,57 +293,67 @@ func (s *Server) doAllocate(ctx context.Context, in wgRegisterInput) (*wgAllocat
 	if err != nil {
 		return nil, err
 	}
+	dev.HubSlug = hub.Slug
 	dev.SiteSlug = site.Slug
 	return &wgAllocateResult{
 		Device:         dev,
+		Hub:            hub,
+		Role:           "device",
 		PlaintextToken: in.Token,
 		TokenExpiresAt: tok.ExpiresAt,
 	}, nil
 }
 
-// resolveOrCreateWGSite returns the wg_sites row this device belongs
-// to. If in.SiteSlug is set, that wins (existing or new). Otherwise
-// (publicIP, firstLANCIDR) is the cache key.
-func (s *Server) resolveOrCreateWGSite(tx *sql.Tx, in wgRegisterInput) (*WGSite, error) {
+// resolveOrCreateWGSite within a hub: explicit slug wins; otherwise
+// hash by (publicIP, network-masked LAN CIDR).
+func (s *Server) resolveOrCreateWGSite(tx *sql.Tx, hubID int64, in wgRegisterInput, mesh *meshNet) (*WGSite, error) {
+	_ = mesh // reserved for future per-hub /16+ allocation
 	if slug := strings.TrimSpace(in.SiteSlug); slug != "" {
-		if site, err := lookupSiteBySlug(tx, slug); err != nil {
+		fullSlug := fmt.Sprintf("%s:%s", currentHubSlug(tx, hubID), slug)
+		if site, err := lookupSiteBySlugInHub(tx, hubID, fullSlug); err != nil {
 			return nil, err
 		} else if site != nil {
 			return site, nil
 		}
-		return createSite(tx, slug, "", in.PublicIP, firstLANCIDR(in.LANAddrs))
+		return createSite(tx, hubID, fullSlug, "", in.PublicIP, lanCIDRNetwork(firstLANCIDR(in.LANAddrs)))
 	}
-	// Auto: hash by (public_ip, first_lan_cidr).
 	pubIP := strings.TrimSpace(in.PublicIP)
-	lan := firstLANCIDR(in.LANAddrs)
-	site, err := lookupSiteByAutoKey(tx, pubIP, lan)
+	lan := lanCIDRNetwork(firstLANCIDR(in.LANAddrs))
+	site, err := lookupSiteByAutoKeyInHub(tx, hubID, pubIP, lan)
 	if err != nil {
 		return nil, err
 	}
 	if site != nil {
 		return site, nil
 	}
-	// Auto-slug uses next free s_index. Pre-create the slug from that
-	// so the user-visible label is stable.
-	return createSite(tx, "", "", pubIP, lan)
+	return createSite(tx, hubID, "", "", pubIP, lan)
 }
 
-func firstLANCIDR(addrs []WGLanAddr) string {
-	for _, a := range addrs {
-		if strings.TrimSpace(a.CIDR) != "" {
-			return strings.TrimSpace(a.CIDR)
+func currentHubSlug(tx *sql.Tx, hubID int64) string {
+	var slug string
+	_ = tx.QueryRow(`SELECT slug FROM wg_hubs WHERE id = $1`, hubID).Scan(&slug)
+	return slug
+}
+
+func lookupDeviceByPubkeyTx(tx *sql.Tx, pubkey string) (*WGDevice, error) {
+	row := tx.QueryRow(`SELECT `+wgDeviceColumns+` FROM wg_devices WHERE pubkey = $1`, pubkey)
+	d, err := scanWGDevice(row, false)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
 		}
+		return nil, err
 	}
-	return ""
+	return d, nil
 }
 
-func lookupSiteBySlug(tx *sql.Tx, slug string) (*WGSite, error) {
+func lookupSiteBySlugInHub(tx *sql.Tx, hubID int64, slug string) (*WGSite, error) {
 	var x WGSite
 	err := tx.QueryRow(
-		`SELECT id, slug, s_index, label, public_ip, lan_cidr, created_at
-		   FROM wg_sites WHERE slug = $1`,
-		slug,
-	).Scan(&x.ID, &x.Slug, &x.SIndex, &x.Label, &x.PublicIP, &x.LANCIDR, &x.CreatedAt)
+		`SELECT id, COALESCE(hub_id, 0), slug, s_index, label, public_ip, lan_cidr, created_at
+		   FROM wg_sites WHERE hub_id = $1 AND slug = $2`,
+		hubID, slug,
+	).Scan(&x.ID, &x.HubID, &x.Slug, &x.SIndex, &x.Label, &x.PublicIP, &x.LANCIDR, &x.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -272,15 +363,15 @@ func lookupSiteBySlug(tx *sql.Tx, slug string) (*WGSite, error) {
 	return &x, nil
 }
 
-func lookupSiteByAutoKey(tx *sql.Tx, publicIP, lanCIDR string) (*WGSite, error) {
+func lookupSiteByAutoKeyInHub(tx *sql.Tx, hubID int64, publicIP, lanCIDR string) (*WGSite, error) {
 	var x WGSite
 	err := tx.QueryRow(
-		`SELECT id, slug, s_index, label, public_ip, lan_cidr, created_at
+		`SELECT id, COALESCE(hub_id, 0), slug, s_index, label, public_ip, lan_cidr, created_at
 		   FROM wg_sites
-		  WHERE public_ip = $1 AND lan_cidr = $2
+		  WHERE hub_id = $1 AND public_ip = $2 AND lan_cidr = $3
 		  ORDER BY id LIMIT 1`,
-		publicIP, lanCIDR,
-	).Scan(&x.ID, &x.Slug, &x.SIndex, &x.Label, &x.PublicIP, &x.LANCIDR, &x.CreatedAt)
+		hubID, publicIP, lanCIDR,
+	).Scan(&x.ID, &x.HubID, &x.Slug, &x.SIndex, &x.Label, &x.PublicIP, &x.LANCIDR, &x.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -290,29 +381,62 @@ func lookupSiteByAutoKey(tx *sql.Tx, publicIP, lanCIDR string) (*WGSite, error) 
 	return &x, nil
 }
 
-// createSite picks the lowest free s_index in [1,254] and inserts a
-// row. If slug is empty, "site_<sIdx>" is used.
-func createSite(tx *sql.Tx, slug, label, publicIP, lanCIDR string) (*WGSite, error) {
-	sIdx, err := pickFreeSIndex(tx)
+// getOrCreateSiteTx is used by bindHubDevice: idempotent — if the
+// hub-site for this hub already exists (re-bind after admin reset),
+// return it; else create it.
+func getOrCreateSiteTx(tx *sql.Tx, hubID int64, slug string, sIndex int, label, publicIP, lanCIDR string) (*WGSite, error) {
+	site, err := lookupSiteBySlugInHub(tx, hubID, slug)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(slug) == "" {
-		slug = fmt.Sprintf("site_%d", sIdx)
+	if site != nil {
+		return site, nil
 	}
 	var newID int64
 	var createdAt time.Time
 	err = tx.QueryRow(
-		`INSERT INTO wg_sites (slug, s_index, label, public_ip, lan_cidr)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO wg_sites (slug, s_index, label, public_ip, lan_cidr, hub_id)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 RETURNING id, created_at`,
-		slug, sIdx, label, publicIP, lanCIDR,
+		slug, sIndex, label, publicIP, lanCIDR, hubID,
 	).Scan(&newID, &createdAt)
 	if err != nil {
 		return nil, err
 	}
 	return &WGSite{
 		ID:        newID,
+		HubID:     hubID,
+		Slug:      slug,
+		SIndex:    sIndex,
+		Label:     label,
+		PublicIP:  publicIP,
+		LANCIDR:   lanCIDR,
+		CreatedAt: createdAt,
+	}, nil
+}
+
+func createSite(tx *sql.Tx, hubID int64, slug, label, publicIP, lanCIDR string) (*WGSite, error) {
+	sIdx, err := pickFreeSIndexInHub(tx, hubID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(slug) == "" {
+		slug = fmt.Sprintf("%s:site_%d", currentHubSlug(tx, hubID), sIdx)
+	}
+	var newID int64
+	var createdAt time.Time
+	err = tx.QueryRow(
+		`INSERT INTO wg_sites (slug, s_index, label, public_ip, lan_cidr, hub_id)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, created_at`,
+		slug, sIdx, label, publicIP, lanCIDR, hubID,
+	).Scan(&newID, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	return &WGSite{
+		ID:        newID,
+		HubID:     hubID,
 		Slug:      slug,
 		SIndex:    sIdx,
 		Label:     label,
@@ -322,12 +446,10 @@ func createSite(tx *sql.Tx, slug, label, publicIP, lanCIDR string) (*WGSite, err
 	}, nil
 }
 
-// pickFreeSIndex returns the lowest unused s_index in [1,254]. Locks
-// nothing extra — the SERIALIZABLE outer transaction makes the read +
-// later INSERT race-safe (a colliding INSERT triggers the unique
-// constraint on s_index, the outer caller retries once).
-func pickFreeSIndex(tx *sql.Tx) (int, error) {
-	rows, err := tx.Query(`SELECT s_index FROM wg_sites ORDER BY s_index`)
+// pickFreeSIndexInHub: lowest unused s_index in [1,254] within the
+// given hub. s_index=0 is reserved for "<hub>:hub" site.
+func pickFreeSIndexInHub(tx *sql.Tx, hubID int64) (int, error) {
+	rows, err := tx.Query(`SELECT s_index FROM wg_sites WHERE hub_id = $1 ORDER BY s_index`, hubID)
 	if err != nil {
 		return 0, err
 	}
@@ -348,8 +470,6 @@ func pickFreeSIndex(tx *sql.Tx) (int, error) {
 	return 0, errWGSiteSlotsExhausted
 }
 
-// pickFreeDIndex returns the lowest unused d_index in [2,254] for a
-// given site. .1 is reserved for hub, .255 for broadcast.
 func pickFreeDIndex(tx *sql.Tx, siteID int64) (int, error) {
 	rows, err := tx.Query(
 		`SELECT d_index FROM wg_devices WHERE site_id = $1 AND removed_at IS NULL ORDER BY d_index`,
@@ -375,10 +495,66 @@ func pickFreeDIndex(tx *sql.Tx, siteID int64) (int, error) {
 	return 0, errWGSiteExhausted
 }
 
-// extractPublicIP picks a sensible public-facing IP from the request:
-// X-Forwarded-For (first hop) wins, then X-Real-IP, then the raw
-// RemoteAddr. Returns the IP only (no :port). Used as part of the
-// auto-site key.
+// firstLANCIDR returns the device's reported CIDR for its first
+// network interface. Pipe through lanCIDRNetwork() for the network
+// address used as the site auto-allocation key.
+func firstLANCIDR(addrs []WGLanAddr) string {
+	for _, a := range addrs {
+		if strings.TrimSpace(a.CIDR) != "" {
+			return strings.TrimSpace(a.CIDR)
+		}
+	}
+	return ""
+}
+
+// lanCIDRNetwork normalizes "192.168.11.42/24" → "192.168.11.0/24"
+// so that two boxes on the same LAN deterministically hash into the
+// same site. Returns "" on unparseable input.
+func lanCIDRNetwork(cidr string) string {
+	cidr = strings.TrimSpace(cidr)
+	if cidr == "" {
+		return ""
+	}
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return ""
+	}
+	return ipnet.String()
+}
+
+type meshNet struct {
+	ipnet *net.IPNet
+}
+
+func parseMeshCIDR(cidr string) (*meshNet, error) {
+	cidr = strings.TrimSpace(cidr)
+	if cidr == "" {
+		return nil, errors.New("mesh_cidr required")
+	}
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, err
+	}
+	if ipnet.IP.To4() == nil {
+		return nil, errors.New("mesh_cidr must be IPv4")
+	}
+	return &meshNet{ipnet: ipnet}, nil
+}
+
+// deviceIP returns the network address + the given last octet. For
+// "10.88.0.0/24" + d=5 → "10.88.0.5". /16 with sub-/24 partitioning
+// is a future PR (when needed). For /24, this gives 1..254 devices.
+func (m *meshNet) deviceIP(d int) string {
+	base := m.ipnet.IP.To4()
+	if base == nil {
+		return ""
+	}
+	out := make(net.IP, 4)
+	copy(out, base)
+	out[3] = byte(d)
+	return out.String()
+}
+
 func extractPublicIP(xff, xrealip, remoteAddr string) string {
 	if v := strings.TrimSpace(xff); v != "" {
 		if comma := strings.Index(v, ","); comma >= 0 {
@@ -390,8 +566,6 @@ func extractPublicIP(xff, xrealip, remoteAddr string) string {
 		return v
 	}
 	if v := strings.TrimSpace(remoteAddr); v != "" {
-		// Strip trailing :port. IPv6 brackets break naive rsplit; keep
-		// it pedestrian since v1 is IPv4-only.
 		if i := strings.LastIndex(v, ":"); i > 0 && !strings.Contains(v[i+1:], ":") {
 			return v[:i]
 		}

@@ -1,9 +1,10 @@
 package dock
 
-// wg-mac join control plane — typed CRUD for the wg_hub, wg_sites,
+// wg-mac join control plane — typed CRUD for the wg_hubs, wg_sites,
 // wg_tokens, wg_devices, wg_bundles, wg_heartbeats tables defined in
-// store.go. See doc/JOIN_PROTOCOL.md for the protocol the handlers
-// in wg_handlers.go layer on top of these.
+// store.go. Phase 2 (multi-hub).
+//
+// See doc/JOIN_PROTOCOL.md §2 and doc/playbook.md §12.
 
 import (
 	"crypto/rand"
@@ -17,41 +18,165 @@ import (
 	"time"
 )
 
-// ---- hub ----
+// ---- hubs (plural) ----
 
+// WGHub is one row of wg_hubs. Phase 2: multiple hubs supported, each
+// with its own slug + mesh_cidr + pubkey/endpoint pair. Hub becomes
+// "bound" when the operator runs install.sh against a role=hub token
+// and that device claims the hub slot (bound_device_id set).
 type WGHub struct {
-	Pubkey       string    `json:"pubkey"`
-	Endpoint     string    `json:"endpoint"`
-	WGIP         string    `json:"wg_ip"`
-	MeshCIDR     string    `json:"mesh_cidr"`
-	KeepaliveSec int       `json:"keepalive_sec"`
-	RefreshSec   int       `json:"refresh_sec"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             int64      `json:"id"`
+	Slug           string     `json:"slug"`
+	Label          string     `json:"label"`
+	Pubkey         string     `json:"pubkey"`
+	Endpoint       string     `json:"endpoint"`
+	WGIP           string     `json:"wg_ip"`
+	MeshCIDR       string     `json:"mesh_cidr"`
+	KeepaliveSec   int        `json:"keepalive_sec"`
+	RefreshSec     int        `json:"refresh_sec"`
+	BoundDeviceID  *int64     `json:"bound_device_id,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-// Configured reports whether the operator has set pubkey + endpoint.
-// Before that, /v1/register still works (so admins can smoke-test the
-// control plane) but registered devices will reference an unreachable
-// hub. The UI surfaces a red warning in this state.
+// Configured iff a device has claimed this hub (pubkey + endpoint set).
+// Operator-created token has the endpoint pre-stamped but not pubkey;
+// only after the bind is the hub usable as a peer for other devices.
 func (h *WGHub) Configured() bool {
-	return strings.TrimSpace(h.Pubkey) != "" && strings.TrimSpace(h.Endpoint) != ""
+	return strings.TrimSpace(h.Pubkey) != ""
 }
 
-func (s *Server) getWGHub() (*WGHub, error) {
-	h := &WGHub{}
-	err := s.db.QueryRow(
-		`SELECT pubkey, endpoint, wg_ip, mesh_cidr, keepalive_sec, refresh_sec, updated_at
-		   FROM wg_hub WHERE id = 1`,
-	).Scan(&h.Pubkey, &h.Endpoint, &h.WGIP, &h.MeshCIDR, &h.KeepaliveSec, &h.RefreshSec, &h.UpdatedAt)
+const wgHubColumns = `id, slug, label, pubkey, endpoint, wg_ip, mesh_cidr, keepalive_sec, refresh_sec, bound_device_id, created_at, updated_at`
+
+func scanWGHub(scanner interface{ Scan(...any) error }) (*WGHub, error) {
+	var h WGHub
+	var bound sql.NullInt64
+	if err := scanner.Scan(&h.ID, &h.Slug, &h.Label, &h.Pubkey, &h.Endpoint, &h.WGIP, &h.MeshCIDR,
+		&h.KeepaliveSec, &h.RefreshSec, &bound, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		return nil, err
+	}
+	if bound.Valid {
+		v := bound.Int64
+		h.BoundDeviceID = &v
+	}
+	return &h, nil
+}
+
+func (s *Server) listWGHubs() ([]WGHub, error) {
+	rows, err := s.db.Query(`SELECT ` + wgHubColumns + ` FROM wg_hubs ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]WGHub, 0)
+	for rows.Next() {
+		h, err := scanWGHub(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *h)
+	}
+	return out, rows.Err()
+}
+
+func (s *Server) getWGHubByID(id int64) (*WGHub, error) {
+	row := s.db.QueryRow(`SELECT `+wgHubColumns+` FROM wg_hubs WHERE id = $1`, id)
+	h, err := scanWGHub(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// Should not happen — schema INSERTs a default row — but
-			// don't panic if a hand-edit blew it away.
-			return &WGHub{WGIP: "10.88.0.1", MeshCIDR: "10.88.0.0/16", KeepaliveSec: 25, RefreshSec: 300}, nil
+			return nil, nil
 		}
 		return nil, err
 	}
 	return h, nil
+}
+
+func (s *Server) getWGHubBySlug(slug string) (*WGHub, error) {
+	row := s.db.QueryRow(`SELECT `+wgHubColumns+` FROM wg_hubs WHERE slug = $1`, slug)
+	h, err := scanWGHub(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return h, nil
+}
+
+// getWGHubByIDTx is the tx-aware variant used by the allocator inside
+// its SERIALIZABLE transaction.
+func getWGHubByIDTx(tx *sql.Tx, id int64) (*WGHub, error) {
+	row := tx.QueryRow(`SELECT `+wgHubColumns+` FROM wg_hubs WHERE id = $1`, id)
+	h, err := scanWGHub(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return h, nil
+}
+
+// createWGHub inserts a new wg_hubs row. Called when a role=hub token
+// is minted — operator pre-stamps slug/label/public_endpoint/mesh_cidr.
+// pubkey + bound_device_id stay empty until the corresponding
+// /v1/register call.
+func (s *Server) createWGHub(slug, label, publicEndpoint, meshCIDR string) (*WGHub, error) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return nil, errors.New("hub slug required")
+	}
+	if meshCIDR == "" {
+		meshCIDR = "10.88.0.0/24"
+	}
+	wgIP, err := hubWGIPFromCIDR(meshCIDR)
+	if err != nil {
+		return nil, err
+	}
+	var id int64
+	err = s.db.QueryRow(
+		`INSERT INTO wg_hubs (slug, label, endpoint, mesh_cidr, wg_ip)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		slug, strings.TrimSpace(label), strings.TrimSpace(publicEndpoint), meshCIDR, wgIP,
+	).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return s.getWGHubByID(id)
+}
+
+// updateWGHubBind atomically claims a hub for a device: sets pubkey +
+// bound_device_id. Called by the allocator inside the register txn.
+func updateWGHubBindTx(tx *sql.Tx, hubID int64, pubkey, observedEndpoint string, deviceID int64, now time.Time) error {
+	pubkey = strings.TrimSpace(pubkey)
+	// observedEndpoint overrides the operator-prestamped endpoint only
+	// if the prestamp was empty — operator's value is authoritative
+	// (they might have set a DDNS name that's more correct than the
+	// observed publicIP).
+	_, err := tx.Exec(
+		`UPDATE wg_hubs
+		    SET pubkey = $1,
+		        endpoint = CASE WHEN endpoint = '' THEN $2 ELSE endpoint END,
+		        bound_device_id = $3,
+		        updated_at = $4
+		  WHERE id = $5`,
+		pubkey, observedEndpoint, deviceID, now, hubID,
+	)
+	return err
+}
+
+// clearWGHubBind resets pubkey + bound_device_id (called from
+// /v1/leave when the hub device itself leaves). The hub row stays —
+// it can be re-bound by a fresh hub-token register, or admin can
+// delete it.
+func (s *Server) clearWGHubBind(hubID int64, now time.Time) error {
+	_, err := s.db.Exec(
+		`UPDATE wg_hubs
+		    SET pubkey = '', bound_device_id = NULL, updated_at = $2
+		  WHERE id = $1`,
+		hubID, now,
+	)
+	return err
 }
 
 func (s *Server) updateWGHub(h *WGHub, now time.Time) (*WGHub, error) {
@@ -62,7 +187,7 @@ func (s *Server) updateWGHub(h *WGHub, now time.Time) (*WGHub, error) {
 		h.WGIP = "10.88.0.1"
 	}
 	if h.MeshCIDR == "" {
-		h.MeshCIDR = "10.88.0.0/16"
+		h.MeshCIDR = "10.88.0.0/24"
 	}
 	if h.KeepaliveSec <= 0 {
 		h.KeepaliveSec = 25
@@ -71,23 +196,57 @@ func (s *Server) updateWGHub(h *WGHub, now time.Time) (*WGHub, error) {
 		h.RefreshSec = 300
 	}
 	_, err := s.db.Exec(
-		`UPDATE wg_hub
-		    SET pubkey = $1, endpoint = $2, wg_ip = $3, mesh_cidr = $4,
-		        keepalive_sec = $5, refresh_sec = $6, updated_at = $7
-		  WHERE id = 1`,
-		strings.TrimSpace(h.Pubkey), strings.TrimSpace(h.Endpoint), h.WGIP, h.MeshCIDR,
+		`UPDATE wg_hubs
+		    SET label = $2, endpoint = $3, wg_ip = $4, mesh_cidr = $5,
+		        keepalive_sec = $6, refresh_sec = $7, updated_at = $8
+		  WHERE id = $1`,
+		h.ID, strings.TrimSpace(h.Label), strings.TrimSpace(h.Endpoint), h.WGIP, h.MeshCIDR,
 		h.KeepaliveSec, h.RefreshSec, now,
 	)
 	if err != nil {
 		return nil, err
 	}
-	return s.getWGHub()
+	return s.getWGHubByID(h.ID)
+}
+
+func (s *Server) deleteWGHub(id int64) error {
+	// Refuse if hub has live devices. ON DELETE CASCADE on wg_devices
+	// would otherwise silently kill them; safer to make admin clean up
+	// explicitly.
+	var n int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM wg_devices WHERE hub_id = $1 AND removed_at IS NULL`, id,
+	).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("hub has %d live devices; remove them first", n)
+	}
+	res, err := s.db.Exec(`DELETE FROM wg_hubs WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// hubWGIPFromCIDR derives the canonical hub IP (network address + 1)
+// from a CIDR like "10.88.0.0/24" → "10.88.0.1".
+func hubWGIPFromCIDR(cidr string) (string, error) {
+	net, err := parseMeshCIDR(cidr)
+	if err != nil {
+		return "", err
+	}
+	return net.deviceIP(1), nil
 }
 
 // ---- sites ----
 
 type WGSite struct {
 	ID          int64     `json:"id"`
+	HubID       int64     `json:"hub_id"`
 	Slug        string    `json:"slug"`
 	SIndex      int       `json:"s_index"`
 	Label       string    `json:"label"`
@@ -99,11 +258,11 @@ type WGSite struct {
 
 func (s *Server) listWGSites() ([]WGSite, error) {
 	rows, err := s.db.Query(
-		`SELECT s.id, s.slug, s.s_index, s.label, s.public_ip, s.lan_cidr, s.created_at,
+		`SELECT s.id, COALESCE(s.hub_id, 0), s.slug, s.s_index, s.label, s.public_ip, s.lan_cidr, s.created_at,
 		        COALESCE((SELECT COUNT(*) FROM wg_devices d
 		                   WHERE d.site_id = s.id AND d.removed_at IS NULL), 0)::INT
 		   FROM wg_sites s
-		  ORDER BY s.s_index`,
+		  ORDER BY s.hub_id, s.s_index`,
 	)
 	if err != nil {
 		return nil, err
@@ -112,7 +271,7 @@ func (s *Server) listWGSites() ([]WGSite, error) {
 	out := make([]WGSite, 0)
 	for rows.Next() {
 		var x WGSite
-		if err := rows.Scan(&x.ID, &x.Slug, &x.SIndex, &x.Label, &x.PublicIP, &x.LANCIDR, &x.CreatedAt, &x.DeviceCount); err != nil {
+		if err := rows.Scan(&x.ID, &x.HubID, &x.Slug, &x.SIndex, &x.Label, &x.PublicIP, &x.LANCIDR, &x.CreatedAt, &x.DeviceCount); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -126,6 +285,10 @@ type WGToken struct {
 	ID                 int64      `json:"id"`
 	Label              string     `json:"label"`
 	Prefix             string     `json:"token_prefix"`
+	Role               string     `json:"role"` // "hub" | "device"
+	HubID              *int64     `json:"hub_id,omitempty"`
+	PublicEndpoint     *string    `json:"public_endpoint,omitempty"`  // hub tokens only
+	MeshCIDRPref       *string    `json:"mesh_cidr_pref,omitempty"`   // hub tokens only
 	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
 	ConsumedAt         *time.Time `json:"consumed_at,omitempty"`
 	ConsumedByDeviceID *int64     `json:"consumed_by_device_id,omitempty"`
@@ -151,68 +314,165 @@ func hashWGToken(plaintext string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) createWGToken(label, createdByUserID string, expiresAt *time.Time, now time.Time) (*WGToken, error) {
+const wgTokenColumns = `id, label, token_prefix, role, hub_id, public_endpoint, mesh_cidr_pref, expires_at, consumed_at, consumed_by_device_id, revoked_at, created_at, created_by_user_id`
+
+func scanWGToken(scanner interface{ Scan(...any) error }) (*WGToken, error) {
+	var t WGToken
+	var hubID, consumedBy sql.NullInt64
+	var publicEndpoint, meshCIDR sql.NullString
+	var expiresAt, consumedAt, revokedAt sql.NullTime
+	if err := scanner.Scan(
+		&t.ID, &t.Label, &t.Prefix, &t.Role, &hubID, &publicEndpoint, &meshCIDR,
+		&expiresAt, &consumedAt, &consumedBy, &revokedAt, &t.CreatedAt, &t.CreatedByUserID,
+	); err != nil {
+		return nil, err
+	}
+	if hubID.Valid {
+		v := hubID.Int64
+		t.HubID = &v
+	}
+	if publicEndpoint.Valid {
+		v := publicEndpoint.String
+		t.PublicEndpoint = &v
+	}
+	if meshCIDR.Valid {
+		v := meshCIDR.String
+		t.MeshCIDRPref = &v
+	}
+	if expiresAt.Valid {
+		v := expiresAt.Time
+		t.ExpiresAt = &v
+	}
+	if consumedAt.Valid {
+		v := consumedAt.Time
+		t.ConsumedAt = &v
+	}
+	if consumedBy.Valid {
+		v := consumedBy.Int64
+		t.ConsumedByDeviceID = &v
+	}
+	if revokedAt.Valid {
+		v := revokedAt.Time
+		t.RevokedAt = &v
+	}
+	return &t, nil
+}
+
+// createWGTokenForDevice mints a device-role token bound to an
+// existing hub. UI/CLI rejects creation if 0 hubs exist.
+func (s *Server) createWGTokenForDevice(label, createdByUserID string, hubID int64, expiresAt *time.Time, now time.Time) (*WGToken, error) {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return nil, errors.New("label required")
 	}
-	plaintext, prefix := newWGTokenPlaintext()
-	hash := hashWGToken(plaintext)
-	out := &WGToken{
-		Label:           label,
-		Prefix:          prefix,
-		ExpiresAt:       expiresAt,
-		CreatedAt:       now,
-		CreatedByUserID: createdByUserID,
-		Plaintext:       plaintext,
-	}
-	err := s.db.QueryRow(
-		`INSERT INTO wg_tokens (label, token_hash, token_prefix, expires_at, created_at, created_by_user_id)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id`,
-		label, hash, prefix, expiresAt, now, createdByUserID,
-	).Scan(&out.ID)
+	// Sanity: hub exists.
+	hub, err := s.getWGHubByID(hubID)
 	if err != nil {
 		return nil, err
 	}
+	if hub == nil {
+		return nil, errors.New("hub_id not found")
+	}
+	plaintext, prefix := newWGTokenPlaintext()
+	hash := hashWGToken(plaintext)
+	var newID int64
+	err = s.db.QueryRow(
+		`INSERT INTO wg_tokens (label, token_hash, token_prefix, expires_at, created_at, created_by_user_id, role, hub_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'device', $7)
+		 RETURNING id`,
+		label, hash, prefix, expiresAt, now, createdByUserID, hubID,
+	).Scan(&newID)
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.getWGTokenByID(newID)
+	if err != nil {
+		return nil, err
+	}
+	out.Plaintext = plaintext
 	return out, nil
 }
 
+// createWGTokenForHub mints a hub-role token AND pre-creates the
+// wg_hubs row (so device tokens can target it before the hub goes
+// live). The hub row starts with pubkey="" and is "configured" only
+// after the corresponding /v1/register call binds a device.
+func (s *Server) createWGTokenForHub(label, createdByUserID, hubSlug, hubLabel, publicEndpoint, meshCIDR string, expiresAt *time.Time, now time.Time) (*WGToken, *WGHub, error) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return nil, nil, errors.New("label required")
+	}
+	hubSlug = strings.TrimSpace(hubSlug)
+	if hubSlug == "" {
+		return nil, nil, errors.New("hub slug required for role=hub")
+	}
+	publicEndpoint = strings.TrimSpace(publicEndpoint)
+	if publicEndpoint == "" {
+		return nil, nil, errors.New("public_endpoint required for role=hub (e.g. west.example.com:51820)")
+	}
+	if meshCIDR == "" {
+		meshCIDR = "10.88.0.0/24"
+	}
+	if _, err := parseMeshCIDR(meshCIDR); err != nil {
+		return nil, nil, fmt.Errorf("invalid mesh_cidr: %w", err)
+	}
+	// Reuse existing hub by slug if present (re-issue scenario: the
+	// previous hub-token was lost or the hub device crashed).
+	hub, err := s.getWGHubBySlug(hubSlug)
+	if err != nil {
+		return nil, nil, err
+	}
+	if hub == nil {
+		hub, err = s.createWGHub(hubSlug, hubLabel, publicEndpoint, meshCIDR)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	plaintext, prefix := newWGTokenPlaintext()
+	hash := hashWGToken(plaintext)
+	var newID int64
+	err = s.db.QueryRow(
+		`INSERT INTO wg_tokens (label, token_hash, token_prefix, expires_at, created_at, created_by_user_id, role, hub_id, public_endpoint, mesh_cidr_pref)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'hub', $7, $8, $9)
+		 RETURNING id`,
+		label, hash, prefix, expiresAt, now, createdByUserID, hub.ID, publicEndpoint, meshCIDR,
+	).Scan(&newID)
+	if err != nil {
+		return nil, nil, err
+	}
+	out, err := s.getWGTokenByID(newID)
+	if err != nil {
+		return nil, nil, err
+	}
+	out.Plaintext = plaintext
+	return out, hub, nil
+}
+
+func (s *Server) getWGTokenByID(id int64) (*WGToken, error) {
+	row := s.db.QueryRow(`SELECT `+wgTokenColumns+` FROM wg_tokens WHERE id = $1`, id)
+	t, err := scanWGToken(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return t, nil
+}
+
 func (s *Server) listWGTokens() ([]WGToken, error) {
-	rows, err := s.db.Query(
-		`SELECT id, label, token_prefix, expires_at, consumed_at, consumed_by_device_id, revoked_at, created_at, created_by_user_id
-		   FROM wg_tokens
-		  ORDER BY created_at DESC, id DESC`,
-	)
+	rows, err := s.db.Query(`SELECT ` + wgTokenColumns + ` FROM wg_tokens ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := make([]WGToken, 0)
 	for rows.Next() {
-		var t WGToken
-		var expiresAt, consumedAt, revokedAt sql.NullTime
-		var consumedBy sql.NullInt64
-		if err := rows.Scan(&t.ID, &t.Label, &t.Prefix, &expiresAt, &consumedAt, &consumedBy, &revokedAt, &t.CreatedAt, &t.CreatedByUserID); err != nil {
+		t, err := scanWGToken(rows)
+		if err != nil {
 			return nil, err
 		}
-		if expiresAt.Valid {
-			v := expiresAt.Time
-			t.ExpiresAt = &v
-		}
-		if consumedAt.Valid {
-			v := consumedAt.Time
-			t.ConsumedAt = &v
-		}
-		if consumedBy.Valid {
-			v := consumedBy.Int64
-			t.ConsumedByDeviceID = &v
-		}
-		if revokedAt.Valid {
-			v := revokedAt.Time
-			t.RevokedAt = &v
-		}
-		out = append(out, t)
+		out = append(out, *t)
 	}
 	return out, rows.Err()
 }
@@ -234,45 +494,25 @@ func (s *Server) revokeWGToken(id int64, now time.Time) error {
 }
 
 // lookupUnusedWGToken returns the row matching plaintext IFF the token
-// is not yet consumed, not revoked, and not expired. The caller must
-// still bind the token to a device within the same transaction (via
-// allocateWGDevice).
+// is not yet consumed, not revoked, and not expired. Caller binds the
+// token to a device within the same transaction.
 func (s *Server) lookupUnusedWGToken(tx *sql.Tx, plaintext string) (*WGToken, error) {
 	hash := hashWGToken(plaintext)
-	row := tx.QueryRow(
-		`SELECT id, label, token_prefix, expires_at, consumed_at, consumed_by_device_id, revoked_at, created_at, created_by_user_id
-		   FROM wg_tokens
-		  WHERE token_hash = $1`,
-		hash,
-	)
-	var t WGToken
-	var expiresAt, consumedAt, revokedAt sql.NullTime
-	var consumedBy sql.NullInt64
-	if err := row.Scan(&t.ID, &t.Label, &t.Prefix, &expiresAt, &consumedAt, &consumedBy, &revokedAt, &t.CreatedAt, &t.CreatedByUserID); err != nil {
+	row := tx.QueryRow(`SELECT `+wgTokenColumns+` FROM wg_tokens WHERE token_hash = $1`, hash)
+	t, err := scanWGToken(row)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	if expiresAt.Valid {
-		v := expiresAt.Time
-		t.ExpiresAt = &v
-		if time.Now().UTC().After(v) {
-			return nil, errWGTokenExpired
-		}
+	if t.ExpiresAt != nil && time.Now().UTC().After(*t.ExpiresAt) {
+		return nil, errWGTokenExpired
 	}
-	if revokedAt.Valid {
+	if t.RevokedAt != nil {
 		return nil, errWGTokenRevoked
 	}
-	if consumedAt.Valid {
-		v := consumedAt.Time
-		t.ConsumedAt = &v
-	}
-	if consumedBy.Valid {
-		v := consumedBy.Int64
-		t.ConsumedByDeviceID = &v
-	}
-	return &t, nil
+	return t, nil
 }
 
 var (
@@ -282,49 +522,49 @@ var (
 
 // ---- devices ----
 
-// WGLanAddr matches the JSON the client sends for each LAN interface
-// it has bound a wg listen port to.
 type WGLanAddr struct {
 	Iface string `json:"iface"`
 	CIDR  string `json:"cidr"`
 }
 
 type WGDevice struct {
-	ID               int64       `json:"id"`
-	DeviceID         string      `json:"device_id"`
-	SiteID           int64       `json:"site_id"`
-	DIndex           int         `json:"d_index"`
-	DeviceIP         string      `json:"device_ip"`
-	Pubkey           string      `json:"pubkey"`
-	Hostname         string      `json:"hostname"`
-	OS               string      `json:"os"`
-	Arch             string      `json:"arch"`
-	AgentVer         string      `json:"agent_ver"`
-	WGListenPort     int         `json:"wg_listen_port"`
-	LANAddrs         []WGLanAddr `json:"lan_addrs,omitempty"`
-	WGEndpoint       string      `json:"wg_endpoint"`
-	TokenHash        string      `json:"-"`
-	TokenExpiresAt   *time.Time  `json:"token_expires_at,omitempty"`
-	CreatedAt        time.Time   `json:"created_at"`
-	LastSeenAt       *time.Time  `json:"last_seen_at,omitempty"`
-	RemovedAt        *time.Time  `json:"removed_at,omitempty"`
-	SiteSlug         string      `json:"site_slug,omitempty"` // populated by joined list queries
+	ID             int64       `json:"id"`
+	DeviceID       string      `json:"device_id"`
+	HubID          int64       `json:"hub_id"`
+	SiteID         int64       `json:"site_id"`
+	DIndex         int         `json:"d_index"`
+	DeviceIP       string      `json:"device_ip"`
+	Pubkey         string      `json:"pubkey"`
+	Hostname       string      `json:"hostname"`
+	OS             string      `json:"os"`
+	Arch           string      `json:"arch"`
+	AgentVer       string      `json:"agent_ver"`
+	WGListenPort   int         `json:"wg_listen_port"`
+	LANAddrs       []WGLanAddr `json:"lan_addrs,omitempty"`
+	WGEndpoint     string      `json:"wg_endpoint"`
+	TokenHash      string      `json:"-"`
+	TokenExpiresAt *time.Time  `json:"token_expires_at,omitempty"`
+	CreatedAt      time.Time   `json:"created_at"`
+	LastSeenAt     *time.Time  `json:"last_seen_at,omitempty"`
+	RemovedAt      *time.Time  `json:"removed_at,omitempty"`
+	SiteSlug       string      `json:"site_slug,omitempty"`
+	HubSlug        string      `json:"hub_slug,omitempty"`
 }
 
-func scanWGDevice(scanner interface {
-	Scan(dest ...any) error
-}, withSiteSlug bool) (*WGDevice, error) {
+// scanWGDevice supports two column shapes used in different queries.
+// Set hasSlug=true when the SELECT joined site/hub for *_slug columns.
+func scanWGDevice(scanner interface{ Scan(...any) error }, hasSlug bool) (*WGDevice, error) {
 	var d WGDevice
 	var lanJSON sql.NullString
 	var tokenExpiresAt, lastSeenAt, removedAt sql.NullTime
-	var siteSlug sql.NullString
+	var siteSlug, hubSlug sql.NullString
 	dest := []any{
-		&d.ID, &d.DeviceID, &d.SiteID, &d.DIndex, &d.DeviceIP, &d.Pubkey, &d.Hostname, &d.OS, &d.Arch,
-		&d.AgentVer, &d.WGListenPort, &lanJSON, &d.WGEndpoint, &d.TokenHash, &tokenExpiresAt,
-		&d.CreatedAt, &lastSeenAt, &removedAt,
+		&d.ID, &d.DeviceID, &d.HubID, &d.SiteID, &d.DIndex, &d.DeviceIP, &d.Pubkey,
+		&d.Hostname, &d.OS, &d.Arch, &d.AgentVer, &d.WGListenPort, &lanJSON, &d.WGEndpoint,
+		&d.TokenHash, &tokenExpiresAt, &d.CreatedAt, &lastSeenAt, &removedAt,
 	}
-	if withSiteSlug {
-		dest = append(dest, &siteSlug)
+	if hasSlug {
+		dest = append(dest, &siteSlug, &hubSlug)
 	}
 	if err := scanner.Scan(dest...); err != nil {
 		return nil, err
@@ -344,13 +584,18 @@ func scanWGDevice(scanner interface {
 		v := removedAt.Time
 		d.RemovedAt = &v
 	}
-	if withSiteSlug && siteSlug.Valid {
-		d.SiteSlug = siteSlug.String
+	if hasSlug {
+		if siteSlug.Valid {
+			d.SiteSlug = siteSlug.String
+		}
+		if hubSlug.Valid {
+			d.HubSlug = hubSlug.String
+		}
 	}
 	return &d, nil
 }
 
-const wgDeviceColumns = `id, device_id, site_id, d_index, device_ip, pubkey, hostname, os, arch, agent_ver, wg_listen_port, lan_addrs_json, wg_endpoint, token_hash, token_expires_at, created_at, last_seen_at, removed_at`
+const wgDeviceColumns = `id, device_id, hub_id, site_id, d_index, device_ip, pubkey, hostname, os, arch, agent_ver, wg_listen_port, lan_addrs_json, wg_endpoint, token_hash, token_expires_at, created_at, last_seen_at, removed_at`
 
 func (s *Server) getWGDeviceByID(id int64) (*WGDevice, error) {
 	row := s.db.QueryRow(`SELECT `+wgDeviceColumns+` FROM wg_devices WHERE id = $1`, id)
@@ -376,8 +621,6 @@ func (s *Server) getWGDeviceByDeviceID(deviceID string) (*WGDevice, error) {
 	return d, nil
 }
 
-// getWGDeviceByTokenHash is the auth side of /v1/peers, /v1/heartbeat,
-// /v1/leave: hash the bearer, look up the device. Skipped removed.
 func (s *Server) getWGDeviceByTokenHash(hash string) (*WGDevice, error) {
 	row := s.db.QueryRow(
 		`SELECT `+wgDeviceColumns+`
@@ -396,15 +639,17 @@ func (s *Server) getWGDeviceByTokenHash(hash string) (*WGDevice, error) {
 }
 
 func (s *Server) listWGDevices(includeRemoved bool) ([]WGDevice, error) {
-	q := `SELECT d.id, d.device_id, d.site_id, d.d_index, d.device_ip, d.pubkey, d.hostname, d.os, d.arch,
-	             d.agent_ver, d.wg_listen_port, d.lan_addrs_json, d.wg_endpoint, d.token_hash, d.token_expires_at,
-	             d.created_at, d.last_seen_at, d.removed_at, s.slug
+	q := `SELECT d.id, d.device_id, d.hub_id, d.site_id, d.d_index, d.device_ip, d.pubkey,
+	             d.hostname, d.os, d.arch, d.agent_ver, d.wg_listen_port, d.lan_addrs_json,
+	             d.wg_endpoint, d.token_hash, d.token_expires_at, d.created_at, d.last_seen_at,
+	             d.removed_at, s.slug, h.slug
 	        FROM wg_devices d
-	        JOIN wg_sites s ON s.id = d.site_id`
+	   LEFT JOIN wg_sites s ON s.id = d.site_id
+	   LEFT JOIN wg_hubs  h ON h.id = d.hub_id`
 	if !includeRemoved {
 		q += ` WHERE d.removed_at IS NULL`
 	}
-	q += ` ORDER BY d.site_id, d.d_index`
+	q += ` ORDER BY d.hub_id, d.site_id, d.d_index`
 	rows, err := s.db.Query(q)
 	if err != nil {
 		return nil, err
@@ -421,10 +666,34 @@ func (s *Server) listWGDevices(includeRemoved bool) ([]WGDevice, error) {
 	return out, rows.Err()
 }
 
-// listWGDevicesInSite returns un-removed peers in the given site,
-// excluding the one with excludeDeviceID. Used by the /v1/peers
-// peer-list builder.
-func (s *Server) listWGDevicesInSite(siteID int64, excludeID int64) ([]WGDevice, error) {
+// listWGDevicesInHub returns un-removed devices in a given hub,
+// optionally excluding one (the requesting peer / hub itself).
+func (s *Server) listWGDevicesInHub(hubID, excludeID int64) ([]WGDevice, error) {
+	rows, err := s.db.Query(
+		`SELECT `+wgDeviceColumns+`
+		   FROM wg_devices
+		  WHERE hub_id = $1 AND removed_at IS NULL AND id <> $2
+		  ORDER BY d_index`,
+		hubID, excludeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]WGDevice, 0)
+	for rows.Next() {
+		d, err := scanWGDevice(rows, false)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *d)
+	}
+	return out, rows.Err()
+}
+
+// listWGDevicesInSite — like listWGDevicesInHub but scoped to a site
+// (used for LAN-direct peer list within a single LAN).
+func (s *Server) listWGDevicesInSite(siteID, excludeID int64) ([]WGDevice, error) {
 	rows, err := s.db.Query(
 		`SELECT `+wgDeviceColumns+`
 		   FROM wg_devices
@@ -447,8 +716,6 @@ func (s *Server) listWGDevicesInSite(siteID int64, excludeID int64) ([]WGDevice,
 	return out, rows.Err()
 }
 
-// markWGDeviceRemoved is the /v1/leave + admin force-remove path. The
-// row stays in the table — bg cleanup is a separate Phase.
 func (s *Server) markWGDeviceRemoved(id int64, now time.Time) error {
 	res, err := s.db.Exec(
 		`UPDATE wg_devices
@@ -465,8 +732,6 @@ func (s *Server) markWGDeviceRemoved(id int64, now time.Time) error {
 	return nil
 }
 
-// updateWGDeviceTokenHash rotates a device's bearer token in place.
-// /v1/token/refresh path. Old hash is replaced atomically.
 func (s *Server) updateWGDeviceTokenHash(id int64, newHash string, expiresAt *time.Time) error {
 	_, err := s.db.Exec(
 		`UPDATE wg_devices
@@ -477,13 +742,13 @@ func (s *Server) updateWGDeviceTokenHash(id int64, newHash string, expiresAt *ti
 	return err
 }
 
-// otherSiteIndices returns distinct s_index for sites OTHER than the
-// given one. Used to compute hub peer's allowed_extra: every other
-// site's /24 has to be routable through hub.
-func (s *Server) otherSiteIndices(excludeSiteID int64) ([]int, error) {
+// otherSiteIndices returns distinct s_index in same hub, excluding
+// the given site. Used by /v1/peers to compute hub peer's
+// allowed_extra (other-site /24s routed via hub).
+func (s *Server) otherSiteIndicesInHub(hubID, excludeSiteID int64) ([]int, error) {
 	rows, err := s.db.Query(
-		`SELECT DISTINCT s_index FROM wg_sites WHERE id <> $1 ORDER BY s_index`,
-		excludeSiteID,
+		`SELECT DISTINCT s_index FROM wg_sites WHERE hub_id = $1 AND id <> $2 ORDER BY s_index`,
+		hubID, excludeSiteID,
 	)
 	if err != nil {
 		return nil, err
@@ -500,25 +765,24 @@ func (s *Server) otherSiteIndices(excludeSiteID int64) ([]int, error) {
 	return out, rows.Err()
 }
 
-// ---- bundles ----
+// ---- bundles ---- (unchanged shape, see Phase 1)
 
 type WGBundle struct {
-	ID              int64     `json:"id"`
-	Version         string    `json:"version"`
-	BlobURI         string    `json:"blob_uri"`
-	BlobSHA256      string    `json:"blob_sha256"`
-	SizeBytes       int64     `json:"size_bytes"`
-	IsLatest        bool      `json:"is_latest"`
-	Notes           string    `json:"notes"`
-	AddedAt         time.Time `json:"added_at"`
-	AddedByUserID   string    `json:"added_by_user_id"`
+	ID            int64     `json:"id"`
+	Version       string    `json:"version"`
+	BlobURI       string    `json:"blob_uri"`
+	BlobSHA256    string    `json:"blob_sha256"`
+	SizeBytes     int64     `json:"size_bytes"`
+	IsLatest      bool      `json:"is_latest"`
+	Notes         string    `json:"notes"`
+	AddedAt       time.Time `json:"added_at"`
+	AddedByUserID string    `json:"added_by_user_id"`
 }
 
 func (s *Server) listWGBundles() ([]WGBundle, error) {
 	rows, err := s.db.Query(
 		`SELECT id, version, blob_uri, blob_sha256, size_bytes, is_latest, notes, added_at, added_by_user_id
-		   FROM wg_bundles
-		  ORDER BY added_at DESC, id DESC`,
+		   FROM wg_bundles ORDER BY added_at DESC, id DESC`,
 	)
 	if err != nil {
 		return nil, err
@@ -617,9 +881,6 @@ func (s *Server) insertWGBundle(b *WGBundle) (*WGBundle, error) {
 	return b, nil
 }
 
-// setWGBundleLatest is atomic: clears any existing is_latest row, then
-// marks the given id. Wrapped in a txn so the partial unique index
-// (ux_wg_bundles_latest) can never see two latest rows.
 func (s *Server) setWGBundleLatest(id int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -662,10 +923,6 @@ type WGHeartbeatRecord struct {
 	ReceivedAt       time.Time
 }
 
-// insertWGHeartbeat appends the row + mirrors the latest values onto
-// wg_devices so /api/admin/wg-devices can render "last seen" without a
-// per-row aggregate. Returns the count of heartbeats appended (always
-// 1 on success; 0 if device gone).
 func (s *Server) insertWGHeartbeat(rec *WGHeartbeatRecord, now time.Time) error {
 	if rec == nil {
 		return errors.New("nil heartbeat")
@@ -689,8 +946,6 @@ func (s *Server) insertWGHeartbeat(rec *WGHeartbeatRecord, now time.Time) error 
 	); err != nil {
 		return err
 	}
-	// Mirror the latest endpoint/addrs onto the device row so admin
-	// list views don't have to LEFT-JOIN-LATERAL on heartbeats.
 	if _, err := tx.Exec(
 		`UPDATE wg_devices
 		    SET last_seen_at = $2,
@@ -718,19 +973,12 @@ func nullJSONB(b []byte) any {
 	return string(b)
 }
 
-// newWGDeviceID returns a random opaque device id ("dev_" + 16 hex).
-// Used at /v1/register to mint the device_id the client carries on
-// subsequent calls.
 func newWGDeviceID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return "dev_" + hex.EncodeToString(b)
 }
 
-// validatePubkey is a minimal sanity check on the base64-encoded wg
-// public key the client posts. wg_core itself does the cryptographic
-// validation; this just rejects empty/oversized payloads so the DB
-// doesn't get junk.
 func validatePubkey(p string) error {
 	p = strings.TrimSpace(p)
 	if p == "" {

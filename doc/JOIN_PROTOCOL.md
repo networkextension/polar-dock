@@ -1,9 +1,5 @@
 # wg-mac join protocol — design v0
 
-> **Status**: Phase 1 implemented (Go control plane + admin UI). C
-> `wgctl refresh` agent + `WG_MAX_PEERS` bump still owed by the wg-mac
-> repo. Operator workflow + ops notes in `doc/playbook.md §12`.
-
 Tailscale-style onboarding for the wgctl/wg_core stack:
 
 ```
@@ -49,6 +45,36 @@ forwarding (see §5).
 All requests are JSON over HTTPS. Server URL is baked into install.sh
 at hosting time, so the client doesn't need a discovery step.
 
+### First-register-wins hub election (v0.2)
+
+Convention: **the first device to call `/v1/register` against a fresh
+control plane becomes the hub** ("老大哥"). The server, on seeing an
+empty `wg_hub` row at registration time:
+
+1. Allocates that device `device_ip = 10.88.0.1/32`, `site_id = "hub"`.
+2. Populates `wg_hub.pubkey` + `wg_hub.endpoint` from the device's
+   submitted `pubkey` + observed source `host:wg_listen`.
+3. Returns the response with `role: "hub"` (new field, see below).
+4. From then on, this device's pubkey IS the hub.
+
+Subsequent `/v1/register` calls see a populated `wg_hub`, follow the
+normal device path, and the hub appears as a [Peer] in their conf.
+
+Failure modes:
+- Hub deregisters via `/v1/leave` → control plane MUST also clear
+  `wg_hub` so the next register reclaims the role.
+- Hub goes silent for `> hub_takeover_sec` (config, default 24 h with
+  no heartbeat) → server may flag for manual takeover; not automatic
+  (avoid split-brain).
+
+Client implications (handled by install.sh / wgctl):
+- After register, branch on `role`:
+  - `role == "hub"`: render conf with `Address = 10.88.0.1/24`, no
+    initial [Peer] list, enable `net.inet.ip.forwarding=1`, install a
+    poll-hub-peers agent that rewrites the conf from `/v1/hub/peers`.
+  - `role == "device"` (default): render conf with hub peer + LAN
+    peers as in §5.
+
 ### POST /v1/register
 
 First-time join. Token is consumed (or rotated, depending on policy).
@@ -76,10 +102,13 @@ Response 200:
   "device_id":   "dev_a8f3…",         // opaque, returned on subsequent calls
   "device_ip":   "10.88.5.7",         // assigned wg IP
   "site_id":     "site_5",
+  "role":        "device",            // "hub" iff this caller is the
+                                       // first registered ever (see
+                                       // §2 "first-register-wins hub")
   "mesh_cidr":   "10.88.0.0/16",
   "hub": {
     "pubkey":    "DwyGEhX…=",
-    "endpoint":  "vpn.example.net:1632",   // public DDNS / static IP
+    "endpoint":  "vpn.example.net:51820",   // public DDNS / static IP
     "wg_ip":     "10.88.0.1"
   },
   "peers": [                          // per-device tailored list, see §5
@@ -92,7 +121,7 @@ Response 200:
     },
     {
       "pubkey":   "DwyGEhX…=",
-      "endpoint": "vpn.example.net:1632",  // hub
+      "endpoint": "vpn.example.net:51820",  // hub
       "site_id":  "hub",
       "allowed_extra": [                   // cross-site subnets routed via hub
         "10.88.0.0/24",
@@ -175,6 +204,32 @@ back a new one. Old token invalidated immediately.
 If client misses the rotation window (old token has expired), it must
 re-register with a fresh platform-issued token — exactly the same as a
 fresh install.
+
+### GET /v1/hub/peers
+
+Hub-only endpoint, called by the hub's periodic agent to refresh its
+own `[Peer]` list. Auth via `Authorization: Bearer <hub-token>` AND
+`X-Device-Id: <hub-device-id>` returned from /v1/register when the
+caller was elected hub.
+
+Server validates the caller is the current hub (matches `wg_hub.pubkey`
+implicitly via device_id), then returns ALL active devices flattened:
+
+```json
+{
+  "peers": [
+    { "pubkey": "TqbeoU…", "wg_ip": "10.88.1.2/32", "hostname": "yarshure-mac" },
+    { "pubkey": "9yRYL…",  "wg_ip": "10.88.1.3/32", "hostname": "another-mac" },
+    ...
+  ],
+  "rev":          "etag-or-monotonic",   // for change detection
+  "refresh_sec":  30
+}
+```
+
+Hub agent uses `rev` to skip rewrite when unchanged. On change:
+overwrite `/etc/wireguard/<hub-iface>.conf` with the new peer list and
+`launchctl kickstart -k system/com.wireguard.wg-mac.<hub-iface>`.
 
 ### GET /v1/install (or /install.sh)
 
@@ -287,7 +342,7 @@ PersistentKeepalive = 25
 # hub (cross-site forwarder)
 [Peer]
 PublicKey  = DwyGEhX…=
-Endpoint   = vpn.example.net:1632
+Endpoint   = vpn.example.net:51820
 AllowedIPs = 10.88.0.0/24, 10.88.7.0/24, 10.88.9.0/24
 PersistentKeepalive = 25
 ```
@@ -477,16 +532,39 @@ move to a Go agent if the team prefers.
 
 ## 9. Implementation order suggested
 
+### v0.1 (initial, partly done)
 1. (Go) Stand up minimal control server: `/v1/register`, `/v1/peers`,
-   `/v1/install`, `/v1/bundle`. Stub `/v1/heartbeat` + `/v1/token/refresh`.
-2. (C, wg_core) Bump `WG_MAX_PEERS` from 8 to 64.
-3. (Shell) Write `install.sh` per §6, hosted at `<server>/v1/install`.
-4. (C, wgctl) Add `wgctl refresh` subcommand per §7.
-5. (Plist) Ship `com.wireguard.wgctl-agent.plist` for periodic refresh.
-6. (Go) Heartbeat ingestion + alive/stale tracking.
-7. (Go) Cross-site hub allowed_extra computation per §5.
-8. (Hub-side) Document the IP forwarding + per-device peer requirements
-   so the hub config is operator-friendly.
+   `/v1/install`, `/v1/bundle`. Stub `/v1/heartbeat` + `/v1/token/refresh`. ✓
+2. (C, wg_core) Bump `WG_MAX_PEERS` from 8 to 64. ✓
+3. (Shell) Write `install.sh` per §6, hosted at `<server>/v1/install`. ✓
+4. (Nginx) Expose `/v1/*` to public — currently dock-only, route not
+   yet proxied. Pending.
+5. (Go) Site allocator: normalize `firstLANCIDR` to network address so
+   devices on the same /24 get the same site. Currently uses raw device
+   CIDR which produces a site-per-device. Pending.
 
-Steps 2–4 are the only mac-side changes needed for v1. Everything else
-is the Go control plane.
+### v0.2 (first-register-wins hub election — *current branch*)
+6. (Go) On `/v1/register` with empty `wg_hub`: assign caller `role=hub`,
+   `device_ip=10.88.0.1`, populate `wg_hub.pubkey/endpoint` from caller's
+   pubkey + observed `source_ip:wg_listen`. Pending.
+7. (Go) New `/v1/hub/peers` endpoint per §2. Pending.
+8. (Go) `/v1/leave` for hub also clears `wg_hub` so the next caller
+   reclaims the role. Pending.
+9. (Shell) `install.sh` branches on `role`:
+    - hub: render conf at 10.88.0.1/24, enable IP forwarding, install
+      hub-agent.plist.
+    - device: existing behavior. Pending after server changes land.
+10. (C, wgctl) New `wgctl hub-refresh` subcommand (mac side): polls
+    `/v1/hub/peers`, rewrites hub iface conf, kickstarts. Pending.
+11. (Plist) `com.wireguard.wgctl-hub-agent.plist` runs `wgctl hub-refresh`
+    every `refresh_sec`. Pending.
+
+### v0.3 (post-hub)
+12. (C, wgctl) `wgctl refresh` for device-side peer-list sync (§7).
+13. (Plist) `com.wireguard.wgctl-agent.plist` for device-side refresh.
+14. (Go) Heartbeat ingestion + alive/stale tracking.
+15. (Go) Cross-site hub `allowed_extra` computation per §5.
+
+The Mac side (4 + 9 + 10 + 12 in wgctl/install.sh) waits on the Go side
+items above before it can integrate. Until then, manual hub conf on the
+first device, and clients fall back to "no hub, LAN-direct only" mode.

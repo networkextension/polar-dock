@@ -1,4 +1,4 @@
-// Typed fetch wrappers for /api/admin/wg-*.
+// Typed fetch wrappers for /api/admin/wg-* (Phase 2 — multi-hub).
 
 import { requestJson } from "./http.js";
 import type {
@@ -6,22 +6,35 @@ import type {
   WGBundleResponse,
   WGDeviceListResponse,
   WGHub,
+  WGHubListResponse,
   WGHubResponse,
   WGSiteListResponse,
   WGTokenCreateResponse,
   WGTokenListResponse,
 } from "../types/wg.js";
 
-// ---- hub ----
+// ---- hubs ----
 
-export async function fetchWGHub() {
-  return requestJson<WGHubResponse>("/api/admin/wg-hub");
+export async function listWGHubs() {
+  return requestJson<WGHubListResponse>("/api/admin/wg-hubs");
 }
 
-export async function updateWGHub(payload: Partial<WGHub>) {
-  return requestJson<WGHubResponse>("/api/admin/wg-hub", {
+export async function updateWGHub(id: number, payload: Partial<WGHub>) {
+  return requestJson<WGHubResponse>(`/api/admin/wg-hubs/${id}`, {
     method: "PUT",
     body: payload,
+  });
+}
+
+export async function deleteWGHub(id: number) {
+  return requestJson<{ ok: boolean; error?: string }>(`/api/admin/wg-hubs/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function resetWGHubBind(id: number) {
+  return requestJson<{ ok: boolean; error?: string }>(`/api/admin/wg-hubs/${id}/reset-bind`, {
+    method: "POST",
   });
 }
 
@@ -31,10 +44,32 @@ export async function listWGTokens() {
   return requestJson<WGTokenListResponse>("/api/admin/wg-tokens");
 }
 
-export async function createWGToken(label: string, ttlDays: number) {
+export async function createWGTokenForDevice(label: string, ttlDays: number, hubID: number) {
   return requestJson<WGTokenCreateResponse>("/api/admin/wg-tokens", {
     method: "POST",
-    body: { label, ttl_days: ttlDays },
+    body: { label, role: "device", ttl_days: ttlDays, hub_id: hubID },
+  });
+}
+
+export async function createWGTokenForHub(
+  label: string,
+  ttlDays: number,
+  hubSlug: string,
+  hubLabel: string,
+  publicEndpoint: string,
+  meshCIDR: string,
+) {
+  return requestJson<WGTokenCreateResponse>("/api/admin/wg-tokens", {
+    method: "POST",
+    body: {
+      label,
+      role: "hub",
+      ttl_days: ttlDays,
+      hub_slug: hubSlug,
+      hub_label: hubLabel,
+      public_endpoint: publicEndpoint,
+      mesh_cidr: meshCIDR,
+    },
   });
 }
 
@@ -69,7 +104,6 @@ export async function listWGBundles() {
   return requestJson<WGBundleListResponse>("/api/admin/wg-bundles");
 }
 
-// Multipart upload — raw fetch (matches uploadFirmware in api/library.ts).
 export async function uploadWGBundle(form: FormData): Promise<{ ok: boolean; status: number; data: WGBundleResponse }> {
   const resp = await fetch("/api/admin/wg-bundles/upload", {
     method: "POST",

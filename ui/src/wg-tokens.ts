@@ -1,23 +1,24 @@
-// /wg-tokens.html — admin UI for wg-mac join control plane.
+// /wg-tokens.html — Phase 2 admin UI for wg-mac multi-hub control plane.
 //
-// Three tabs:
-//   - 🔑 Tokens   — list, create (TTL + label), revoke; plaintext modal once
-//   - 💻 Devices  — list (with last-seen + endpoint), force-remove
-//   - 📦 Bundles  — list, upload (file + version + set_latest), mark-latest
-//
-// Plus a Hub config card above the tabs (configure pubkey/endpoint).
+// Tabs:
+//   - 🌐 Hubs     — list of all hubs (slug/label/endpoint/cidr/status/bound device)
+//   - 🔑 Tokens   — list + role-aware create modal + plaintext-once + revoke
+//   - 💻 Devices  — list with hub column + force-remove
+//   - 📦 Bundles  — list + upload + mark-latest
 
 import {
-  createWGToken,
+  createWGTokenForDevice,
+  createWGTokenForHub,
   deleteWGBundle,
-  fetchWGHub,
+  deleteWGHub,
   listWGBundles,
   listWGDevices,
+  listWGHubs,
   listWGTokens,
   removeWGDevice,
+  resetWGHubBind,
   revokeWGToken,
   setWGBundleLatest,
-  updateWGHub,
   uploadWGBundle,
 } from "./api/wg.js";
 import { logout } from "./api/session.js";
@@ -29,34 +30,32 @@ import type { WGBundle, WGDevice, WGHub, WGToken } from "./types/wg.js";
 initStoredTheme();
 bindThemeSync();
 
-const logoutBtn = byId<HTMLButtonElement>("logoutBtn");
-logoutBtn?.addEventListener("click", async () => {
+byId<HTMLButtonElement>("logoutBtn")?.addEventListener("click", async () => {
   await logout();
   window.location.href = "/login.html";
 });
-
 void hydrateSiteBrand();
 void hydrateSidebarFoot();
 
 // ---- tabs ----
 
-const tabs = ["tokens", "devices", "bundles"] as const;
+const tabs = ["hubs", "tokens", "devices", "bundles"] as const;
 type TabKey = (typeof tabs)[number];
 
 function switchTab(target: TabKey): void {
   tabs.forEach((t) => {
-    const btn = byId<HTMLButtonElement>(`tab${t.charAt(0).toUpperCase() + t.slice(1)}`);
-    const pane = byId<HTMLElement>(`pane${t.charAt(0).toUpperCase() + t.slice(1)}`);
-    if (btn) btn.classList.toggle("lp-tab-active", t === target);
+    const cap = t.charAt(0).toUpperCase() + t.slice(1);
+    byId<HTMLButtonElement>(`tab${cap}`)?.classList.toggle("lp-tab-active", t === target);
+    const pane = byId<HTMLElement>(`pane${cap}`);
     if (pane) pane.hidden = t !== target;
   });
 }
 tabs.forEach((t) => {
-  const btn = byId<HTMLButtonElement>(`tab${t.charAt(0).toUpperCase() + t.slice(1)}`);
-  btn?.addEventListener("click", () => switchTab(t));
+  const cap = t.charAt(0).toUpperCase() + t.slice(1);
+  byId<HTMLButtonElement>(`tab${cap}`)?.addEventListener("click", () => switchTab(t));
 });
 
-// ---- shared formatters ----
+// ---- formatters ----
 
 function fmtRelative(iso?: string): string {
   if (!iso) return "—";
@@ -76,86 +75,100 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-// ---- Hub card ----
+// ---- shared state ----
 
-const hubInfo = byId<HTMLElement>("hubInfo");
-const hubStatusBadge = byId<HTMLElement>("hubStatusBadge");
-const hubNotConfiguredWarning = byId<HTMLElement>("hubNotConfiguredWarning");
-const hubRefreshBtn = byId<HTMLButtonElement>("hubRefreshBtn");
-const hubConfigBtn = byId<HTMLButtonElement>("hubConfigBtn");
-const hubModal = byId<HTMLElement>("hubModal");
-const hubCloseBtn = byId<HTMLButtonElement>("hubCloseBtn");
-const hubCancelBtn = byId<HTMLButtonElement>("hubCancelBtn");
-const hubSaveBtn = byId<HTMLButtonElement>("hubSaveBtn");
-const hubPubkey = byId<HTMLInputElement>("hubPubkey");
-const hubEndpoint = byId<HTMLInputElement>("hubEndpoint");
-const hubWGIP = byId<HTMLInputElement>("hubWGIP");
-const hubMeshCIDR = byId<HTMLInputElement>("hubMeshCIDR");
-const hubKeepalive = byId<HTMLInputElement>("hubKeepalive");
-const hubRefresh = byId<HTMLInputElement>("hubRefresh");
-const hubError = byId<HTMLElement>("hubError");
+let hubsCache: WGHub[] = [];
 
-let currentHub: WGHub | null = null;
+// ---- Hubs tab ----
 
-async function refreshHub(): Promise<void> {
-  try {
-    const { data } = await fetchWGHub();
-    currentHub = data.hub ?? null;
-    const configured = !!data.configured;
-    hubStatusBadge.textContent = configured ? "✓ 已配置" : "⚠ 未配置";
-    hubStatusBadge.style.color = configured ? "" : "var(--danger, #c00)";
-    hubNotConfiguredWarning.hidden = configured;
-    if (currentHub) {
-      hubInfo.innerHTML = `
-        <div><strong>Pubkey:</strong> <code>${currentHub.pubkey || "—"}</code></div>
-        <div><strong>Endpoint:</strong> <code>${currentHub.endpoint || "—"}</code></div>
-        <div><strong>Hub wg IP:</strong> <code>${currentHub.wg_ip}</code> · <strong>Mesh CIDR:</strong> <code>${currentHub.mesh_cidr}</code></div>
-        <div><strong>Keepalive:</strong> ${currentHub.keepalive_sec}s · <strong>Refresh:</strong> ${currentHub.refresh_sec}s</div>
-      `;
-    }
-  } catch (err) {
-    hubInfo.textContent = `加载失败：${(err as Error).message}`;
-  }
+const hubsTable = byId<HTMLTableElement>("hubsTable");
+const hubsTbody = byId<HTMLTableSectionElement>("hubsTbody");
+const hubsEmpty = byId<HTMLElement>("hubsEmpty");
+const hubsSummary = byId<HTMLElement>("hubsSummary");
+const hubsRefreshBtn = byId<HTMLButtonElement>("hubsRefreshBtn");
+
+function hubStatus(h: WGHub): string {
+  if (h.bound_device_id) return `🟢 已绑定 dev#${h.bound_device_id}`;
+  if (h.endpoint) return "⚠ 等待 hub install";
+  return "⚪ 未配置";
 }
 
-function openHubModal(): void {
-  if (currentHub) {
-    hubPubkey.value = currentHub.pubkey;
-    hubEndpoint.value = currentHub.endpoint;
-    hubWGIP.value = currentHub.wg_ip;
-    hubMeshCIDR.value = currentHub.mesh_cidr;
-    hubKeepalive.value = String(currentHub.keepalive_sec);
-    hubRefresh.value = String(currentHub.refresh_sec);
-  }
-  hubError.textContent = "";
-  hubModal.hidden = false;
-}
-function closeHubModal(): void {
-  hubModal.hidden = true;
-}
-
-hubRefreshBtn?.addEventListener("click", () => void refreshHub());
-hubConfigBtn?.addEventListener("click", openHubModal);
-hubCloseBtn?.addEventListener("click", closeHubModal);
-hubCancelBtn?.addEventListener("click", closeHubModal);
-
-hubSaveBtn?.addEventListener("click", async () => {
-  hubError.textContent = "";
-  try {
-    await updateWGHub({
-      pubkey: hubPubkey.value.trim(),
-      endpoint: hubEndpoint.value.trim(),
-      wg_ip: hubWGIP.value.trim() || "10.88.0.1",
-      mesh_cidr: hubMeshCIDR.value.trim() || "10.88.0.0/16",
-      keepalive_sec: Number(hubKeepalive.value) || 25,
-      refresh_sec: Number(hubRefresh.value) || 300,
+function renderHubRow(h: WGHub): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  const cells = [
+    `<code>${h.slug}</code>`,
+    h.label || "—",
+    `<code>${h.endpoint || "—"}</code>`,
+    `<code>${h.mesh_cidr}</code>`,
+    hubStatus(h),
+    h.bound_device_id ? `<a href="#" data-jump-device="${h.bound_device_id}">dev#${h.bound_device_id}</a>` : "—",
+  ];
+  cells.forEach((html) => {
+    const td = document.createElement("td");
+    td.innerHTML = html;
+    tr.appendChild(td);
+  });
+  const cellActions = document.createElement("td");
+  cellActions.style.whiteSpace = "nowrap";
+  if (h.bound_device_id) {
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "btn-inline btn-secondary";
+    resetBtn.textContent = "解绑";
+    resetBtn.title = "清掉 pubkey + bound_device_id，下个 hub token 可以重新接管";
+    resetBtn.style.marginRight = "4px";
+    resetBtn.addEventListener("click", async () => {
+      if (!window.confirm(`解绑 hub "${h.slug}"？现有设备的 peer list 仍指向已绑定设备的旧 pubkey。`)) return;
+      try {
+        await resetWGHubBind(h.id);
+        await refreshHubs();
+      } catch (err) {
+        window.alert((err as Error).message);
+      }
     });
-    closeHubModal();
-    await refreshHub();
-  } catch (err) {
-    hubError.textContent = `保存失败：${(err as Error).message}`;
+    cellActions.appendChild(resetBtn);
   }
-});
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "btn-inline btn-secondary";
+  delBtn.textContent = "🗑";
+  delBtn.addEventListener("click", async () => {
+    if (!window.confirm(`删除 hub "${h.slug}"？必须先清掉它下面所有活跃设备。`)) return;
+    try {
+      const { data } = await deleteWGHub(h.id);
+      if (data.error) {
+        window.alert(data.error);
+        return;
+      }
+      await refreshHubs();
+    } catch (err) {
+      window.alert((err as Error).message);
+    }
+  });
+  cellActions.appendChild(delBtn);
+  tr.appendChild(cellActions);
+  return tr;
+}
+
+async function refreshHubs(): Promise<void> {
+  try {
+    const { data } = await listWGHubs();
+    const items = data.hubs ?? [];
+    hubsCache = items;
+    hubsTbody.innerHTML = "";
+    items.forEach((h) => hubsTbody.appendChild(renderHubRow(h)));
+    hubsSummary.textContent = `${items.length} 个`;
+    hubsTable.hidden = items.length === 0;
+    hubsEmpty.hidden = items.length !== 0;
+    // Keep token-create hub dropdown in sync.
+    syncTokenCreateHubDropdown();
+  } catch (err) {
+    hubsEmpty.hidden = false;
+    hubsEmpty.textContent = `加载失败：${(err as Error).message}`;
+  }
+}
+
+hubsRefreshBtn?.addEventListener("click", () => void refreshHubs());
 
 // ---- Tokens tab ----
 
@@ -174,12 +187,53 @@ const createTokenLabel = byId<HTMLInputElement>("createTokenLabel");
 const createTokenTTL = byId<HTMLInputElement>("createTokenTTL");
 const createTokenError = byId<HTMLElement>("createTokenError");
 
+const roleDeviceFields = byId<HTMLElement>("roleDeviceFields");
+const roleHubFields = byId<HTMLElement>("roleHubFields");
+const createTokenHubId = byId<HTMLSelectElement>("createTokenHubId");
+const createTokenHubSlug = byId<HTMLInputElement>("createTokenHubSlug");
+const createTokenHubLabel = byId<HTMLInputElement>("createTokenHubLabel");
+const createTokenPublicEndpoint = byId<HTMLInputElement>("createTokenPublicEndpoint");
+const createTokenMeshCidr = byId<HTMLInputElement>("createTokenMeshCidr");
+
 const plaintextModal = byId<HTMLElement>("plaintextModal");
 const plaintextValue = byId<HTMLInputElement>("plaintextValue");
 const plaintextCopyBtn = byId<HTMLButtonElement>("plaintextCopyBtn");
 const plaintextInstallCmd = byId<HTMLTextAreaElement>("plaintextInstallCmd");
 const plaintextInstallCopyBtn = byId<HTMLButtonElement>("plaintextInstallCopyBtn");
 const plaintextDoneBtn = byId<HTMLButtonElement>("plaintextDoneBtn");
+
+function selectedTokenRole(): "hub" | "device" {
+  const checked = document.querySelector<HTMLInputElement>('input[name="tokenRole"]:checked');
+  return (checked?.value as "hub" | "device") || "device";
+}
+
+function syncTokenCreateHubDropdown(): void {
+  createTokenHubId.innerHTML = "";
+  if (hubsCache.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "—— 先创建一个 role=hub token ——";
+    opt.disabled = true;
+    createTokenHubId.appendChild(opt);
+    return;
+  }
+  for (const h of hubsCache) {
+    const opt = document.createElement("option");
+    opt.value = String(h.id);
+    opt.textContent = `${h.slug}${h.label ? ` (${h.label})` : ""} · ${h.mesh_cidr}${h.bound_device_id ? "" : " ⚠未上线"}`;
+    if (!h.bound_device_id) opt.disabled = true;
+    createTokenHubId.appendChild(opt);
+  }
+}
+
+function onRoleChange(): void {
+  const role = selectedTokenRole();
+  roleDeviceFields.hidden = role !== "device";
+  roleHubFields.hidden = role !== "hub";
+}
+document.querySelectorAll<HTMLInputElement>('input[name="tokenRole"]').forEach((r) => {
+  r.addEventListener("change", onRoleChange);
+});
 
 function tokenStatusText(tok: WGToken): string {
   if (tok.revoked_at) return `🔴 已撤销 ${fmtRelative(tok.revoked_at)}`;
@@ -190,16 +244,22 @@ function tokenStatusText(tok: WGToken): string {
   return "🟢 待使用";
 }
 
+function hubLabelByID(id?: number): string {
+  if (!id) return "—";
+  const h = hubsCache.find((x) => x.id === id);
+  return h ? h.slug : `#${id}`;
+}
+
 function renderTokenRow(tok: WGToken): HTMLTableRowElement {
   const tr = document.createElement("tr");
   if (tok.revoked_at) tr.style.opacity = "0.5";
-
   const cells = [
     tok.label,
+    tok.role === "hub" ? `🌐 hub` : `💻 device`,
+    hubLabelByID(tok.hub_id),
     `<code style="font-size:11px;">${tok.token_prefix}…</code>`,
     tok.expires_at ? new Date(tok.expires_at).toISOString().slice(0, 10) : "永久",
     tokenStatusText(tok),
-    tok.consumed_by_device_id ? `#${tok.consumed_by_device_id}` : "—",
     fmtRelative(tok.created_at),
   ];
   cells.forEach((html) => {
@@ -247,6 +307,12 @@ function openCreateTokenModal(): void {
   createTokenLabel.value = "";
   createTokenTTL.value = "90";
   createTokenError.textContent = "";
+  createTokenHubSlug.value = "";
+  createTokenHubLabel.value = "";
+  createTokenPublicEndpoint.value = "";
+  createTokenMeshCidr.value = "10.88.0.0/24";
+  syncTokenCreateHubDropdown();
+  onRoleChange();
   createTokenModal.hidden = false;
   createTokenLabel.focus();
 }
@@ -258,6 +324,9 @@ newTokenBtn?.addEventListener("click", openCreateTokenModal);
 createTokenCloseBtn?.addEventListener("click", closeCreateTokenModal);
 createTokenCancelBtn?.addEventListener("click", closeCreateTokenModal);
 tokensRefreshBtn?.addEventListener("click", () => void refreshTokens());
+createTokenModal?.addEventListener("click", (e) => {
+  if (e.target === createTokenModal) closeCreateTokenModal();
+});
 
 createTokenSubmitBtn?.addEventListener("click", async () => {
   createTokenError.textContent = "";
@@ -267,8 +336,32 @@ createTokenSubmitBtn?.addEventListener("click", async () => {
     return;
   }
   const ttl = Number(createTokenTTL.value) || 0;
+  const role = selectedTokenRole();
   try {
-    const { data } = await createWGToken(label, ttl);
+    let resp;
+    if (role === "hub") {
+      const slug = createTokenHubSlug.value.trim();
+      const hubLabel = createTokenHubLabel.value.trim();
+      const endpoint = createTokenPublicEndpoint.value.trim();
+      const cidr = createTokenMeshCidr.value.trim() || "10.88.0.0/24";
+      if (!slug) {
+        createTokenError.textContent = "hub slug 必填";
+        return;
+      }
+      if (!endpoint) {
+        createTokenError.textContent = "public endpoint 必填 (e.g. west.example.com:51820)";
+        return;
+      }
+      resp = await createWGTokenForHub(label, ttl, slug, hubLabel, endpoint, cidr);
+    } else {
+      const hubID = Number(createTokenHubId.value);
+      if (!hubID) {
+        createTokenError.textContent = "请选一个 hub";
+        return;
+      }
+      resp = await createWGTokenForDevice(label, ttl, hubID);
+    }
+    const { data } = resp;
     if (data.error || !data.token?.plaintext) {
       createTokenError.textContent = data.error || "服务器没返回 plaintext";
       return;
@@ -280,6 +373,7 @@ createTokenSubmitBtn?.addEventListener("click", async () => {
     plaintextInstallCmd.value = `curl -sSL ${origin}/v1/install | sudo bash -s -- --token=${plaintext}`;
     plaintextModal.hidden = false;
     await refreshTokens();
+    await refreshHubs();
   } catch (err) {
     createTokenError.textContent = `创建失败：${(err as Error).message}`;
   }
@@ -323,6 +417,7 @@ function renderDeviceRow(dev: WGDevice): HTMLTableRowElement {
   const cells: string[] = [
     `<code style="font-size:11px;">${dev.device_id}</code>`,
     dev.hostname || "—",
+    dev.hub_slug || `#${dev.hub_id}`,
     dev.site_slug || `#${dev.site_id}`,
     `<code>${dev.device_ip}</code>`,
     dev.wg_endpoint ? `<code>${dev.wg_endpoint}</code>` : "—",
@@ -346,6 +441,7 @@ function renderDeviceRow(dev: WGDevice): HTMLTableRowElement {
       try {
         await removeWGDevice(dev.id);
         await refreshDevices();
+        await refreshHubs();
       } catch (err) {
         window.alert(`下线失败：${(err as Error).message}`);
       }
@@ -482,6 +578,9 @@ uploadBundleBtn?.addEventListener("click", openUploadBundleModal);
 uploadBundleCloseBtn?.addEventListener("click", closeUploadBundleModal);
 uploadBundleCancelBtn?.addEventListener("click", closeUploadBundleModal);
 bundlesRefreshBtn?.addEventListener("click", () => void refreshBundles());
+uploadBundleModal?.addEventListener("click", (e) => {
+  if (e.target === uploadBundleModal) closeUploadBundleModal();
+});
 
 uploadBundleSubmitBtn?.addEventListener("click", async () => {
   uploadBundleError.textContent = "";
@@ -517,13 +616,11 @@ uploadBundleSubmitBtn?.addEventListener("click", async () => {
 
 // ---- initial load + polling ----
 
-void refreshHub();
+void refreshHubs();
 void refreshTokens();
 void refreshDevices();
 void refreshBundles();
 
-// Refresh the devices tab every 15s so heartbeat freshness updates
-// without a manual click. Tokens + bundles change rarely.
 window.setInterval(() => {
   if (!byId<HTMLElement>("paneDevices").hidden) {
     void refreshDevices();

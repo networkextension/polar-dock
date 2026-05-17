@@ -889,6 +889,74 @@ button:hover {
   display: flex;
 }
 
+/* lp-modal — alternative modal flavor used by /proxy-tokens, /library,
+   /wg-tokens. Same fixed-overlay shape as .modal but toggled via the
+   HTML `hidden` attribute (handlers set .hidden = true/false rather
+   than swapping a .open class). [hidden] above wins via !important. */
+.lp-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 12px;
+  background: var(--overlay, rgba(0, 0, 0, 0.5));
+  z-index: 60;
+  overflow-y: auto;
+}
+
+.lp-modal-card {
+  position: relative;
+  width: min(92vw, 520px);
+  max-height: calc(100vh - 48px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lp-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.lp-modal-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.lp-modal-close {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--muted, #888);
+  font-size: 18px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.lp-modal-close:hover { background: var(--secondary-bg, rgba(0,0,0,0.05)); }
+
+.lp-modal-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+.lp-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
 .modal-backdrop {
   position: absolute;
   inset: 0;
