@@ -663,6 +663,24 @@ func (s *Server) registerRoutes() {
 	// Public discovery / "App 广场" — lists all apps that opted in to is_public.
 	s.router.GET("/iosdist/plaza", s.handleIOSPublicPlaza)
 
+	// wg-mac join control plane (see doc/JOIN_PROTOCOL.md). All /v1/*
+	// routes are unauthenticated at the gin layer; /v1/register
+	// validates the join token in-handler, /v1/peers + heartbeat +
+	// leave + token/refresh validate the bearer device-token also
+	// in-handler. /v1/install + /v1/bundle are intentionally public.
+	v1 := s.router.Group("/v1")
+	{
+		v1.POST("/register", s.handleWGRegister)
+		v1.GET("/peers", s.handleWGPeers)
+		v1.POST("/heartbeat", s.handleWGHeartbeat)
+		v1.POST("/leave", s.handleWGLeave)
+		v1.POST("/token/refresh", s.handleWGTokenRefresh)
+		v1.GET("/install", s.handleWGInstallScript)
+		v1.GET("/install/:version", s.handleWGInstallScript)
+		v1.GET("/bundle", s.handleWGBundleLatest)
+		v1.GET("/bundle/:version", s.handleWGBundleDownload)
+	}
+
 	api := s.router.Group("/api")
 	{
 		api.POST("/register", s.handleRegister)
@@ -728,6 +746,20 @@ func (s *Server) registerRoutes() {
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.
 		api.POST("/proxy/v1/chat/completions", s.handleLLMProxyChatCompletions)
+		// wg-mac join admin (see doc/JOIN_PROTOCOL.md). Public /v1/*
+		// counterparts are wired at the root router below.
+		api.GET("/admin/wg-hub", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubGet)
+		api.PUT("/admin/wg-hub", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubUpdate)
+		api.GET("/admin/wg-tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGTokenList)
+		api.POST("/admin/wg-tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGTokenCreate)
+		api.DELETE("/admin/wg-tokens/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGTokenRevoke)
+		api.GET("/admin/wg-devices", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGDeviceList)
+		api.DELETE("/admin/wg-devices/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGDeviceRemove)
+		api.GET("/admin/wg-sites", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGSiteList)
+		api.GET("/admin/wg-bundles", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleList)
+		api.POST("/admin/wg-bundles/upload", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleUpload)
+		api.PUT("/admin/wg-bundles/:id/latest", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleSetLatest)
+		api.DELETE("/admin/wg-bundles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleDelete)
 		// Public system-info endpoint — intentionally no auth so
 		// deploy tooling can probe a fresh box. See sysinfo.go for
 		// what's exposed vs not.
