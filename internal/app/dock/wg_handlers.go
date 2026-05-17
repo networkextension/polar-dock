@@ -115,26 +115,37 @@ func (s *Server) handleWGRegister(c *gin.Context) {
 	}
 	res, err := s.allocateWGDevice(c.Request.Context(), in)
 	if err != nil {
+		result := "error"
 		switch {
 		case errors.Is(err, errWGTokenInvalid), errors.Is(err, errWGTokenExpired), errors.Is(err, errWGTokenRevoked), errors.Is(err, errWGTokenNoHub):
+			result = "invalid_token"
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_token"})
 		case errors.Is(err, errWGTokenAlreadyBound):
+			result = "token_already_bound"
 			c.JSON(http.StatusConflict, gin.H{"error": "token_already_bound"})
 		case errors.Is(err, errWGPubkeyTaken):
+			result = "pubkey_already_registered"
 			c.JSON(http.StatusConflict, gin.H{"error": "pubkey_already_registered"})
 		case errors.Is(err, errWGHubAlreadyBound):
+			result = "hub_already_bound"
 			c.JSON(http.StatusConflict, gin.H{"error": "hub_already_bound"})
 		case errors.Is(err, errWGHubNotConfigured):
+			result = "hub_not_configured"
 			c.JSON(http.StatusFailedDependency, gin.H{"error": "hub_not_configured", "hint": "ask operator to run the role=hub install first"})
 		case errors.Is(err, errWGSiteExhausted), errors.Is(err, errWGSiteSlotsExhausted):
+			result = "site_exhausted"
 			c.JSON(http.StatusInsufficientStorage, gin.H{"error": err.Error()})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "register failed: " + err.Error()})
 		}
+		// role is unknown on early-token-validation failures; report as
+		// "unknown" so the dashboard still ticks the total.
+		s.metricsRegistry.recordWGRegister("unknown", result)
 		return
 	}
 	resp, err := s.buildPeerListResponse(res.Device, res.Hub)
 	if err != nil {
+		s.metricsRegistry.recordWGRegister(res.Role, "error")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "peer list: " + err.Error()})
 		return
 	}
@@ -142,6 +153,7 @@ func (s *Server) handleWGRegister(c *gin.Context) {
 	resp.Role = res.Role
 	resp.Token = res.PlaintextToken
 	resp.TokenExpires = res.TokenExpiresAt
+	s.metricsRegistry.recordWGRegister(res.Role, "ok")
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -357,10 +369,16 @@ func (s *Server) handleWGHeartbeat(c *gin.Context) {
 		rec.TXBytes = req.Stats.TXBytes
 		rec.LastHandshakeSec = req.Stats.LastHandshakeSec
 	}
+	hubSlug := ""
+	if hub, _ := s.getWGHubByID(dev.HubID); hub != nil {
+		hubSlug = hub.Slug
+	}
 	if err := s.insertWGHeartbeat(rec, time.Now().UTC()); err != nil {
+		s.metricsRegistry.recordWGHeartbeat(hubSlug, "error")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "heartbeat: " + err.Error()})
 		return
 	}
+	s.metricsRegistry.recordWGHeartbeat(hubSlug, "ok")
 	c.Status(http.StatusOK)
 }
 
@@ -435,7 +453,7 @@ func (s *Server) handleWGInstallScript(c *gin.Context) {
 	// actual CIDR for this device is the hub it joins (set at register).
 	// Use the first hub's mesh_cidr as a sensible default for the
 	// script comment; fall back to the canonical default.
-	meshCIDR := "10.88.0.0/24"
+	meshCIDR := "100.64.0.0/24"
 	if hubs, err := s.listWGHubs(); err == nil && len(hubs) > 0 {
 		meshCIDR = hubs[0].MeshCIDR
 	}

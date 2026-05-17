@@ -210,8 +210,8 @@
             </div>
             <div class="settings-section-card" style="margin-bottom: 8px;">
               <label class="settings-section-title" for="createTokenMeshCidr">Mesh CIDR</label>
-              <input id="createTokenMeshCidr" class="input" type="text" value="10.88.0.0/24" />
-              <div class="meta-subtitle" style="margin-top:4px;">Hub 自动拿 .1，设备从 .2 开始分配。默认 /24 支持 253 台。</div>
+              <input id="createTokenMeshCidr" class="input" type="text" placeholder="留空 = 服务端自动从 100.64.0.0/10 选个空闲 /24" />
+              <div class="meta-subtitle" style="margin-top:4px;">默认走 RFC 6598 CGNAT 段（不撞家里 10.x / 192.168.x 内网）。Hub 自动拿 .1，设备从 .2 起；253 台/hub。可改成 10.x 但要自己保证不撞。</div>
             </div>
           </div>
 

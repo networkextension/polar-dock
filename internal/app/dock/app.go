@@ -673,6 +673,8 @@ func (s *Server) registerRoutes() {
 		v1.POST("/register", s.handleWGRegister)
 		v1.GET("/peers", s.handleWGPeers)
 		v1.GET("/hub/peers", s.handleWGHubPeers)
+		v1.GET("/dns/:hub_slug", s.handleWGDNSZone)
+		v1.GET("/dns", s.handleWGDNSZone)
 		v1.POST("/heartbeat", s.handleWGHeartbeat)
 		v1.POST("/leave", s.handleWGLeave)
 		v1.POST("/token/refresh", s.handleWGTokenRefresh)

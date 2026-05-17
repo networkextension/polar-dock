@@ -127,7 +127,7 @@ func (s *Server) createWGHub(slug, label, publicEndpoint, meshCIDR string) (*WGH
 		return nil, errors.New("hub slug required")
 	}
 	if meshCIDR == "" {
-		meshCIDR = "10.88.0.0/24"
+		meshCIDR = "100.64.0.0/24"
 	}
 	wgIP, err := hubWGIPFromCIDR(meshCIDR)
 	if err != nil {
@@ -184,10 +184,10 @@ func (s *Server) updateWGHub(h *WGHub, now time.Time) (*WGHub, error) {
 		return nil, errors.New("nil hub")
 	}
 	if h.WGIP == "" {
-		h.WGIP = "10.88.0.1"
+		h.WGIP = "100.64.0.1"
 	}
 	if h.MeshCIDR == "" {
-		h.MeshCIDR = "10.88.0.0/24"
+		h.MeshCIDR = "100.64.0.0/24"
 	}
 	if h.KeepaliveSec <= 0 {
 		h.KeepaliveSec = 25
@@ -230,6 +230,39 @@ func (s *Server) deleteWGHub(id int64) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// suggestFreeMeshCIDR returns the lowest unused /24 from RFC 6598
+// CGNAT (100.64.0.0/10), iterating 100.64.0.0/24 → 100.64.1.0/24 →
+// … → 100.127.255.0/24. CGNAT is reserved for carrier-grade NAT,
+// virtually never appears in home/office LANs, so mesh traffic
+// doesn't fight with 10.x/172.16.x/192.168.x routes on the device.
+// Tailscale uses the same range; we deliberately pick non-colliding
+// /24s rather than reusing slots inside one /16.
+func (s *Server) suggestFreeMeshCIDR() (string, error) {
+	rows, err := s.db.Query(`SELECT mesh_cidr FROM wg_hubs`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	used := make(map[string]bool)
+	for rows.Next() {
+		var cidr string
+		if err := rows.Scan(&cidr); err != nil {
+			return "", err
+		}
+		used[strings.TrimSpace(cidr)] = true
+	}
+	// 100.64.0.0/10 spans 100.64.0.0 .. 100.127.255.255.
+	for x := 64; x <= 127; x++ {
+		for y := 0; y <= 255; y++ {
+			c := fmt.Sprintf("100.%d.%d.0/24", x, y)
+			if !used[c] {
+				return c, nil
+			}
+		}
+	}
+	return "", errors.New("no free /24 in 100.64.0.0/10 (impossible: 16K slots)")
 }
 
 // hubWGIPFromCIDR derives the canonical hub IP (network address + 1)
@@ -397,6 +430,10 @@ func (s *Server) createWGTokenForDevice(label, createdByUserID string, hubID int
 // wg_hubs row (so device tokens can target it before the hub goes
 // live). The hub row starts with pubkey="" and is "configured" only
 // after the corresponding /v1/register call binds a device.
+//
+// If meshCIDR is empty, picks the lowest unused /24 from the RFC 6598
+// CGNAT range 100.64.0.0/10 to avoid colliding with the operator's
+// existing 10.x / 172.16.x / 192.168.x LANs.
 func (s *Server) createWGTokenForHub(label, createdByUserID, hubSlug, hubLabel, publicEndpoint, meshCIDR string, expiresAt *time.Time, now time.Time) (*WGToken, *WGHub, error) {
 	label = strings.TrimSpace(label)
 	if label == "" {
@@ -411,7 +448,11 @@ func (s *Server) createWGTokenForHub(label, createdByUserID, hubSlug, hubLabel, 
 		return nil, nil, errors.New("public_endpoint required for role=hub (e.g. west.example.com:51820)")
 	}
 	if meshCIDR == "" {
-		meshCIDR = "10.88.0.0/24"
+		picked, err := s.suggestFreeMeshCIDR()
+		if err != nil {
+			return nil, nil, fmt.Errorf("suggest mesh_cidr: %w", err)
+		}
+		meshCIDR = picked
 	}
 	if _, err := parseMeshCIDR(meshCIDR); err != nil {
 		return nil, nil, fmt.Errorf("invalid mesh_cidr: %w", err)

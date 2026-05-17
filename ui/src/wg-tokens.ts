@@ -322,7 +322,7 @@ function openCreateTokenModal(): void {
   createTokenHubSlug.value = "";
   createTokenHubLabel.value = "";
   createTokenPublicEndpoint.value = "";
-  createTokenMeshCidr.value = "10.88.0.0/24";
+  createTokenMeshCidr.value = "";
   syncTokenCreateHubDropdown();
   onRoleChange();
   createTokenModal.hidden = false;
@@ -355,7 +355,7 @@ createTokenSubmitBtn?.addEventListener("click", async () => {
       const slug = createTokenHubSlug.value.trim();
       const hubLabel = createTokenHubLabel.value.trim();
       const endpoint = createTokenPublicEndpoint.value.trim();
-      const cidr = createTokenMeshCidr.value.trim() || "10.88.0.0/24";
+      const cidr = createTokenMeshCidr.value.trim();  // empty → server picks from 100.64/10
       if (!slug) {
         createTokenError.textContent = "hub slug 必填";
         return;
