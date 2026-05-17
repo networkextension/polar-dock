@@ -743,6 +743,8 @@ func (s *Server) registerRoutes() {
 		api.GET("/library/firmwares/matching", s.AuthMiddleware(), s.handleRevFirmwareMatching)
 		api.GET("/library/firmwares/:id", s.AuthMiddleware(), s.handleRevFirmwareGet)
 		api.POST("/library/firmwares", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFirmwareCreate)
+		api.POST("/library/firmwares/upload", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFirmwareUpload)
+		api.GET("/library/firmwares/:id/download", s.AuthMiddleware(), s.handleRevFirmwareDownload)
 		api.DELETE("/library/firmwares/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFirmwareDelete)
 		api.GET("/library/functions", s.AuthMiddleware(), s.handleRevFunctionList)
 		api.GET("/library/functions/lookup-by-address", s.AuthMiddleware(), s.handleRevFunctionLookupByAddress)

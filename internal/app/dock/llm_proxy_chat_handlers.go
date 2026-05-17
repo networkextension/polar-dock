@@ -50,10 +50,18 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 
 	// 2) Parse body.
 	var req struct {
-		Model     string                    `json:"model"`
-		Messages  []aiChatCompletionMessage `json:"messages" binding:"required"`
-		MaxTokens int                       `json:"max_tokens,omitempty"`
-		Stream    bool                      `json:"stream,omitempty"`
+		Model              string                    `json:"model"`
+		Messages           []aiChatCompletionMessage `json:"messages" binding:"required"`
+		MaxTokens          int                       `json:"max_tokens,omitempty"`
+		Stream             bool                      `json:"stream,omitempty"`
+		// chat_template_kwargs is the vLLM/SGLang escape hatch
+		// for provider-specific generation flags. Most-common use:
+		// Qwen-3 family clients pass {"enable_thinking": false} to
+		// suppress the thinking trace (5-10x speedup, much shorter
+		// completions). We forward verbatim; the proxy doesn't
+		// validate the inner keys because they're model-specific
+		// and change between releases.
+		ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		openAIError(c, http.StatusBadRequest, "invalid_request_error", "bad json body: "+err.Error())
@@ -143,9 +151,10 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		Endpoint:      "llm_proxy",
 	}
 	payload := aiChatCompletionRequest{
-		Model:     cfg.Model,
-		Messages:  req.Messages,
-		MaxTokens: req.MaxTokens,
+		Model:              cfg.Model,
+		Messages:           req.Messages,
+		MaxTokens:          req.MaxTokens,
+		ChatTemplateKwargs: req.ChatTemplateKwargs,
 	}
 	if req.Stream {
 		s.streamLLMProxyChatCompletion(c, tok, cfg, runtimeConfig, payload, req.Model, start)
