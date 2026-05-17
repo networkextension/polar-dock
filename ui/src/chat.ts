@@ -1511,6 +1511,11 @@ function autoResizeMessageInput(): void {
   messageInput.style.overflowY = messageInput.scrollHeight > MESSAGE_INPUT_MAX_HEIGHT ? "auto" : "hidden";
 }
 messageInput.addEventListener("input", autoResizeMessageInput);
+// Run once on init so the textarea collapses to one line immediately
+// instead of using the browser's default rows="1" height (which on
+// most engines is line-height × 1 + padding without considering our
+// box-sizing override → looks too tall).
+autoResizeMessageInput();
 
 // Enter sends, Shift+Enter inserts a newline. IME composition is left alone
 // so picking a candidate doesn't accidentally submit the half-typed message.

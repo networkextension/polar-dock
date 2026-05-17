@@ -2729,7 +2729,7 @@ textarea:not(.xterm-helper-textarea) {
   background: var(--surface-strong);
   border: 1px solid var(--border);
   border-radius: 22px;
-  padding: 6px 8px 6px 10px;
+  padding: 4px 8px 4px 10px;
 }
 
 .message-attach-btn {
@@ -2844,14 +2844,16 @@ textarea:not(.xterm-helper-textarea) {
   background: transparent;
   border: none;
   box-shadow: none;
-  padding: 6px 4px;
-  font: inherit;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 14px;
   color: var(--text);
   resize: none;
-  line-height: 1.5;
-  min-height: 24px;
+  line-height: 1.4;
+  min-height: 20px;
   max-height: 168px;
   overflow-y: hidden;
+  box-sizing: border-box;
 }
 
 .message-input::placeholder {
