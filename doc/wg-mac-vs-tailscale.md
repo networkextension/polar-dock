@@ -79,7 +79,7 @@ Tailscale 在**产品深度**上完胜——NAT 穿透、ACL、MagicDNS、多端
 | 9 | **完整 NAT 穿透（STUN + 双向连接尝试）** | 极高 | 协议级；客户端做 endpoint 候选探测；服务端 collate；~3000+ LOC，工程量大半年 | 低 | **不做**。这是 Tailscale 公司核心 IP，自己做要付出极大代价但回报有限——直接告诉用户"hub 公网 IP 必备" |
 | 10 | **Linux 客户端** | 中 | C 核 + Android JNI 已经把 stub 路径走通了，Linux 只需要一个 daemon 壳（select+TUN）+ JOIN 客户端；不像我之前以为的"整套新移植"。~800 LOC | 中 | **可做**（看是否需要把 Linux 服务器 / NAS 接入 mesh）|
 | 10b | **Win 客户端** | 极高 | 跟 Linux 不同，没有 stub 预留，要重做 wintun + Windows service + GUI | 低 | **不做** |
-| 11 | **Headscale 兼容层** | 极高 | 拿 TS 协议（CapVer 100+），出一个 `polar headscale-mode` 假装是 Headscale → 让 TS 客户端能连 | 低 | **不做**。直接劝用户上 Headscale，别趟这浑水 |
+| 11 | **Tailscale 客户端兼容（vendor Headscale）** | 高（8-10 周 / ~1.7K LOC + 大量 vendor 体积） | vendor `juanfont/headscale` 入 Polar dock；映射 wg_tokens ↔ PreAuthKey、wg_hubs ↔ namespace；操作员把 `--login-server=https://our.example` 一改，原版 Tailscale 客户端直接加入我们的 mesh。设计：[`doc/wg-mac-tailscale-compat-design.md`](./wg-mac-tailscale-compat-design.md) | **极高** | **做**（决策已翻转 2026-05-18）。产品定位升级为"自托管 Headscale + 我们自己的 macOS 客户端"双轨——TS 客户端拉新最低摩擦，wg-mac 走苹果生态深度集成（Swift NE）差异化 |
 | 12 | **wg_devices.metrics → Prometheus** | 低 | gauge `polar_wg_devices_alive{hub}`、histogram bandwidth；接 grafana ~100 LOC | 中 | **做**。运维体感巨大提升，便宜 |
 | 13 | **bundle 签名（minisign / cosign）** | 中 | 上传时存 signature；install.sh 验证；~150 LOC + key 管理 | 低 | **看安全要求**。当前 HTTPS 已经挡 MITM，签名只挡 dock 被入侵后的供应链攻击 |
 | 14 | **stale device GC** | 低 | 后台 goroutine，`last_seen_at > 7d` 自动 mark removed；~50 LOC | 低 | **做**。一次性写完省心 |
