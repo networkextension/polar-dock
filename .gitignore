@@ -16,6 +16,7 @@ diary/
 /dist/
 doc/memo.md
 doc/posts.json
+doc/wg_cloud.md
 *.terminal
 ai.env
 cf.env

@@ -250,13 +250,25 @@ function hubLabelByID(id?: number): string {
   return h ? h.slug : `#${id}`;
 }
 
+// hubCellForToken — for hub tokens, show slug + the operator-stamped
+// public endpoint + mesh CIDR (these are what the operator entered at
+// token-mint time; once bound, they're also the row in 🌐 Hubs tab).
+// For device tokens, just the slug.
+function hubCellForToken(tok: WGToken): string {
+  const slug = hubLabelByID(tok.hub_id);
+  if (tok.role !== "hub") return slug;
+  const ep = tok.public_endpoint ? `<br><code style="font-size:11px;">${tok.public_endpoint}</code>` : "";
+  const cidr = tok.mesh_cidr_pref ? ` <span class="meta-subtitle">${tok.mesh_cidr_pref}</span>` : "";
+  return `${slug}${ep}${cidr}`;
+}
+
 function renderTokenRow(tok: WGToken): HTMLTableRowElement {
   const tr = document.createElement("tr");
   if (tok.revoked_at) tr.style.opacity = "0.5";
   const cells = [
     tok.label,
     tok.role === "hub" ? `🌐 hub` : `💻 device`,
-    hubLabelByID(tok.hub_id),
+    hubCellForToken(tok),
     `<code style="font-size:11px;">${tok.token_prefix}…</code>`,
     tok.expires_at ? new Date(tok.expires_at).toISOString().slice(0, 10) : "永久",
     tokenStatusText(tok),
