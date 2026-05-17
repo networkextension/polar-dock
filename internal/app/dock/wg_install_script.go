@@ -113,6 +113,10 @@ PYLAN
 
 # --- 5. register ---
 echo "==> registering with control plane"
+# Export BEFORE the python heredoc so the child process inherits the
+# env. (Originally placed below; python ran first and KeyError'd on
+# 'TOKEN'.)
+export TOKEN PUB HOSTNAME_REPORT OS_RAW ARCH AGENT_VER LAN_JSON WG_LISTEN SITE_SLUG SERVER MESH_CIDR PRIV
 REGISTER_BODY=$(python3 - <<PYREG
 import json, os
 print(json.dumps({
@@ -128,7 +132,6 @@ print(json.dumps({
 }))
 PYREG
 )
-export TOKEN PUB HOSTNAME_REPORT OS_RAW ARCH AGENT_VER LAN_JSON WG_LISTEN SITE_SLUG SERVER MESH_CIDR PRIV
 RESP=$(curl -fsSL -X POST "$SERVER/v1/register" \
     -H 'Content-Type: application/json' \
     -d "$REGISTER_BODY")
