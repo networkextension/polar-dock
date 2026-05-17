@@ -2861,6 +2861,92 @@ CREATE TABLE IF NOT EXISTS wg_heartbeats (
     lan_addrs_json JSONB
 );
 CREATE INDEX IF NOT EXISTS ix_wg_heartbeats_device_ts ON wg_heartbeats(device_id, received_at DESC);
+
+-- ============================================================
+-- wg-mac Phase 2 — multi-hub + role-aware tokens.
+-- See doc/JOIN_PROTOCOL.md §2 v0.2 and doc/playbook.md §12.
+--
+-- Migration shape:
+--   - wg_hub (singleton) → wg_hubs (plural). Existing singleton row,
+--     if non-empty, becomes a "default" hub. The empty Phase-1
+--     singleton stays in the schema for now; a future PR drops it.
+--   - Token mint workflow grows: role + hub_id + (hub-only)
+--     public_endpoint + mesh_cidr.
+--   - wg_devices + wg_sites get hub_id FK.
+--   - Wipe wg_devices/wg_sites/wg_heartbeats per user choice (clean
+--     state; bundles preserved).
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS wg_hubs (
+    id BIGSERIAL PRIMARY KEY,
+    slug TEXT UNIQUE NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    pubkey TEXT NOT NULL DEFAULT '',
+    endpoint TEXT NOT NULL DEFAULT '',
+    wg_ip TEXT NOT NULL DEFAULT '10.88.0.1',
+    mesh_cidr TEXT NOT NULL DEFAULT '10.88.0.0/24',
+    keepalive_sec INT NOT NULL DEFAULT 25,
+    refresh_sec INT NOT NULL DEFAULT 300,
+    bound_device_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Backfill: if Phase 1's wg_hub singleton had non-empty config,
+-- materialize it as the "default" hub. Empty Phase-1 row is skipped.
+INSERT INTO wg_hubs (slug, label, pubkey, endpoint, wg_ip, mesh_cidr, keepalive_sec, refresh_sec, updated_at)
+SELECT 'default', 'default hub (migrated from Phase 1)', pubkey, endpoint, wg_ip, mesh_cidr, keepalive_sec, refresh_sec, updated_at
+FROM wg_hub
+WHERE id = 1 AND pubkey <> ''
+ON CONFLICT (slug) DO NOTHING;
+
+-- One-shot wipe of device-side state. Bundles + tokens preserved.
+-- wg_devices clears via TRUNCATE; wg_sites was already without data
+-- before Phase 2 in the migration target, but DELETE is idempotent.
+TRUNCATE wg_heartbeats RESTART IDENTITY CASCADE;
+TRUNCATE wg_devices RESTART IDENTITY CASCADE;
+DELETE FROM wg_sites;
+
+-- Token columns. New mints carry the full Phase 2 shape; legacy
+-- pre-migration tokens get role='device' + NULL hub_id and are auto-
+-- revoked so they can't be redeemed (they were unusable anyway since
+-- no hub was bound).
+ALTER TABLE wg_tokens
+    ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'device',
+    ADD COLUMN IF NOT EXISTS hub_id BIGINT REFERENCES wg_hubs(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS public_endpoint TEXT,
+    ADD COLUMN IF NOT EXISTS mesh_cidr_pref TEXT;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'wg_tokens_role_check'
+    ) THEN
+        ALTER TABLE wg_tokens
+            ADD CONSTRAINT wg_tokens_role_check CHECK (role IN ('hub', 'device'));
+    END IF;
+END$$;
+
+-- Revoke any pre-Phase-2 tokens (hub_id IS NULL was always required
+-- for device tokens; hub tokens didn't exist).
+UPDATE wg_tokens SET revoked_at = COALESCE(revoked_at, now())
+WHERE hub_id IS NULL AND role = 'device';
+
+-- Device + site columns. hub_id required for new inserts; legacy
+-- rows already wiped, so NOT NULL can be enforced after backfill.
+ALTER TABLE wg_devices ADD COLUMN IF NOT EXISTS hub_id BIGINT REFERENCES wg_hubs(id) ON DELETE CASCADE;
+ALTER TABLE wg_sites   ADD COLUMN IF NOT EXISTS hub_id BIGINT REFERENCES wg_hubs(id) ON DELETE CASCADE;
+
+-- Relax index-range constraints so hub (d_index=1, s_index=0) is allowed.
+ALTER TABLE wg_sites   DROP CONSTRAINT IF EXISTS wg_sites_s_index_check;
+ALTER TABLE wg_sites   DROP CONSTRAINT IF EXISTS wg_sites_s_idx_range;
+ALTER TABLE wg_sites   ADD  CONSTRAINT wg_sites_s_idx_range CHECK (s_index BETWEEN 0 AND 254);
+ALTER TABLE wg_devices DROP CONSTRAINT IF EXISTS wg_devices_d_index_check;
+ALTER TABLE wg_devices DROP CONSTRAINT IF EXISTS wg_devices_d_idx_range;
+ALTER TABLE wg_devices ADD  CONSTRAINT wg_devices_d_idx_range CHECK (d_index BETWEEN 1 AND 254);
+
+CREATE INDEX IF NOT EXISTS ix_wg_devices_hub ON wg_devices(hub_id) WHERE removed_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_wg_sites_hub ON wg_sites(hub_id);
+CREATE INDEX IF NOT EXISTS ix_wg_tokens_hub ON wg_tokens(hub_id);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

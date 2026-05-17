@@ -366,32 +366,36 @@ UI: `/proxy-tokens.html` → token 行 → "审计" → 看是哪个 model 在�
 
 ---
 
-## 12. WG Mesh 入网管理
+## 12. WG Mesh 入网管理（Phase 2：多 hub + role-aware token）
 
 `wg-mac` mesh 是 tailscale 风格的 wireguard 控制面：管理员发 token，
-操作员在新机上跑一行 `curl … | sudo bash`，10 秒后设备拿到
-`10.88.<S>.<D>/32` wg IP，加入 mesh。设计文档见
+操作员在新机上跑一行 `curl … | sudo bash`，10 秒内设备入网。
+Phase 2 支持多 mesh（"西部区" / "东南区" …），每个 mesh 有自己的
+hub + CIDR；token 在创建时绑定到目标 hub。设计：
 [`doc/JOIN_PROTOCOL.md`](./JOIN_PROTOCOL.md)。
 
-### 12.1 一次性准备（hub 未上线之前）
+### 12.1 一次性准备
 
 UI：登录后 sidebar → 🔐 WG Mesh。
 
-1. **Hub 卡片**：填 `pubkey` + `endpoint`（hub 主机的 wg 公钥 + 公网
-   `host:port`）。在 hub 物理上线之前可以先填占位，Phase 1 控制面
-   单测不依赖 hub 真的能拨通。
-2. **📦 Bundles 标签**：上传第一个 wg-mac tar.gz，勾选 "立即标记 latest"。
-   `install.sh` 会从 `/v1/bundle/<latest_version>` 下载这个包。
+1. **📦 Bundles** 标签：上传 wg-mac tar.gz，勾选 "立即标记 latest"。
+2. **🔑 Tokens** 标签 → `+ 新建 Token`，**role 选 `Hub`**，填：
+   - hub slug（URL-safe，e.g. `west`）
+   - hub label（显示用，e.g. `西部区`）
+   - **公网 endpoint** (`host:port`，e.g. `west.example.com:51820`)
+   - mesh CIDR（默认 `10.88.0.0/24`；253 台设备/hub）
+3. 拿到 plaintext token，在 hub 机上跑安装命令。10 秒后该 hub 在
+   🌐 Hubs 标签里从 "⚠ 等待 hub install" 变成 "🟢 已绑定"。
 
-### 12.2 发 token
+### 12.2 发 device token
 
-UI：🔑 Tokens → `+ 新建 Token`：
+UI：🔑 Tokens → `+ 新建 Token`，**role 选 `device`**：
 
-- 标签（freeform，e.g. `yarshure-mac`）
+- 标签 (freeform，e.g. `yarshure-mac`)
+- 目标 hub（dropdown，只列已上线的 hub）
 - TTL 天数（默认 90，0 = 永不过期）
 
-提交后弹 plaintext bearer **只显示一次**，附一行已拼好的安装命令，
-直接复制给操作员。
+提交后弹 plaintext bearer，**只显示一次**，附拼好的安装命令。
 
 ### 12.3 操作员一行装机
 
@@ -410,11 +414,12 @@ curl -sSL https://zen.4950.store/v1/install | sudo bash -s -- --token=<plaintext
 
 | 症状 | 路径 |
 |---|---|
-| `--token=… invalid_token` | token 已被别的设备绑定/撤销，新发一个 |
-| `pubkey_already_registered` | 同 pubkey 换设备装机；先 `🔑 撤销` 旧 token 或在 💻 Devices 强制下线旧记录 |
-| 设备一直在 "⚪ 从未上报" | wgctl-agent launchd 没起；ssh 上去 `tail /var/log/wgctl-agent.log` |
-| Peers 列表只有 hub | 同 site 没别的设备；或者别的设备 `last_seen_at > 24h` 被过滤了 |
-| `409 sha256 already exists` | 上传 bundle 时 sha 已在；不需要重复上传，复用现有 version |
+| `invalid_token` | token 被撤销/过期/未绑定 hub；重新发 |
+| `hub_not_configured` | 目标 hub 还没上线 (admin 没跑 role=hub 安装)；先把 hub 装好 |
+| `hub_already_bound` | 该 hub 已被别的 device 占了；在 🌐 Hubs 标签点 "解绑" 后再装 |
+| `pubkey_already_registered` | 同 pubkey 换设备；先撤销旧 token 或强制下线旧设备 |
+| Peers 列表只有 hub | 同 site 暂时只有这一台；属正常 |
+| `409 sha256 already exists` | bundle 已上传过；复用现有 version 即可 |
 
 ### 12.5 API quick-ref
 
@@ -422,11 +427,13 @@ curl -sSL https://zen.4950.store/v1/install | sudo bash -s -- --token=<plaintext
 
 ```
 POST /v1/register         body: {token, pubkey, hostname, os, arch, lan_addrs, wg_listen}
-GET  /v1/peers            headers: Authorization: Bearer <device-token>, X-Device-Id: <dev_…>
-POST /v1/heartbeat        同上 + body: {wg_endpoint, lan_addrs, stats}
-POST /v1/leave            同上
+                          → response 含 role ("hub" | "device") + hub 信息
+GET  /v1/peers            Bearer device-token + X-Device-Id (per-hub scope)
+GET  /v1/hub/peers        Bearer hub-device-token + X-Device-Id (hub-only)
+POST /v1/heartbeat        同 /v1/peers
+POST /v1/leave            同上；hub 自身 leave 会清空 wg_hubs.pubkey
 POST /v1/token/refresh    同上 → 返回新 plaintext
-GET  /v1/install          → text/x-shellscript，server 已 baked-in
+GET  /v1/install          → text/x-shellscript
 GET  /v1/bundle           → 302 /v1/bundle/<latest>
 GET  /v1/bundle/:version  → application/gzip
 ```
@@ -434,25 +441,32 @@ GET  /v1/bundle/:version  → application/gzip
 管理面（cookie + admin）：
 
 ```
-GET/PUT /api/admin/wg-hub                       hub 配置 / configured?
+GET     /api/admin/wg-hubs                      hub 列表 (多 hub)
+PUT     /api/admin/wg-hubs/:id                  改 label/endpoint/cidr
+DELETE  /api/admin/wg-hubs/:id                  删 (必须先清空 devices)
+POST    /api/admin/wg-hubs/:id/reset-bind       解绑 hub (清 pubkey)
 GET     /api/admin/wg-tokens                    列表
-POST    /api/admin/wg-tokens                    body: {label, ttl_days}
-DELETE  /api/admin/wg-tokens/:id                撤销（绑定不变）
-GET     /api/admin/wg-devices?include_removed=1 列表
-DELETE  /api/admin/wg-devices/:id               强制下线
-GET     /api/admin/wg-sites                     站点列表 + 设备数
+POST    /api/admin/wg-tokens                    body: {label, role, ttl_days,
+                                                  // role=device:
+                                                  hub_id,
+                                                  // role=hub:
+                                                  hub_slug, hub_label, public_endpoint, mesh_cidr}
+DELETE  /api/admin/wg-tokens/:id                撤销 (绑定不变)
+GET     /api/admin/wg-devices?include_removed=1 列表 (含 hub_slug 列)
+DELETE  /api/admin/wg-devices/:id               强制下线 (hub 自动 reset)
+GET     /api/admin/wg-sites                     站点列表 (per-hub)
 GET     /api/admin/wg-bundles                   列表
 POST    /api/admin/wg-bundles/upload            multipart: file + version? + notes? + set_latest=1
 PUT     /api/admin/wg-bundles/:id/latest        切 latest
-DELETE  /api/admin/wg-bundles/:id               删（含 blob unlink）
+DELETE  /api/admin/wg-bundles/:id               删 (含 blob unlink)
 ```
 
 ### 12.6 设计 / 代码参考
 
 - 设计：`doc/JOIN_PROTOCOL.md`
-- Schema：`internal/app/dock/store.go`（`wg_hub` / `wg_sites` / `wg_tokens` / `wg_devices` / `wg_bundles` / `wg_heartbeats`）
+- Schema：`internal/app/dock/store.go`（`wg_hubs` / `wg_sites` / `wg_tokens` / `wg_devices` / `wg_bundles` / `wg_heartbeats`）
 - 控制面：`internal/app/dock/wg_handlers.go`
-- 分配器：`internal/app/dock/wg_alloc.go`（SERIALIZABLE txn + retry once）
+- 分配器：`internal/app/dock/wg_alloc.go`（role-aware，SERIALIZABLE txn + retry once）
 - Bundle 上传：`internal/app/dock/wg_bundle_handlers.go`（sha256 dedup + 路径围栏）
 - install.sh：`internal/app/dock/wg_install_script.go`
 - UI：`ui/public/wg-tokens.html` + `ui/src/wg-tokens.ts`

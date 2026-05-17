@@ -1,16 +1,17 @@
 package dock
 
-// HTTP layer for wg-mac join control plane.
+// HTTP layer for wg-mac Phase 2 join control plane.
 //
 // Public /v1/* — see JOIN_PROTOCOL.md §2:
-//   POST /v1/register         token-in-body auth
-//   GET  /v1/peers            Bearer device-token + X-Device-Id
+//   POST /v1/register         token-in-body auth → returns role + hub info
+//   GET  /v1/peers            Bearer device-token + X-Device-Id (per-hub scope)
+//   GET  /v1/hub/peers        Bearer hub-device-token + X-Device-Id (hub-only)
 //   POST /v1/heartbeat        Bearer device-token + X-Device-Id
-//   POST /v1/leave            Bearer device-token + X-Device-Id
+//   POST /v1/leave            Bearer device-token + X-Device-Id (hub → also clears wg_hubs.pubkey)
 //   POST /v1/token/refresh    Bearer device-token + X-Device-Id
 //   GET  /v1/install          unauthenticated
 //   GET  /v1/install/:version unauthenticated
-//   GET  /v1/bundle           unauthenticated (302 to /v1/bundle/<latest>)
+//   GET  /v1/bundle           unauthenticated
 //   GET  /v1/bundle/:version  unauthenticated
 //
 // Admin /api/admin/wg-* — AuthMiddleware + AdminMiddleware.
@@ -29,8 +30,6 @@ import (
 // ---- helpers ----
 
 func wgServerBaseURL(c *gin.Context) string {
-	// Prefer X-Forwarded-Proto / Host so curl-bash users get a URL
-	// that matches what they're hitting through nginx.
 	scheme := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto"))
 	if scheme == "" {
 		if c.Request.TLS != nil {
@@ -46,22 +45,18 @@ func wgServerBaseURL(c *gin.Context) string {
 	return scheme + "://" + host
 }
 
-func wgBundleBlobDir(s *Server) string {
-	return s.uploadDir + "/wg-bundles"
-}
-
 // ---- /v1/register ----
 
 type wgRegisterRequest struct {
-	Token     string      `json:"token" binding:"required"`
-	Pubkey    string      `json:"pubkey" binding:"required"`
-	Hostname  string      `json:"hostname"`
-	OS        string      `json:"os"`
-	Arch      string      `json:"arch"`
-	AgentVer  string      `json:"agent_ver"`
-	LANAddrs  []WGLanAddr `json:"lan_addrs"`
-	WGListen  int         `json:"wg_listen"`
-	SiteSlug  string      `json:"site_slug"`
+	Token    string      `json:"token" binding:"required"`
+	Pubkey   string      `json:"pubkey" binding:"required"`
+	Hostname string      `json:"hostname"`
+	OS       string      `json:"os"`
+	Arch     string      `json:"arch"`
+	AgentVer string      `json:"agent_ver"`
+	LANAddrs []WGLanAddr `json:"lan_addrs"`
+	WGListen int         `json:"wg_listen"`
+	SiteSlug string      `json:"site_slug"`
 }
 
 type wgPeerResponse struct {
@@ -74,6 +69,7 @@ type wgPeerResponse struct {
 }
 
 type wgHubResponse struct {
+	Slug     string `json:"slug"`
 	Pubkey   string `json:"pubkey"`
 	Endpoint string `json:"endpoint"`
 	WGIP     string `json:"wg_ip"`
@@ -83,12 +79,14 @@ type wgRegisterResponse struct {
 	DeviceID     string           `json:"device_id"`
 	DeviceIP     string           `json:"device_ip"`
 	SiteSlug     string           `json:"site_id"`
+	HubSlug      string           `json:"hub_slug"`
+	Role         string           `json:"role"` // "hub" | "device"
 	MeshCIDR     string           `json:"mesh_cidr"`
 	Hub          wgHubResponse    `json:"hub"`
 	Peers        []wgPeerResponse `json:"peers"`
 	KeepaliveSec int              `json:"keepalive_sec"`
 	RefreshSec   int              `json:"refresh_sec"`
-	Token        string           `json:"token"`
+	Token        string           `json:"token,omitempty"`
 	TokenExpires *time.Time       `json:"token_expires,omitempty"`
 }
 
@@ -118,12 +116,16 @@ func (s *Server) handleWGRegister(c *gin.Context) {
 	res, err := s.allocateWGDevice(c.Request.Context(), in)
 	if err != nil {
 		switch {
-		case errors.Is(err, errWGTokenInvalid), errors.Is(err, errWGTokenExpired), errors.Is(err, errWGTokenRevoked):
+		case errors.Is(err, errWGTokenInvalid), errors.Is(err, errWGTokenExpired), errors.Is(err, errWGTokenRevoked), errors.Is(err, errWGTokenNoHub):
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_token"})
 		case errors.Is(err, errWGTokenAlreadyBound):
 			c.JSON(http.StatusConflict, gin.H{"error": "token_already_bound"})
 		case errors.Is(err, errWGPubkeyTaken):
 			c.JSON(http.StatusConflict, gin.H{"error": "pubkey_already_registered"})
+		case errors.Is(err, errWGHubAlreadyBound):
+			c.JSON(http.StatusConflict, gin.H{"error": "hub_already_bound"})
+		case errors.Is(err, errWGHubNotConfigured):
+			c.JSON(http.StatusFailedDependency, gin.H{"error": "hub_not_configured", "hint": "ask operator to run the role=hub install first"})
 		case errors.Is(err, errWGSiteExhausted), errors.Is(err, errWGSiteSlotsExhausted):
 			c.JSON(http.StatusInsufficientStorage, gin.H{"error": err.Error()})
 		default:
@@ -131,24 +133,13 @@ func (s *Server) handleWGRegister(c *gin.Context) {
 		}
 		return
 	}
-	// Re-fetch site so we have its slug (re-register path may not populate).
-	siteSlug := res.Device.SiteSlug
-	if siteSlug == "" {
-		if sites, err := s.listWGSites(); err == nil {
-			for _, s := range sites {
-				if s.ID == res.Device.SiteID {
-					siteSlug = s.Slug
-					break
-				}
-			}
-		}
-	}
-	resp, err := s.buildPeerListResponse(res.Device, siteSlug)
+	resp, err := s.buildPeerListResponse(res.Device, res.Hub)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "peer list: " + err.Error()})
 		return
 	}
 	resp.DeviceID = res.Device.DeviceID
+	resp.Role = res.Role
 	resp.Token = res.PlaintextToken
 	resp.TokenExpires = res.TokenExpiresAt
 	c.JSON(http.StatusOK, resp)
@@ -156,9 +147,6 @@ func (s *Server) handleWGRegister(c *gin.Context) {
 
 // ---- /v1/peers ----
 
-// extractDeviceBearer returns the bearer device-token + X-Device-Id
-// from the request. On missing/invalid auth, writes an error response
-// and returns (nil, false).
 func (s *Server) extractDeviceBearer(c *gin.Context) (*WGDevice, bool) {
 	raw := extractBearerToken(c)
 	if raw == "" {
@@ -195,16 +183,12 @@ func (s *Server) handleWGPeers(c *gin.Context) {
 	if !ok {
 		return
 	}
-	siteSlug := ""
-	if sites, err := s.listWGSites(); err == nil {
-		for _, st := range sites {
-			if st.ID == dev.SiteID {
-				siteSlug = st.Slug
-				break
-			}
-		}
+	hub, err := s.getWGHubByID(dev.HubID)
+	if err != nil || hub == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "hub lookup failed"})
+		return
 	}
-	resp, err := s.buildPeerListResponse(dev, siteSlug)
+	resp, err := s.buildPeerListResponse(dev, hub)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -212,12 +196,11 @@ func (s *Server) handleWGPeers(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// buildPeerListResponse computes the per-device peer list per
-// JOIN_PROTOCOL §5.
-func (s *Server) buildPeerListResponse(dev *WGDevice, siteSlug string) (*wgRegisterResponse, error) {
-	hub, err := s.getWGHub()
-	if err != nil {
-		return nil, fmt.Errorf("hub: %w", err)
+// buildPeerListResponse computes the per-device peer list scoped to
+// the device's hub. LAN-direct peers (same site) + hub peer.
+func (s *Server) buildPeerListResponse(dev *WGDevice, hub *WGHub) (*wgRegisterResponse, error) {
+	if hub == nil {
+		return nil, fmt.Errorf("nil hub")
 	}
 	lanPeers, err := s.listWGDevicesInSite(dev.SiteID, dev.ID)
 	if err != nil {
@@ -239,29 +222,34 @@ func (s *Server) buildPeerListResponse(dev *WGDevice, siteSlug string) (*wgRegis
 			Hostname: p.Hostname,
 		})
 	}
-	// Hub entry.
-	otherIdx, err := s.otherSiteIndices(dev.SiteID)
-	if err != nil {
-		return nil, fmt.Errorf("other site indices: %w", err)
+	// Hub peer (only if hub is bound AND caller isn't the hub itself).
+	if hub.Configured() && (hub.BoundDeviceID == nil || *hub.BoundDeviceID != dev.ID) {
+		otherIdx, err := s.otherSiteIndicesInHub(hub.ID, dev.SiteID)
+		if err != nil {
+			return nil, fmt.Errorf("other site indices: %w", err)
+		}
+		allowedExtra := make([]string, 0, len(otherIdx)+1)
+		// Hub's own /24 (computed from mesh_cidr's network address).
+		if mesh, err := parseMeshCIDR(hub.MeshCIDR); err == nil {
+			allowedExtra = append(allowedExtra, mesh.ipnet.String())
+		}
+		_ = otherIdx // multi-/24 hub allocation deferred to a future PR
+		peerOut = append(peerOut, wgPeerResponse{
+			Pubkey:       hub.Pubkey,
+			WGIP:         hub.WGIP,
+			Endpoint:     hub.Endpoint,
+			SiteSlug:     "hub",
+			AllowedExtra: allowedExtra,
+		})
 	}
-	allowedExtra := make([]string, 0, len(otherIdx)+1)
-	allowedExtra = append(allowedExtra, "10.88.0.0/24")
-	for _, idx := range otherIdx {
-		allowedExtra = append(allowedExtra, fmt.Sprintf("10.88.%d.0/24", idx))
-	}
-	peerOut = append(peerOut, wgPeerResponse{
-		Pubkey:       hub.Pubkey,
-		WGIP:         hub.WGIP,
-		Endpoint:     hub.Endpoint,
-		SiteSlug:     "hub",
-		AllowedExtra: allowedExtra,
-	})
 	return &wgRegisterResponse{
 		DeviceID:     dev.DeviceID,
 		DeviceIP:     dev.DeviceIP,
-		SiteSlug:     siteSlug,
+		SiteSlug:     dev.SiteSlug,
+		HubSlug:      hub.Slug,
 		MeshCIDR:     hub.MeshCIDR,
 		Hub: wgHubResponse{
+			Slug:     hub.Slug,
 			Pubkey:   hub.Pubkey,
 			Endpoint: hub.Endpoint,
 			WGIP:     hub.WGIP,
@@ -273,13 +261,68 @@ func (s *Server) buildPeerListResponse(dev *WGDevice, siteSlug string) (*wgRegis
 	}, nil
 }
 
-// firstLANIP extracts the IP portion of a "192.168.1.5/24" CIDR. Used
-// to build the LAN-direct peer endpoint URL.
 func firstLANIP(cidr string) string {
 	if i := strings.Index(cidr, "/"); i > 0 {
 		return cidr[:i]
 	}
 	return cidr
+}
+
+// ---- /v1/hub/peers ----
+
+type wgHubPeerEntry struct {
+	Pubkey   string `json:"pubkey"`
+	WGIP     string `json:"wg_ip"` // includes /32
+	Hostname string `json:"hostname,omitempty"`
+}
+
+type wgHubPeersResponse struct {
+	Peers      []wgHubPeerEntry `json:"peers"`
+	Rev        string           `json:"rev"`
+	RefreshSec int              `json:"refresh_sec"`
+}
+
+func (s *Server) handleWGHubPeers(c *gin.Context) {
+	dev, ok := s.extractDeviceBearer(c)
+	if !ok {
+		return
+	}
+	hub, err := s.getWGHubByID(dev.HubID)
+	if err != nil || hub == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "hub lookup failed"})
+		return
+	}
+	// Caller MUST be the bound hub device.
+	if hub.BoundDeviceID == nil || *hub.BoundDeviceID != dev.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not the hub for this mesh"})
+		return
+	}
+	devices, err := s.listWGDevicesInHub(hub.ID, dev.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	peers := make([]wgHubPeerEntry, 0, len(devices))
+	var revTS time.Time
+	for _, d := range devices {
+		peers = append(peers, wgHubPeerEntry{
+			Pubkey:   d.Pubkey,
+			WGIP:     d.DeviceIP + "/32",
+			Hostname: d.Hostname,
+		})
+		if d.CreatedAt.After(revTS) {
+			revTS = d.CreatedAt
+		}
+		if d.LastSeenAt != nil && d.LastSeenAt.After(revTS) {
+			revTS = *d.LastSeenAt
+		}
+	}
+	rev := strconv.FormatInt(revTS.UnixNano(), 10) + "-" + strconv.Itoa(len(peers))
+	c.JSON(http.StatusOK, wgHubPeersResponse{
+		Peers:      peers,
+		Rev:        rev,
+		RefreshSec: hub.RefreshSec,
+	})
 }
 
 // ---- /v1/heartbeat ----
@@ -322,6 +365,10 @@ func (s *Server) handleWGHeartbeat(c *gin.Context) {
 }
 
 // ---- /v1/leave ----
+//
+// Per JOIN_PROTOCOL §2 v0.2: if the caller IS the hub for its mesh,
+// also clear wg_hubs.pubkey + bound_device_id so the next hub-token
+// register reclaims the slot.
 
 func (s *Server) handleWGLeave(c *gin.Context) {
 	dev, ok := s.extractDeviceBearer(c)
@@ -331,6 +378,13 @@ func (s *Server) handleWGLeave(c *gin.Context) {
 	if err := s.markWGDeviceRemoved(dev.ID, time.Now().UTC()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "leave: " + err.Error()})
 		return
+	}
+	hub, _ := s.getWGHubByID(dev.HubID)
+	if hub != nil && hub.BoundDeviceID != nil && *hub.BoundDeviceID == dev.ID {
+		if err := s.clearWGHubBind(hub.ID, time.Now().UTC()); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "clear hub: " + err.Error()})
+			return
+		}
 	}
 	c.Status(http.StatusOK)
 }
@@ -349,13 +403,8 @@ func (s *Server) handleWGTokenRefresh(c *gin.Context) {
 	}
 	plaintext, _ := newWGTokenPlaintext()
 	newHash := hashWGToken(plaintext)
-	// New token inherits the same TTL as the old one (sliding); if the
-	// old was non-expiring, the new one is too.
 	var newExpires *time.Time
 	if dev.TokenExpiresAt != nil {
-		// Slide by the same lifetime the old token had. Original
-		// lifetime is unknown, so default to 90 days for now —
-		// matches the JOIN_PROTOCOL §3 "issued for 90d" comment.
 		v := time.Now().UTC().Add(90 * 24 * time.Hour)
 		newExpires = &v
 	}
@@ -382,15 +431,18 @@ func (s *Server) handleWGInstallScript(c *gin.Context) {
 			version = latest.Version
 		}
 	}
-	hub, err := s.getWGHub()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "hub: " + err.Error()})
-		return
+	// Mesh CIDR baked into the script is informational only — the
+	// actual CIDR for this device is the hub it joins (set at register).
+	// Use the first hub's mesh_cidr as a sensible default for the
+	// script comment; fall back to the canonical default.
+	meshCIDR := "10.88.0.0/24"
+	if hubs, err := s.listWGHubs(); err == nil && len(hubs) > 0 {
+		meshCIDR = hubs[0].MeshCIDR
 	}
 	script, err := renderWGInstallScript(wgInstallScriptInput{
 		Server:        wgServerBaseURL(c),
 		BundleVersion: version,
-		MeshCIDR:      hub.MeshCIDR,
+		MeshCIDR:      meshCIDR,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "render: " + err.Error()})
@@ -401,20 +453,34 @@ func (s *Server) handleWGInstallScript(c *gin.Context) {
 	c.String(http.StatusOK, script)
 }
 
-// ---- admin: hub config ----
+// ---- admin: hubs (plural) ----
 
-func (s *Server) handleAdminWGHubGet(c *gin.Context) {
-	h, err := s.getWGHub()
+func (s *Server) handleAdminWGHubList(c *gin.Context) {
+	hubs, err := s.listWGHubs()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"hub": h, "configured": h.Configured()})
+	c.JSON(http.StatusOK, gin.H{"hubs": hubs})
 }
 
 func (s *Server) handleAdminWGHubUpdate(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	existing, err := s.getWGHubByID(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
+		return
+	}
+	if existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
 	var req struct {
-		Pubkey       string `json:"pubkey"`
+		Label        string `json:"label"`
 		Endpoint     string `json:"endpoint"`
 		WGIP         string `json:"wg_ip"`
 		MeshCIDR     string `json:"mesh_cidr"`
@@ -425,23 +491,58 @@ func (s *Server) handleAdminWGHubUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input"})
 		return
 	}
-	h := &WGHub{
-		Pubkey:       req.Pubkey,
-		Endpoint:     req.Endpoint,
-		WGIP:         req.WGIP,
-		MeshCIDR:     req.MeshCIDR,
-		KeepaliveSec: req.KeepaliveSec,
-		RefreshSec:   req.RefreshSec,
+	existing.Label = req.Label
+	existing.Endpoint = req.Endpoint
+	if req.WGIP != "" {
+		existing.WGIP = req.WGIP
 	}
-	out, err := s.updateWGHub(h, time.Now().UTC())
+	if req.MeshCIDR != "" {
+		existing.MeshCIDR = req.MeshCIDR
+	}
+	if req.KeepaliveSec > 0 {
+		existing.KeepaliveSec = req.KeepaliveSec
+	}
+	if req.RefreshSec > 0 {
+		existing.RefreshSec = req.RefreshSec
+	}
+	out, err := s.updateWGHub(existing, time.Now().UTC())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"hub": out, "configured": out.Configured()})
+	c.JSON(http.StatusOK, gin.H{"hub": out})
 }
 
-// ---- admin: tokens ----
+func (s *Server) handleAdminWGHubDelete(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	if err := s.deleteWGHub(id); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// Admin "reset hub binding" — clear pubkey + bound_device_id so a
+// fresh hub token can reclaim the slot without admin having to wait
+// for the bound device to /v1/leave.
+func (s *Server) handleAdminWGHubResetBind(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	if err := s.clearWGHubBind(id, time.Now().UTC()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ---- admin: tokens (role-aware) ----
 
 func (s *Server) handleAdminWGTokenList(c *gin.Context) {
 	toks, err := s.listWGTokens()
@@ -456,8 +557,16 @@ func (s *Server) handleAdminWGTokenCreate(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
 	var req struct {
-		Label     string `json:"label" binding:"required"`
-		TTLDays   int    `json:"ttl_days"`
+		Label   string `json:"label" binding:"required"`
+		Role    string `json:"role" binding:"required"`
+		TTLDays int    `json:"ttl_days"`
+		// role=device
+		HubID int64 `json:"hub_id"`
+		// role=hub
+		HubSlug        string `json:"hub_slug"`
+		HubLabel       string `json:"hub_label"`
+		PublicEndpoint string `json:"public_endpoint"`
+		MeshCIDR       string `json:"mesh_cidr"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input"})
@@ -468,15 +577,36 @@ func (s *Server) handleAdminWGTokenCreate(c *gin.Context) {
 		v := time.Now().UTC().Add(time.Duration(req.TTLDays) * 24 * time.Hour)
 		expiresAt = &v
 	}
-	tok, err := s.createWGToken(req.Label, userIDStr, expiresAt, time.Now().UTC())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	now := time.Now().UTC()
+	switch req.Role {
+	case "hub":
+		tok, hub, err := s.createWGTokenForHub(req.Label, userIDStr, req.HubSlug, req.HubLabel, req.PublicEndpoint, req.MeshCIDR, expiresAt, now)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"token":   tok,
+			"hub":     hub,
+			"warning": "plaintext 只显示一次，关闭后无法找回。请立即复制保存。",
+		})
+	case "device":
+		if req.HubID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "hub_id required for role=device"})
+			return
+		}
+		tok, err := s.createWGTokenForDevice(req.Label, userIDStr, req.HubID, expiresAt, now)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"token":   tok,
+			"warning": "plaintext 只显示一次，关闭后无法找回。请立即复制保存。",
+		})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "role must be 'hub' or 'device'"})
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"token":   tok,
-		"warning": "plaintext 只显示一次，关闭后无法找回。请立即复制保存。",
-	})
 }
 
 func (s *Server) handleAdminWGTokenRevoke(c *gin.Context) {
@@ -510,9 +640,23 @@ func (s *Server) handleAdminWGDeviceRemove(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
 		return
 	}
-	if err := s.markWGDeviceRemoved(id, time.Now().UTC()); err != nil {
+	dev, err := s.getWGDeviceByID(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
+		return
+	}
+	if dev == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
+	}
+	if err := s.markWGDeviceRemoved(id, time.Now().UTC()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
+		return
+	}
+	// If this was the hub device, clear hub binding too — admin
+	// force-remove implies the operator wants the slot reclaimable.
+	if hub, _ := s.getWGHubByID(dev.HubID); hub != nil && hub.BoundDeviceID != nil && *hub.BoundDeviceID == dev.ID {
+		_ = s.clearWGHubBind(hub.ID, time.Now().UTC())
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

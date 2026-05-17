@@ -15,7 +15,6 @@
           <img data-site-icon alt="" />
           <span class="lp-brand-name" data-site-name>Polar-</span>
         </a>
-
         <nav class="lp-nav">
           <a class="lp-nav-item" href="/dashboard.html"><span class="lp-nav-icon" data-icon="layout-dashboard">⊞</span><span>Dashboard</span></a>
           <a class="lp-nav-item" href="/teams.html"><span class="lp-nav-icon" data-icon="users-round">⌂</span><span>工作区</span></a>
@@ -26,7 +25,6 @@
           <a class="lp-nav-item" href="/system.html"><span class="lp-nav-icon" data-icon="cpu">⚙</span><span>系统信息</span></a>
           <a class="lp-nav-item" href="/admin.html" hidden data-admin-nav><span class="lp-nav-icon" data-icon="users-cog">☍</span><span>用户管理</span></a>
         </nav>
-
         <div class="lp-sidebar-foot">
           <div class="lp-foot-avatar" id="lpFootAvatar">A</div>
           <div class="lp-foot-info">
@@ -41,8 +39,9 @@
 
       <div class="lp-main">
         <div class="lp-topbar">
-          <span class="lp-topbar-title">WG Mesh · 入网管理</span>
+          <span class="lp-topbar-title">WG Mesh · 多 Hub 入网管理</span>
           <div class="lp-topbar-end" style="display:flex; gap:6px;">
+            <button class="lp-tab" data-tab="hubs" id="tabHubs">🌐 Hubs</button>
             <button class="lp-tab lp-tab-active" data-tab="tokens" id="tabTokens">🔑 Tokens</button>
             <button class="lp-tab" data-tab="devices" id="tabDevices">💻 Devices</button>
             <button class="lp-tab" data-tab="bundles" id="tabBundles">📦 Bundles</button>
@@ -51,20 +50,29 @@
 
         <div class="lp-content" style="padding: 12px; overflow-y:auto;">
 
-          <!-- Hub config card -->
-          <section class="lp-preview-main" style="margin-bottom: 12px;">
-            <div class="lp-preview-head">
-              <span class="badge">Hub</span>
-              <span id="hubStatusBadge" class="lp-mode-badge">—</span>
-              <span style="flex:1;"></span>
-              <button id="hubRefreshBtn" class="btn-inline btn-secondary" type="button">⟲</button>
-              <button id="hubConfigBtn" class="btn-inline btn-primary" type="button">⚙ 配置</button>
-            </div>
-            <div class="lp-preview-body">
-              <div id="hubInfo" class="meta-subtitle">加载中...</div>
-              <div id="hubNotConfiguredWarning" class="settings-section-card" style="margin-top:8px; border-color: var(--danger, #c00);" hidden>
-                <strong style="color: var(--danger, #c00);">⚠ Hub 未配置。</strong>
-                必须先填写 pubkey + endpoint，才能让设备拿到真正可用的 mesh peer 列表。Phase 1 假定 single-hub。
+          <!-- Hubs tab -->
+          <section id="paneHubs" class="lp-pane" hidden>
+            <div class="lp-preview-main">
+              <div class="lp-preview-head">
+                <span class="badge">Hub 列表</span>
+                <span id="hubsSummary" class="lp-mode-badge">—</span>
+                <span style="flex:1;"></span>
+                <button id="hubsRefreshBtn" class="btn-inline btn-secondary" type="button">⟲</button>
+              </div>
+              <div class="lp-preview-body">
+                <p class="meta-subtitle" style="margin: 0 0 12px 0;">
+                  Hub 通过在 🔑 Tokens 标签里创建 <code>role=hub</code> token 自动落库 ——
+                  填写 slug + 公网 endpoint + mesh CIDR ；操作员在 hub 机上跑 install.sh 后该 hub 才"上线"（pubkey 自动填入）。
+                </p>
+                <table id="hubsTable" class="lp-table" hidden>
+                  <thead>
+                    <tr><th>Slug</th><th>Label</th><th>Endpoint</th><th>Mesh CIDR</th><th>状态</th><th>绑定设备</th><th></th></tr>
+                  </thead>
+                  <tbody id="hubsTbody"></tbody>
+                </table>
+                <div id="hubsEmpty" class="meta-subtitle" hidden>
+                  暂无 hub。去 🔑 Tokens 标签 → 新建 token (role=hub) 创建第一个。
+                </div>
               </div>
             </div>
           </section>
@@ -87,7 +95,7 @@
                 <table id="tokensTable" class="lp-table" hidden>
                   <thead>
                     <tr>
-                      <th>标签</th><th>前缀</th><th>过期</th><th>状态</th><th>设备</th><th>创建</th><th></th>
+                      <th>标签</th><th>角色</th><th>Hub</th><th>前缀</th><th>过期</th><th>状态</th><th>创建</th><th></th>
                     </tr>
                   </thead>
                   <tbody id="tokensTbody"></tbody>
@@ -113,7 +121,7 @@
                 <table id="devicesTable" class="lp-table" hidden>
                   <thead>
                     <tr>
-                      <th>设备 ID</th><th>Hostname</th><th>站点</th><th>wg IP</th><th>Endpoint</th><th>Agent</th><th>最近心跳</th><th>状态</th><th></th>
+                      <th>设备 ID</th><th>Hostname</th><th>Hub</th><th>站点</th><th>wg IP</th><th>Endpoint</th><th>Agent</th><th>最近心跳</th><th>状态</th><th></th>
                     </tr>
                   </thead>
                   <tbody id="devicesTbody"></tbody>
@@ -135,14 +143,11 @@
               </div>
               <div class="lp-preview-body">
                 <p class="meta-subtitle" style="margin: 0 0 12px 0;">
-                  Bundle 是 wg-mac (wg_core + wgctl) 的 tar.gz，install.sh 会从 <code>/v1/bundle/&lt;version&gt;</code> 拉取。
-                  标记 <code>is_latest</code> 的版本是 <code>/v1/install</code> 默认 baked-in 的 BUNDLE_VERSION。
+                  Bundle 是 wg-mac (wg_core + wgctl) 的 tar.gz；install.sh 从 <code>/v1/bundle/&lt;version&gt;</code> 拉取。
                 </p>
                 <table id="bundlesTable" class="lp-table" hidden>
                   <thead>
-                    <tr>
-                      <th>Version</th><th>SHA</th><th>Size</th><th>Latest</th><th>Notes</th><th>Added</th><th></th>
-                    </tr>
+                    <tr><th>Version</th><th>SHA</th><th>Size</th><th>Latest</th><th>Notes</th><th>Added</th><th></th></tr>
                   </thead>
                   <tbody id="bundlesTbody"></tbody>
                 </table>
@@ -155,63 +160,61 @@
       </div>
     </div>
 
-    <!-- Hub config modal -->
-    <div id="hubModal" class="lp-modal" hidden>
-      <div class="lp-modal-card" style="max-width: 600px;">
-        <div class="lp-modal-head">
-          <span class="lp-modal-title">配置 Hub</span>
-          <button id="hubCloseBtn" type="button" class="lp-modal-close">✕</button>
-        </div>
-        <div class="lp-modal-body">
-          <div class="settings-section-card" style="margin-bottom: 8px;">
-            <label class="settings-section-title" for="hubPubkey">Hub Pubkey</label>
-            <input id="hubPubkey" class="input" type="text" style="font-family: ui-monospace, Menlo, monospace;" placeholder="DwyGEhX…=" />
-            <div class="meta-subtitle" style="margin-top:4px;">Hub 主机 <code>wg show wgc0 public-key</code> 的输出。</div>
-          </div>
-          <div class="settings-section-card" style="margin-bottom: 8px;">
-            <label class="settings-section-title" for="hubEndpoint">Endpoint</label>
-            <input id="hubEndpoint" class="input" type="text" placeholder="vpn.example.net:51820" />
-          </div>
-          <div class="settings-section-card" style="margin-bottom: 8px;">
-            <label class="settings-section-title" for="hubWGIP">Hub wg IP</label>
-            <input id="hubWGIP" class="input" type="text" value="10.88.0.1" />
-          </div>
-          <div class="settings-section-card" style="margin-bottom: 8px;">
-            <label class="settings-section-title" for="hubMeshCIDR">Mesh CIDR</label>
-            <input id="hubMeshCIDR" class="input" type="text" value="10.88.0.0/16" />
-          </div>
-          <div style="display:flex; gap:8px;">
-            <div class="settings-section-card" style="flex:1;">
-              <label class="settings-section-title" for="hubKeepalive">PersistentKeepalive (秒)</label>
-              <input id="hubKeepalive" class="input" type="number" min="0" value="25" />
-            </div>
-            <div class="settings-section-card" style="flex:1;">
-              <label class="settings-section-title" for="hubRefresh">Refresh (秒)</label>
-              <input id="hubRefresh" class="input" type="number" min="30" value="300" />
-            </div>
-          </div>
-          <div id="hubError" class="status-text" style="color: var(--danger, #c00); margin-top:8px;"></div>
-        </div>
-        <div class="lp-modal-foot">
-          <button id="hubCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
-          <button id="hubSaveBtn" type="button" class="btn-inline btn-primary">保存</button>
-        </div>
-      </div>
-    </div>
-
     <!-- Create token modal -->
     <div id="createTokenModal" class="lp-modal" hidden>
-      <div class="lp-modal-card" style="max-width: 480px;">
+      <div class="lp-modal-card" style="max-width: 560px;">
         <div class="lp-modal-head">
           <span class="lp-modal-title">新建入网 Token</span>
           <button id="createTokenCloseBtn" type="button" class="lp-modal-close">✕</button>
         </div>
         <div class="lp-modal-body">
           <div class="settings-section-card" style="margin-bottom: 8px;">
+            <div class="settings-section-title">角色</div>
+            <label style="display:inline-flex; gap:4px; align-items:center; margin-right: 16px;">
+              <input type="radio" name="tokenRole" value="device" checked /> 普通设备 (device)
+            </label>
+            <label style="display:inline-flex; gap:4px; align-items:center;">
+              <input type="radio" name="tokenRole" value="hub" /> Hub (老大哥)
+            </label>
+            <div class="meta-subtitle" style="margin-top:4px;">Hub 是 mesh 的中转节点，处理跨 LAN 转发。每个 mesh 至少需要一个 hub。</div>
+          </div>
+
+          <div class="settings-section-card" style="margin-bottom: 8px;">
             <label class="settings-section-title" for="createTokenLabel">标签</label>
             <input id="createTokenLabel" class="input" type="text" placeholder="e.g. yarshure-mac" />
-            <div class="meta-subtitle" style="margin-top:4px;">freeform，方便审计 + 列表识别。</div>
           </div>
+
+          <!-- role=device fields -->
+          <div id="roleDeviceFields" class="settings-section-card" style="margin-bottom: 8px;">
+            <label class="settings-section-title" for="createTokenHubId">目标 Hub</label>
+            <select id="createTokenHubId" class="input">
+              <option value="">—— 加载中 ——</option>
+            </select>
+            <div class="meta-subtitle" style="margin-top:4px;">先创建一个 hub token 让 hub 上线，再发 device token。</div>
+          </div>
+
+          <!-- role=hub fields -->
+          <div id="roleHubFields" hidden>
+            <div class="settings-section-card" style="margin-bottom: 8px;">
+              <label class="settings-section-title" for="createTokenHubSlug">Hub Slug (URL-safe 标识符)</label>
+              <input id="createTokenHubSlug" class="input" type="text" placeholder="e.g. west" />
+            </div>
+            <div class="settings-section-card" style="margin-bottom: 8px;">
+              <label class="settings-section-title" for="createTokenHubLabel">Hub 显示名称</label>
+              <input id="createTokenHubLabel" class="input" type="text" placeholder="e.g. 西部区" />
+            </div>
+            <div class="settings-section-card" style="margin-bottom: 8px;">
+              <label class="settings-section-title" for="createTokenPublicEndpoint">公网 Endpoint (host:port)</label>
+              <input id="createTokenPublicEndpoint" class="input" type="text" placeholder="west.example.com:51820" />
+              <div class="meta-subtitle" style="margin-top:4px;">其他设备连这个 hub 的 wireguard 地址；DDNS 或固定 IP 都行。</div>
+            </div>
+            <div class="settings-section-card" style="margin-bottom: 8px;">
+              <label class="settings-section-title" for="createTokenMeshCidr">Mesh CIDR</label>
+              <input id="createTokenMeshCidr" class="input" type="text" value="10.88.0.0/24" />
+              <div class="meta-subtitle" style="margin-top:4px;">Hub 自动拿 .1，设备从 .2 开始分配。默认 /24 支持 253 台。</div>
+            </div>
+          </div>
+
           <div class="settings-section-card" style="margin-bottom: 8px;">
             <label class="settings-section-title" for="createTokenTTL">TTL (天)</label>
             <input id="createTokenTTL" class="input" type="number" min="0" value="90" />
@@ -280,7 +283,6 @@
             <label class="settings-section-title" style="display:flex; gap:6px; align-items:center;">
               <input id="uploadBundleSetLatest" type="checkbox" checked /> 立即标记为 latest
             </label>
-            <div class="meta-subtitle" style="margin-top:4px;">install.sh 的 <code>BUNDLE_VERSION</code> 会指向 latest。</div>
           </div>
           <div id="uploadBundleError" class="status-text" style="color: var(--danger, #c00); margin-top:8px;"></div>
         </div>
