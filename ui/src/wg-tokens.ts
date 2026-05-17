@@ -416,11 +416,25 @@ const includeRemovedCheck = byId<HTMLInputElement>("includeRemovedCheck");
 
 function deviceStatus(dev: WGDevice): string {
   if (dev.removed_at) return `🔴 已下线 ${fmtRelative(dev.removed_at)}`;
-  if (!dev.last_seen_at) return "⚪ 从未上报";
-  const ageSec = Math.floor((Date.now() - new Date(dev.last_seen_at).getTime()) / 1000);
-  if (ageSec < 600) return "🟢 在线";
-  if (ageSec < 86400) return "🟡 待确认";
-  return "🔴 离线";
+  let base: string;
+  if (!dev.last_seen_at) {
+    base = "⚪ 从未上报";
+  } else {
+    const ageSec = Math.floor((Date.now() - new Date(dev.last_seen_at).getTime()) / 1000);
+    if (ageSec < 600) base = "🟢 在线";
+    else if (ageSec < 86400) base = "🟡 待确认";
+    else base = "🔴 离线";
+  }
+  // Append a token-expiry warning if expiry is within 7 days.
+  if (dev.token_expires_at) {
+    const msLeft = new Date(dev.token_expires_at).getTime() - Date.now();
+    if (msLeft <= 0) return `${base} ⚠ token 已过期`;
+    if (msLeft < 7 * 86400_000) {
+      const days = Math.max(1, Math.floor(msLeft / 86400_000));
+      return `${base} ⏰ token ${days}d 后过期`;
+    }
+  }
+  return base;
 }
 
 function renderDeviceRow(dev: WGDevice): HTMLTableRowElement {

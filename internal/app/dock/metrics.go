@@ -81,6 +81,11 @@ type metrics struct {
 	wgHubsBound      prometheus.Gauge      // count of hubs with bound_device_id != NULL
 	wgRegisterTotal  *prometheus.CounterVec // role x result
 	wgHeartbeatTotal *prometheus.CounterVec // hub slug x result
+
+	// Phase 3b: stale device GC + token-expiry visibility.
+	wgStaleGCTotal       *prometheus.CounterVec // result (ok/error) — total runs
+	wgStaleGCRemoved     prometheus.Counter      // cumulative devices marked removed
+	wgTokensExpiringSoon *prometheus.GaugeVec    // within ("7d" | "30d")
 }
 
 // llmLatencyBuckets are tuned for chat-completion calls, which run from
@@ -237,6 +242,24 @@ func newMetrics() *metrics {
 			},
 			[]string{"hub", "result"},
 		),
+		wgStaleGCTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_wg_devices_gc_total",
+				Help: "Stale-device GC sweeper runs by result (ok | error).",
+			},
+			[]string{"result"},
+		),
+		wgStaleGCRemoved: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "polar_wg_devices_gc_removed_total",
+			Help: "Cumulative wg devices marked removed by the stale-device GC sweeper.",
+		}),
+		wgTokensExpiringSoon: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "polar_wg_tokens_expiring_soon",
+				Help: "Count of live wg devices whose token_expires_at falls within the given window (7d / 30d).",
+			},
+			[]string{"within"},
+		),
 	}
 	reg.MustRegister(
 		m.httpRequests, m.httpLatency,
@@ -246,6 +269,7 @@ func newMetrics() *metrics {
 		m.llmProxyE2E, m.llmProxyTTFT, m.llmProxyCompletion, m.llmProxyRequests,
 		m.llmUpstreamUp, m.llmProxyQuotaExceeded,
 		m.wgDevicesAlive, m.wgHubsBound, m.wgRegisterTotal, m.wgHeartbeatTotal,
+		m.wgStaleGCTotal, m.wgStaleGCRemoved, m.wgTokensExpiringSoon,
 	)
 	return m
 }
@@ -387,6 +411,7 @@ func (s *Server) sampleMetrics() {
 		}
 	}
 	s.sampleWGMetrics()
+	s.sampleWGTokenExpiry()
 }
 
 // sampleWGMetrics counts live devices per hub + hubs with a bound
@@ -435,6 +460,18 @@ func (m *metrics) recordWGHeartbeat(hubSlug, result string) {
 		return
 	}
 	m.wgHeartbeatTotal.WithLabelValues(labelOr(hubSlug, "unknown"), labelOr(result, "unknown")).Inc()
+}
+
+// recordWGStaleGC bumps the GC run counter + adds removed count.
+// Called from wg_gc.go after each sweep.
+func (m *metrics) recordWGStaleGC(result string, removed int) {
+	if m == nil {
+		return
+	}
+	m.wgStaleGCTotal.WithLabelValues(labelOr(result, "unknown")).Inc()
+	if removed > 0 {
+		m.wgStaleGCRemoved.Add(float64(removed))
+	}
 }
 
 // recordResearchDispatch bumps the research-dispatch state counter.
