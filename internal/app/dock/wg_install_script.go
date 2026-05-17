@@ -169,14 +169,31 @@ state = {
   "token_expires":  resp.get("token_expires"),
   "wg_ip":          resp["device_ip"],
   "site_slug":      resp.get("site_slug", ""),
+  "site_id":        resp.get("site_id", ""),
+  "hub_slug":       resp.get("hub_slug", ""),
+  "role":           resp.get("role", "device"),
   "mesh_cidr":      os.environ.get("MESH_CIDR", ""),
+  "iface":          "wgc0",
+  "wg_listen":      int(os.environ.get("WG_LISTEN", 51820)),
 }
 open("/etc/wgctl/config.json", "w").write(json.dumps(state, indent=2))
 os.chmod("/etc/wgctl/config.json", 0o600)
 PYRENDER
 
-# --- 7. kickstart launchd ---
+# --- 7. kickstart wgc0, then bring up wgctl-agent for periodic ----
+#     heartbeat + peer-list refresh. Agent reads /etc/wgctl/config.json
+#     and posts /v1/heartbeat + polls /v1/peers (or /v1/hub/peers) on
+#     a fixed interval. Without it the device "looks offline" in admin.
+launchctl bootout  system/com.wireguard.wg-mac.wgc0 2>/dev/null || true
+launchctl enable   system/com.wireguard.wg-mac.wgc0 2>/dev/null || true
+launchctl bootstrap system /Library/LaunchDaemons/com.wireguard.wg-mac.wgc0.plist 2>/dev/null || true
 launchctl kickstart -k system/com.wireguard.wg-mac.wgc0 || true
+
+if [ -f /Library/LaunchDaemons/com.wireguard.wgctl-agent.plist ]; then
+    launchctl bootout  system/com.wireguard.wgctl-agent 2>/dev/null || true
+    launchctl enable   system/com.wireguard.wgctl-agent 2>/dev/null || true
+    launchctl bootstrap system /Library/LaunchDaemons/com.wireguard.wgctl-agent.plist 2>/dev/null || true
+fi
 
 WGIP=$(python3 -c 'import json; print(json.load(open("/etc/wgctl/config.json"))["wg_ip"])')
 echo "==> done. wg_ip=$WGIP"
