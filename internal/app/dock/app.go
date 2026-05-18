@@ -752,6 +752,10 @@ func (s *Server) registerRoutes() {
 		api.GET("/admin/llm-config-team-quotas", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigTeamQuotaList)
 		api.PUT("/admin/llm-config-team-quotas", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigTeamQuotaUpsert)
 		api.GET("/admin/llm-config-applications", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigApplicationsList)
+		// B4: prepaid credit / recharge — admin tops up a team's balance,
+		// chat handler immediately enforces the new floor.
+		api.POST("/admin/llm-config-team-quotas/recharge", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigTeamRecharge)
+		api.GET("/admin/llm-config-team-quotas/recharges", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigTeamRechargeList)
 		// LLM proxy — admin-gated token CRUD. The plaintext is shown
 		// once at create-time and never returnable again.
 		api.GET("/llm-proxy/dashboard-stats", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyDashboardStats)

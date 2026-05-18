@@ -97,8 +97,8 @@
             </div>
             <div class="lp-preview-body">
               <p class="meta-subtitle" style="margin: 0 0 12px 0;">
-                平台共享的 LLM 配置。管理员设置每百万 token 单价，团队按月预算消耗，超额返回 402。
-                未开通的配置点 <strong>申请</strong> 自动审批，默认月预算见管理员配置。
+                平台共享的 LLM 配置。管理员按 LLM 设单价 + 充值预付余额；团队消耗按价计费扣余额，
+                余额 ≤ 0 时聊天返回 402。未开通的配置点 <strong>申请</strong> 自动审批。
               </p>
               <div id="marketWrap">
                 <table id="marketTable" class="lp-table" hidden>
@@ -110,6 +110,7 @@
                       <th>$/1M out</th>
                       <th>本月已用</th>
                       <th>本月预算</th>
+                      <th>余额</th>
                       <th>状态</th>
                       <th></th>
                     </tr>
@@ -244,6 +245,35 @@
         <div class="lp-modal-foot">
           <button id="quotaCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
           <button id="quotaSubmitBtn" type="button" class="btn-inline btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recharge modal (admin) -->
+    <div id="rechargeModal" class="lp-modal" hidden>
+      <div class="lp-modal-card" style="max-width: 460px;">
+        <div class="lp-modal-head">
+          <span class="lp-modal-title" id="rechargeTitle">充值</span>
+          <button id="rechargeCloseBtn" type="button" class="lp-modal-close">✕</button>
+        </div>
+        <div class="lp-modal-body">
+          <p class="meta-subtitle" style="margin: 0 0 10px 0;" id="rechargeHint">
+            给该 (团队, LLM) 组合预付一笔余额。立即生效；聊天时按价计费扣减；余额 ≤ 0 时返回 402。
+            可填负数清退余额。
+          </p>
+          <div class="settings-section-card" style="margin-bottom: 12px;">
+            <label class="settings-section-title" for="rechargeAmount">金额 (USD)</label>
+            <input id="rechargeAmount" class="input" type="number" step="0.01" placeholder="e.g. 100" />
+          </div>
+          <div class="settings-section-card" style="margin-bottom: 12px;">
+            <label class="settings-section-title" for="rechargeNote">备注（可选）</label>
+            <input id="rechargeNote" class="input" type="text" placeholder="e.g. 2026-05 首次充值" />
+          </div>
+          <div id="rechargeError" class="status-text" style="color: var(--danger, #c00);"></div>
+        </div>
+        <div class="lp-modal-foot">
+          <button id="rechargeCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
+          <button id="rechargeSubmitBtn" type="button" class="btn-inline btn-primary">充值</button>
         </div>
       </div>
     </div>
