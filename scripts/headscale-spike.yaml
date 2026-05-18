@@ -1,0 +1,75 @@
+# Phase 11 spike — minimal Headscale config for D3 smoke test.
+#
+# Goal: prove `tailscale up --login-server=http://localhost:8080` reaches
+# our embedded-headscale binary (built from cmd/headscale-spike). Uses
+# SQLite (no Postgres dependency) so we can run it on any dev box
+# without bootstrapping Polar's full env.
+
+server_url: http://127.0.0.1:8080
+listen_addr: 127.0.0.1:8080
+metrics_listen_addr: 127.0.0.1:9091
+
+grpc_listen_addr: 127.0.0.1:50443
+grpc_allow_insecure: false
+
+# Wireguard private key for the coordination Noise handshake.
+# Auto-generated on first start at this path.
+noise:
+  private_key_path: /tmp/hs-spike/private.key
+
+# Mesh CIDR — Tailscale's default CGNAT range. Matches Polar's
+# Phase 3 default so wg-mac clients and TS clients can coexist
+# without IP collisions later.
+prefixes:
+  v4: 100.64.0.0/10
+
+# SQLite is fine for spike; production would use Postgres pointing at
+# Polar's ideamesh database with a separate schema namespace.
+database:
+  type: sqlite
+  sqlite:
+    path: /tmp/hs-spike/db.sqlite
+
+# Disable everything optional. We just want bare register + map.
+derp:
+  server:
+    enabled: false
+  # Headscale rejects an empty initial DERPMap, even with server disabled.
+  # Point at Tailscale's public map; spike doesn't actually rely on it.
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  auto_update_enabled: false
+
+dns:
+  base_domain: spike.local
+  magic_dns: false
+  override_local_dns: false
+  nameservers:
+    global: []
+
+oidc:
+  only_start_if_oidc_is_available: false
+
+# Logging
+log:
+  level: info
+  format: text
+
+logtail:
+  enabled: false
+
+ephemeral_node_inactivity_timeout: 30m
+
+tls:
+  letsencrypt_listen: ""
+  letsencrypt_hostname: ""
+  cert_path: ""
+  key_path: ""
+
+unix_socket: /tmp/hs-spike/headscale.sock
+unix_socket_permission: "0770"
+
+cli:
+  timeout: 5s
+  insecure: false

@@ -31,5 +31,10 @@ LDFLAGS="$LDFLAGS -X gin-auth-app/internal/app/dock.buildBuildTime=$BUILD_TIME"
 
 echo "build polar-dock @ ${GIT_BRANCH}/${GIT_SHA}${GIT_DIRTY:+ ($([ "$GIT_DIRTY" = "true" ] && echo dirty || echo clean))}"
 echo "  -> $OUT"
-go build -ldflags "$LDFLAGS" -o "$OUT" ./cmd/dock
+# Polar dock has no cgo dependencies (lib/pq + gin are pure-Go). Pin
+# CGO_ENABLED=0 so the build doesn't require a matching macOS SDK
+# version — Go 1.26 wants MacOSX26.sdk for runtime/cgo and the build
+# errors out without it even though no Go code calls into C. Static
+# binary is also nicer for cross-deploy.
+CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "$OUT" ./cmd/dock
 ls -lh "$OUT"
