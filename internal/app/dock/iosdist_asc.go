@@ -981,7 +981,11 @@ type ascLatestAppStoreVersionState struct {
 func (s *Server) ascLatestAppStoreVersionState(ctx context.Context, cfg *IOSASCConfig, appID string) (*ascLatestAppStoreVersionState, error) {
 	q := url.Values{}
 	q.Set("limit", "10") // ASC rejects sort on the nested route; pick latest client-side
-	q.Set("fields[appStoreVersions]", "createdDate,versionString,appStoreState,earliestReleaseDate,releaseDate")
+	// AppStoreVersion has no `releaseDate` attribute — only earliestReleaseDate.
+	// The actual go-live time is computed from appStoreState transitions or
+	// from appStoreVersionPhasedReleases; for the ops panel earliestReleaseDate
+	// is a sufficient proxy (developer-requested release date).
+	q.Set("fields[appStoreVersions]", "createdDate,versionString,appStoreState,earliestReleaseDate")
 	body, err := s.ascDoGET(ctx, cfg, "/v1/apps/"+url.PathEscape(appID)+"/appStoreVersions?"+q.Encode())
 	if err != nil {
 		return nil, err
@@ -993,7 +997,6 @@ func (s *Server) ascLatestAppStoreVersionState(ctx context.Context, cfg *IOSASCC
 				AppStoreState       string     `json:"appStoreState"`
 				CreatedDate         time.Time  `json:"createdDate"`
 				EarliestReleaseDate *time.Time `json:"earliestReleaseDate"`
-				ReleaseDate         *time.Time `json:"releaseDate"`
 			} `json:"attributes"`
 		} `json:"data"`
 	}
@@ -1018,11 +1021,9 @@ func (s *Server) ascLatestAppStoreVersionState(ctx context.Context, cfg *IOSASCC
 		t := attr.CreatedDate
 		out.SubmittedAt = &t
 	}
-	// Prefer releaseDate (when Apple actually shipped it) over
-	// earliestReleaseDate (when the developer requested it).
-	if attr.ReleaseDate != nil && !attr.ReleaseDate.IsZero() {
-		out.ReleasedAt = attr.ReleaseDate
-	} else if attr.EarliestReleaseDate != nil && !attr.EarliestReleaseDate.IsZero() {
+	// earliestReleaseDate is the developer-requested release date; it's the
+	// closest thing to "上架时间" available on the AppStoreVersion resource.
+	if attr.EarliestReleaseDate != nil && !attr.EarliestReleaseDate.IsZero() {
 		out.ReleasedAt = attr.EarliestReleaseDate
 	}
 	return out, nil
