@@ -513,6 +513,10 @@ const myTokensTbody = byId<HTMLTableSectionElement>("myTokensTbody");
 const myTokensEmpty = byId<HTMLElement>("myTokensEmpty");
 const myTokensLoading = byId<HTMLElement>("myTokensLoading");
 const myTokensCount = byId<HTMLElement>("myTokensCount");
+const myTokensShowRevokedToggle = byId<HTMLInputElement>("myTokensShowRevokedToggle");
+
+let myAllTokens: LLMProxyToken[] = [];
+let myAggregateByTokenID = new Map<number, LLMProxyCallAggregate[]>();
 
 const auditModal = byId<HTMLElement>("auditModal");
 const auditTitle = byId<HTMLElement>("auditTitle");
@@ -649,36 +653,24 @@ async function loadMyTokens(): Promise<void> {
 
   try {
     const { data } = await listMyProxyTokens();
-    const tokens = data.tokens ?? [];
-    myTokensTbody.innerHTML = "";
-    myTokensCount.textContent = `${tokens.length} 个`;
-    if (tokens.length === 0) {
-      myTokensEmpty.hidden = false;
-      myTokensLoading.hidden = true;
-      return;
-    }
-    // Render rows immediately with placeholder usage; fetch per-token
-    // aggregates concurrently and patch each row in place. Avoids
-    // blocking the whole table on the slowest aggregate.
-    const rowByID = new Map<number, HTMLTableRowElement>();
-    tokens.forEach((tok) => {
-      const tr = renderMyTokenRow(tok);
-      rowByID.set(tok.id, tr);
-      myTokensTbody.appendChild(tr);
-    });
-    myTokensTable.hidden = false;
+    myAllTokens = data.tokens ?? [];
+    myAggregateByTokenID = new Map();
+    renderMyTokensTable();
     myTokensLoading.hidden = true;
 
+    // Fetch aggregates for visible tokens concurrently; patch in place
+    // as each lands. One slow upstream shouldn't block the others.
+    const visible = filteredMyTokens();
     await Promise.allSettled(
-      tokens.map(async (tok) => {
+      visible.map(async (tok) => {
         try {
           const { data: aggData } = await fetchMyProxyTokenCallsAggregate(tok.id, 30);
           const agg = aggData.aggregate ?? [];
-          const tr = rowByID.get(tok.id);
+          myAggregateByTokenID.set(tok.id, agg);
+          const tr = myTokensTbody.querySelector<HTMLTableRowElement>(`tr[data-token-id="${tok.id}"]`);
           if (tr) patchMyTokenRowWithAggregate(tr, agg);
         } catch {
-          // Leave placeholder cells as "—"; one slow upstream
-          // shouldn't kill the rest of the section.
+          // ignore — placeholder "—" stays
         }
       }),
     );
@@ -686,6 +678,39 @@ async function loadMyTokens(): Promise<void> {
     myTokensEmpty.hidden = false;
     myTokensEmpty.textContent = `加载失败：${(err as Error).message}`;
     myTokensLoading.hidden = true;
+  }
+}
+
+function filteredMyTokens(): LLMProxyToken[] {
+  const showRevoked = myTokensShowRevokedToggle?.checked ?? false;
+  return showRevoked ? myAllTokens : myAllTokens.filter((t) => !t.revoked_at);
+}
+
+function renderMyTokensTable(): void {
+  if (!myTokensTable || !myTokensTbody || !myTokensEmpty || !myTokensCount) return;
+  const visible = filteredMyTokens();
+  const revokedCount = myAllTokens.filter((t) => t.revoked_at).length;
+  const showRevoked = myTokensShowRevokedToggle?.checked ?? false;
+
+  myTokensTbody.innerHTML = "";
+  visible.forEach((tok) => {
+    const tr = renderMyTokenRow(tok);
+    tr.dataset.tokenId = String(tok.id);
+    // Re-apply cached aggregate if we already fetched it on a previous render
+    const cached = myAggregateByTokenID.get(tok.id);
+    if (cached) patchMyTokenRowWithAggregate(tr, cached);
+    myTokensTbody.appendChild(tr);
+  });
+
+  if (revokedCount > 0 && !showRevoked) {
+    myTokensCount.textContent = `${visible.length} 个 (隐藏 ${revokedCount} 个已撤销)`;
+  } else {
+    myTokensCount.textContent = `${visible.length} 个`;
+  }
+  myTokensTable.hidden = visible.length === 0;
+  myTokensEmpty.hidden = visible.length !== 0;
+  if (visible.length === 0 && myAllTokens.length > 0) {
+    myTokensEmpty.textContent = '没有启用中的 token。勾选「显示已撤销」查看历史。';
   }
 }
 
@@ -837,6 +862,8 @@ async function refreshAuditModal(): Promise<void> {
     auditStatus.textContent = `加载失败：${(err as Error).message}`;
   }
 }
+
+myTokensShowRevokedToggle?.addEventListener("change", () => renderMyTokensTable());
 
 auditCloseBtn?.addEventListener("click", closeAuditModal);
 auditRefreshBtn?.addEventListener("click", () => void refreshAuditModal());
