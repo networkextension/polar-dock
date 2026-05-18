@@ -71,6 +71,16 @@ type metrics struct {
 	// for monthly USD quota exhaustion. Labelled by token so
 	// operator can spot which one is hitting the cap.
 	llmProxyQuotaExceeded *prometheus.CounterVec
+
+	// wg-mac Phase 3 (#12): mesh control-plane metrics. Devices is
+	// the "is operator's machine in the mesh" headline gauge;
+	// hubsBound shows whether each hub slot has been claimed by a
+	// device. Register + heartbeat counters cover the request path
+	// (success-vs-error spike detection without grepping logs).
+	wgDevicesAlive   *prometheus.GaugeVec // per hub slug
+	wgHubsBound      prometheus.Gauge      // count of hubs with bound_device_id != NULL
+	wgRegisterTotal  *prometheus.CounterVec // role x result
+	wgHeartbeatTotal *prometheus.CounterVec // hub slug x result
 }
 
 // llmLatencyBuckets are tuned for chat-completion calls, which run from
@@ -202,6 +212,31 @@ func newMetrics() *metrics {
 			},
 			[]string{"token"},
 		),
+		wgDevicesAlive: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "polar_wg_devices_alive",
+				Help: "Active (removed_at IS NULL) wg-mac devices per hub.",
+			},
+			[]string{"hub"},
+		),
+		wgHubsBound: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "polar_wg_hubs_bound",
+			Help: "Count of wg_hubs rows with a non-NULL bound_device_id (hub slot claimed by a live device).",
+		}),
+		wgRegisterTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_wg_register_total",
+				Help: "POST /v1/register outcomes by token role and result (ok / invalid_token / hub_already_bound / pubkey_taken / hub_not_configured / error).",
+			},
+			[]string{"role", "result"},
+		),
+		wgHeartbeatTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_wg_heartbeat_total",
+				Help: "POST /v1/heartbeat outcomes per hub.",
+			},
+			[]string{"hub", "result"},
+		),
 	}
 	reg.MustRegister(
 		m.httpRequests, m.httpLatency,
@@ -210,6 +245,7 @@ func newMetrics() *metrics {
 		m.agentAttached, m.researchDispatches, m.iosdistBuilds,
 		m.llmProxyE2E, m.llmProxyTTFT, m.llmProxyCompletion, m.llmProxyRequests,
 		m.llmUpstreamUp, m.llmProxyQuotaExceeded,
+		m.wgDevicesAlive, m.wgHubsBound, m.wgRegisterTotal, m.wgHeartbeatTotal,
 	)
 	return m
 }
@@ -350,6 +386,55 @@ func (s *Server) sampleMetrics() {
 			s.metricsRegistry.agentAttached.WithLabelValues(tool).Set(float64(count))
 		}
 	}
+	s.sampleWGMetrics()
+}
+
+// sampleWGMetrics counts live devices per hub + hubs with a bound
+// device, sets the gauges. Cheap (2 indexed queries); runs on the
+// same cadence as the other gauge samplers. Best-effort: any DB
+// error leaves the gauges at their last value.
+func (s *Server) sampleWGMetrics() {
+	if s.db == nil || s.metricsRegistry == nil {
+		return
+	}
+	rows, err := s.db.Query(
+		`SELECT h.slug, COUNT(d.id) FILTER (WHERE d.removed_at IS NULL)
+		   FROM wg_hubs h
+		   LEFT JOIN wg_devices d ON d.hub_id = h.id
+		  GROUP BY h.slug`,
+	)
+	if err == nil {
+		s.metricsRegistry.wgDevicesAlive.Reset()
+		for rows.Next() {
+			var slug string
+			var n int
+			if err := rows.Scan(&slug, &n); err == nil {
+				s.metricsRegistry.wgDevicesAlive.WithLabelValues(slug).Set(float64(n))
+			}
+		}
+		_ = rows.Close()
+	}
+	var bound int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM wg_hubs WHERE bound_device_id IS NOT NULL`).Scan(&bound); err == nil {
+		s.metricsRegistry.wgHubsBound.Set(float64(bound))
+	}
+}
+
+// recordWGRegister bumps the /v1/register outcome counter.
+// role: "hub" | "device"; result: "ok" | "invalid_token" | ...
+func (m *metrics) recordWGRegister(role, result string) {
+	if m == nil {
+		return
+	}
+	m.wgRegisterTotal.WithLabelValues(labelOr(role, "unknown"), labelOr(result, "unknown")).Inc()
+}
+
+// recordWGHeartbeat bumps the /v1/heartbeat outcome counter per hub.
+func (m *metrics) recordWGHeartbeat(hubSlug, result string) {
+	if m == nil {
+		return
+	}
+	m.wgHeartbeatTotal.WithLabelValues(labelOr(hubSlug, "unknown"), labelOr(result, "unknown")).Inc()
 }
 
 // recordResearchDispatch bumps the research-dispatch state counter.

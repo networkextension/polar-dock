@@ -208,7 +208,7 @@ func renderWGInstallScript(in wgInstallScriptInput) (string, error) {
 		in.BundleVersion = "latest"
 	}
 	if strings.TrimSpace(in.MeshCIDR) == "" {
-		in.MeshCIDR = "10.88.0.0/16"
+		in.MeshCIDR = "100.64.0.0/10"
 	}
 	tpl, err := template.New("wg-install").Parse(wgInstallScriptTemplate)
 	if err != nil {

@@ -37,8 +37,8 @@ func TestRenderWGInstallScript(t *testing.T) {
 	if !strings.Contains(s2, "BUNDLE_VERSION='latest'") {
 		t.Errorf("default BUNDLE_VERSION not applied")
 	}
-	if !strings.Contains(s2, "MESH_CIDR='10.88.0.0/16'") {
-		t.Errorf("default MESH_CIDR not applied")
+	if !strings.Contains(s2, "MESH_CIDR='100.64.0.0/10'") {
+		t.Errorf("default MESH_CIDR not applied (expected RFC 6598 CGNAT range)")
 	}
 	// Empty server → error.
 	if _, err := renderWGInstallScript(wgInstallScriptInput{Server: ""}); err == nil {
@@ -165,6 +165,25 @@ func TestParseMeshCIDRAndDeviceIP(t *testing.T) {
 	}
 	if _, err := parseMeshCIDR("fd00::/64"); err == nil {
 		t.Errorf("IPv6 accepted (should require v4)")
+	}
+}
+
+func TestSanitizeHostname(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"yarshure-mac", "yarshure-mac"},
+		{"Bob's Mac", "bob-s-mac"},
+		{"  spaces  ", "spaces"},
+		{"WITH.dots", "with.dots"},
+		{"  ", ""},
+		{"-leading", "leading"},
+		{"trailing-", "trailing"},
+		{strings.Repeat("a", 200), strings.Repeat("a", 63)},
+		{"🍎🍊", ""},
+	}
+	for _, c := range cases {
+		if got := sanitizeHostname(c.in); got != c.want {
+			t.Errorf("sanitizeHostname(%q): got %q want %q", c.in, got, c.want)
+		}
 	}
 }
 
