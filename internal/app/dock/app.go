@@ -1109,6 +1109,18 @@ func (s *Server) registerRoutes() {
 		// default 900s); POST forces an immediate refresh.
 		api.GET("/iosdist/apps/:id/status", s.AuthMiddleware(), s.handleIOSAppStatusGet)
 		api.POST("/iosdist/apps/:id/status/sync", s.AuthMiddleware(), s.handleIOSAppStatusSync)
+
+		// expense (家庭账本) L1 — manual CRUD over per-workspace expenses
+		// + categories. Every workspace member can read/write — no admin
+		// gate (household ledger model). OCR/LLM extraction → L2.
+		api.GET("/expense-categories", s.AuthMiddleware(), s.handleExpenseCategoryList)
+		api.POST("/expense-categories", s.AuthMiddleware(), s.handleExpenseCategoryCreate)
+		api.PUT("/expense-categories/:id", s.AuthMiddleware(), s.handleExpenseCategoryUpdate)
+		api.DELETE("/expense-categories/:id", s.AuthMiddleware(), s.handleExpenseCategoryDelete)
+		api.GET("/expenses", s.AuthMiddleware(), s.handleExpenseList)
+		api.POST("/expenses", s.AuthMiddleware(), s.handleExpenseCreate)
+		api.PUT("/expenses/:id", s.AuthMiddleware(), s.handleExpenseUpdate)
+		api.DELETE("/expenses/:id", s.AuthMiddleware(), s.handleExpenseDelete)
 		api.GET("/admin/logs", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLogs)
 		api.GET("/admin/users", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserList)
 		api.GET("/admin/users/:id/login-history", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserLoginHistory)
