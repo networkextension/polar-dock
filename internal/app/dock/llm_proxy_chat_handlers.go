@@ -138,6 +138,24 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// 4b) Per-team monthly USD budget gate (B1). Only enforced when an
+	// llm_config_team_quotas row exists for (workspace, config) and
+	// budget>0 — absent row means "no team-level cap" (back-compat
+	// for tokens against admin-owned configs). Spend is summed from
+	// cost_usd in llm_proxy_calls for the current calendar month.
+	if quota, qErr := s.getLLMConfigTeamQuota(cfg.ID, tok.WorkspaceID); qErr == nil && quota != nil && quota.MonthlyBudgetUSD > 0 {
+		spend, _ := s.teamLLMConfigMonthSpend(tok.WorkspaceID, cfg.ID)
+		if spend >= quota.MonthlyBudgetUSD {
+			s.recordProxyCallFailure(tok, req.Model, cfg.Model, cfg.ID, http.StatusPaymentRequired,
+				fmt.Sprintf("team monthly budget exceeded: $%.4f >= $%.4f", spend, quota.MonthlyBudgetUSD), start)
+			s.metricsRegistry.recordLLMProxyCall(tok.Name, cfg.Model, mode, http.StatusPaymentRequired, time.Since(start), 0, 0)
+			s.metricsRegistry.recordLLMProxyQuotaExceeded(tok.Name)
+			openAIError(c, http.StatusPaymentRequired, "team_quota_exceeded",
+				fmt.Sprintf("team monthly budget for this LLM exceeded ($%.4f / $%.4f) — top up or wait for next month", spend, quota.MonthlyBudgetUSD))
+			return
+		}
+	}
+
 	// 5) Dispatch.
 	runtimeConfig := aiRuntimeConfig{
 		APIKey:        apiKey,
@@ -188,7 +206,7 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 			call.TotalTokens = call.PromptTokens + call.CompletionTokens
 		}
 	}
-	if cost, ok := estimateLLMProxyCallCost(call.ModelResolved, call.PromptTokens, call.CompletionTokens); ok {
+	if cost, ok := s.estimateLLMProxyCallCostWithConfig(cfg.ID, call.ModelResolved, call.PromptTokens, call.CompletionTokens); ok {
 		call.CostUSD = &cost
 	}
 	_ = s.insertLLMProxyCall(call)
@@ -395,7 +413,7 @@ func (s *Server) streamLLMProxyChatCompletion(c *gin.Context, tok *LLMProxyToken
 			call.TotalTokens = call.PromptTokens + call.CompletionTokens
 		}
 	}
-	if cost, ok := estimateLLMProxyCallCost(call.ModelResolved, call.PromptTokens, call.CompletionTokens); ok {
+	if cost, ok := s.estimateLLMProxyCallCostWithConfig(cfg.ID, call.ModelResolved, call.PromptTokens, call.CompletionTokens); ok {
 		call.CostUSD = &cost
 	}
 	_ = s.insertLLMProxyCall(call)
