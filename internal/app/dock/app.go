@@ -416,6 +416,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.llmProxyProber = newLLMProxyProber(server)
 	server.llmProxyProber.start()
 	server.llmProxyQuota = newLLMProxyQuotaTracker(server)
+	server.startWGStaleDeviceGC(server.backgroundCtx)
 
 	server.router = gin.Default()
 	// Increase max upload size for video files (default gin limit is 32 MiB)
