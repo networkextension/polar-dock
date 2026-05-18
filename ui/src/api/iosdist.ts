@@ -276,3 +276,31 @@ export async function fetchIOSSignTask(taskID: number) {
 export async function fetchIOSAppSignTasks(appID: number) {
   return requestJson<{ tasks: IOSSignTask[] | null }>(`/api/iosdist/apps/${appID}/sign-tasks`);
 }
+
+// iosdist M4: ASC status snapshot (review state, latest build, TF testers).
+
+export interface IOSAppStatus {
+  app_id: number;
+  appstore_version: string;
+  appstore_state: string;
+  appstore_submitted_at?: string;
+  appstore_released_at?: string;
+  tf_build_version: string;
+  tf_processing_state: string;
+  tf_beta_state: string;
+  tf_uploaded_at?: string;
+  tf_expires_at?: string;
+  beta_tester_count: number;
+  synced_at: string;
+  sync_error: string;
+}
+
+export async function fetchIOSAppStatus(id: number) {
+  return requestJson<{ status: IOSAppStatus | null }>(`/api/iosdist/apps/${id}/status`);
+}
+
+export async function syncIOSAppStatusNow(id: number) {
+  return requestJson<{ status: IOSAppStatus | null }>(`/api/iosdist/apps/${id}/status/sync`, {
+    method: "POST",
+  });
+}

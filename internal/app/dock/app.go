@@ -423,6 +423,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.llmProxyProber.start()
 	server.llmProxyQuota = newLLMProxyQuotaTracker(server)
 	server.startWGStaleDeviceGC(server.backgroundCtx)
+	server.startIOSDistStatusSync(server.backgroundCtx)
 	server.startHeadscaleProxy()
 
 	server.router = gin.Default()
@@ -1103,6 +1104,11 @@ func (s *Server) registerRoutes() {
 		api.PUT("/iosdist/apps/:id/asc-binding", s.AuthMiddleware(), s.handleIOSAppASCBindingUpdate)
 		api.POST("/iosdist/apps/:id/invite-tester", s.AuthMiddleware(), s.handleIOSAppInviteTester)
 		api.POST("/iosdist/apps/:id/asc-sync", s.AuthMiddleware(), s.handleIOSAppASCSyncMeta)
+		// iosdist M4: ops status snapshot (review state, latest build, TF testers).
+		// GET reads the cached row (worker refreshes every IOSDIST_STATUS_SYNC_INTERVAL_SEC,
+		// default 900s); POST forces an immediate refresh.
+		api.GET("/iosdist/apps/:id/status", s.AuthMiddleware(), s.handleIOSAppStatusGet)
+		api.POST("/iosdist/apps/:id/status/sync", s.AuthMiddleware(), s.handleIOSAppStatusSync)
 		api.GET("/admin/logs", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLogs)
 		api.GET("/admin/users", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserList)
 		api.GET("/admin/users/:id/login-history", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserLoginHistory)

@@ -1937,6 +1937,38 @@ ALTER TABLE iosdist_apps
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_iosdist_apps_public_slug
 	ON iosdist_apps(public_slug) WHERE public_slug <> '';
 
+-- iosdist_app_status: cached snapshot of ASC review/build/testers state
+-- refreshed by the iosdist status sync worker (every IOSDIST_STATUS_SYNC_INTERVAL_SEC,
+-- default 900s = 15min). Single row per app, upserted in place. ASC is
+-- the source of truth — this table just keeps the UI / dashboards fast
+-- (and works when ASC is rate-limited / temporarily down). All TEXT
+-- columns default to empty string so an app with no ASC binding still
+-- gets a sensible "—" rendering; TIMESTAMPTZ stays NULL meaning "no
+-- such event yet".
+--
+-- appstore_state: ASC enum, e.g. READY_FOR_SALE | IN_REVIEW |
+-- WAITING_FOR_REVIEW | PENDING_DEVELOPER_RELEASE | REJECTED |
+-- METADATA_REJECTED | DEVELOPER_REJECTED | PREPARE_FOR_SUBMISSION.
+-- tf_processing_state: PROCESSING | VALID | INVALID | FAILED.
+-- tf_beta_state: external review enum, e.g. READY_FOR_BETA_TESTING |
+-- IN_BETA_REVIEW | BETA_APPROVED | BETA_REJECTED | EXPIRED |
+-- MISSING_EXPORT_COMPLIANCE.
+CREATE TABLE IF NOT EXISTS iosdist_app_status (
+	app_id BIGINT PRIMARY KEY REFERENCES iosdist_apps(id) ON DELETE CASCADE,
+	appstore_version TEXT NOT NULL DEFAULT '',
+	appstore_state TEXT NOT NULL DEFAULT '',
+	appstore_submitted_at TIMESTAMPTZ,
+	appstore_released_at TIMESTAMPTZ,
+	tf_build_version TEXT NOT NULL DEFAULT '',
+	tf_processing_state TEXT NOT NULL DEFAULT '',
+	tf_beta_state TEXT NOT NULL DEFAULT '',
+	tf_uploaded_at TIMESTAMPTZ,
+	tf_expires_at TIMESTAMPTZ,
+	beta_tester_count INTEGER NOT NULL DEFAULT 0,
+	synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	sync_error TEXT NOT NULL DEFAULT ''
+);
+
 -- iosdist_test_requests: every "申请测试" submission from the public app
 -- page lands here. status: pending|sent|failed. asc_response carries the
 -- ASC error message (when sent failed) or the new tester id (when ok).

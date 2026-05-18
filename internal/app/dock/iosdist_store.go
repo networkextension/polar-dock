@@ -1020,3 +1020,116 @@ func (s *Server) deleteIOSProfile(id int64, workspaceID string) error {
 	_, err := s.db.Exec(`DELETE FROM iosdist_profiles WHERE id = $1 AND workspace_id = $2`, id, workspaceID)
 	return err
 }
+
+// ---- iosdist_app_status: ASC snapshot cache ----
+
+type IOSAppStatus struct {
+	AppID               int64      `json:"app_id"`
+	AppStoreVersion     string     `json:"appstore_version"`
+	AppStoreState       string     `json:"appstore_state"`
+	AppStoreSubmittedAt *time.Time `json:"appstore_submitted_at,omitempty"`
+	AppStoreReleasedAt  *time.Time `json:"appstore_released_at,omitempty"`
+	TFBuildVersion      string     `json:"tf_build_version"`
+	TFProcessingState   string     `json:"tf_processing_state"`
+	TFBetaState         string     `json:"tf_beta_state"`
+	TFUploadedAt        *time.Time `json:"tf_uploaded_at,omitempty"`
+	TFExpiresAt         *time.Time `json:"tf_expires_at,omitempty"`
+	BetaTesterCount     int        `json:"beta_tester_count"`
+	SyncedAt            time.Time  `json:"synced_at"`
+	SyncError           string     `json:"sync_error"`
+}
+
+func (s *Server) getIOSAppStatus(appID int64) (*IOSAppStatus, error) {
+	var st IOSAppStatus
+	var submittedAt, releasedAt, uploadedAt, expiresAt sql.NullTime
+	err := s.db.QueryRow(
+		`SELECT app_id, appstore_version, appstore_state, appstore_submitted_at, appstore_released_at,
+		        tf_build_version, tf_processing_state, tf_beta_state, tf_uploaded_at, tf_expires_at,
+		        beta_tester_count, synced_at, sync_error
+		   FROM iosdist_app_status WHERE app_id = $1`,
+		appID,
+	).Scan(
+		&st.AppID, &st.AppStoreVersion, &st.AppStoreState, &submittedAt, &releasedAt,
+		&st.TFBuildVersion, &st.TFProcessingState, &st.TFBetaState, &uploadedAt, &expiresAt,
+		&st.BetaTesterCount, &st.SyncedAt, &st.SyncError,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if submittedAt.Valid {
+		t := submittedAt.Time
+		st.AppStoreSubmittedAt = &t
+	}
+	if releasedAt.Valid {
+		t := releasedAt.Time
+		st.AppStoreReleasedAt = &t
+	}
+	if uploadedAt.Valid {
+		t := uploadedAt.Time
+		st.TFUploadedAt = &t
+	}
+	if expiresAt.Valid {
+		t := expiresAt.Time
+		st.TFExpiresAt = &t
+	}
+	return &st, nil
+}
+
+// upsertIOSAppStatus writes the snapshot. When syncErr is non-empty we
+// still store the metric fields the caller managed to fetch — stale
+// values beat blank ones when one of the 3 ASC calls hiccups.
+func (s *Server) upsertIOSAppStatus(st *IOSAppStatus) error {
+	if st == nil || st.AppID == 0 {
+		return errors.New("upsertIOSAppStatus: nil or zero app id")
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO iosdist_app_status
+		   (app_id, appstore_version, appstore_state, appstore_submitted_at, appstore_released_at,
+		    tf_build_version, tf_processing_state, tf_beta_state, tf_uploaded_at, tf_expires_at,
+		    beta_tester_count, synced_at, sync_error)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 ON CONFLICT (app_id) DO UPDATE SET
+		    appstore_version = EXCLUDED.appstore_version,
+		    appstore_state = EXCLUDED.appstore_state,
+		    appstore_submitted_at = EXCLUDED.appstore_submitted_at,
+		    appstore_released_at = EXCLUDED.appstore_released_at,
+		    tf_build_version = EXCLUDED.tf_build_version,
+		    tf_processing_state = EXCLUDED.tf_processing_state,
+		    tf_beta_state = EXCLUDED.tf_beta_state,
+		    tf_uploaded_at = EXCLUDED.tf_uploaded_at,
+		    tf_expires_at = EXCLUDED.tf_expires_at,
+		    beta_tester_count = EXCLUDED.beta_tester_count,
+		    synced_at = EXCLUDED.synced_at,
+		    sync_error = EXCLUDED.sync_error`,
+		st.AppID, st.AppStoreVersion, st.AppStoreState, st.AppStoreSubmittedAt, st.AppStoreReleasedAt,
+		st.TFBuildVersion, st.TFProcessingState, st.TFBetaState, st.TFUploadedAt, st.TFExpiresAt,
+		st.BetaTesterCount, st.SyncedAt, st.SyncError,
+	)
+	return err
+}
+
+// listIOSAppsWithASC: input set for the status sync worker. Apps without
+// asc_app_id can't be synced, so we skip them. No workspace filter —
+// the worker is platform-wide.
+func (s *Server) listIOSAppsWithASC() ([]IOSApp, error) {
+	rows, err := s.db.Query(
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), name, bundle_id, description, icon_url, icon_source, testflight_url, asc_app_id, asc_beta_group_id, public_slug, is_public, keywords, whats_new, promotional_text, marketing_url, support_url, created_at, updated_at
+		   FROM iosdist_apps WHERE asc_app_id <> '' ORDER BY id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]IOSApp, 0)
+	for rows.Next() {
+		var a IOSApp
+		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.WorkspaceID, &a.Name, &a.BundleID, &a.Description, &a.IconURL, &a.IconSource, &a.TestFlightURL, &a.ASCAppID, &a.ASCBetaGroupID, &a.PublicSlug, &a.IsPublic, &a.Keywords, &a.WhatsNew, &a.PromotionalText, &a.MarketingURL, &a.SupportURL, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
