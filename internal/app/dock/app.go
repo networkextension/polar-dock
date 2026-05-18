@@ -129,6 +129,12 @@ type Server struct {
 	// updates polar_llm_upstream_up gauges every 30s.
 	llmProxyProber *llmProxyProber
 
+	// Phase 11 C3: when embedded Headscale is enabled
+	// (WG_HEADSCALE_ENABLED=1), this stores the unix-socket path
+	// from the loaded cfg so wg_headscale_client.go can dial it
+	// to mint matching PreAuthKeys on token create.
+	headscaleSocketPath string
+
 	// Per-token monthly cost tracker (P4). 60s in-memory cache of
 	// SUM(cost_usd) for the current UTC month.
 	llmProxyQuota *llmProxyQuotaTracker

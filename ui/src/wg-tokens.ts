@@ -201,6 +201,28 @@ const plaintextCopyBtn = byId<HTMLButtonElement>("plaintextCopyBtn");
 const plaintextInstallCmd = byId<HTMLTextAreaElement>("plaintextInstallCmd");
 const plaintextInstallCopyBtn = byId<HTMLButtonElement>("plaintextInstallCopyBtn");
 const plaintextDoneBtn = byId<HTMLButtonElement>("plaintextDoneBtn");
+// Phase 11 C3 — optional Tailscale PreAuthKey block; surfaced only
+// when the server responds with `tailscale_authkey` (i.e. embedded
+// headscale is enabled at the dock level).
+const tsBlock = document.getElementById("tsBlock") as HTMLElement | null;
+const tsKeyValue = document.getElementById("tsKeyValue") as HTMLInputElement | null;
+const tsKeyCopyBtn = document.getElementById("tsKeyCopyBtn") as HTMLButtonElement | null;
+const tsCmdValue = document.getElementById("tsCmdValue") as HTMLTextAreaElement | null;
+const tsCmdCopyBtn = document.getElementById("tsCmdCopyBtn") as HTMLButtonElement | null;
+if (tsKeyCopyBtn && tsKeyValue) {
+  tsKeyCopyBtn.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(tsKeyValue.value);
+    tsKeyCopyBtn.textContent = "✓";
+    setTimeout(() => (tsKeyCopyBtn.textContent = "📋"), 1500);
+  });
+}
+if (tsCmdCopyBtn && tsCmdValue) {
+  tsCmdCopyBtn.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(tsCmdValue.value);
+    tsCmdCopyBtn.textContent = "✓ 已复制";
+    setTimeout(() => (tsCmdCopyBtn.textContent = "📋 复制 tailscale up 命令"), 1500);
+  });
+}
 
 function selectedTokenRole(): "hub" | "device" {
   const checked = document.querySelector<HTMLInputElement>('input[name="tokenRole"]:checked');
@@ -383,6 +405,17 @@ createTokenSubmitBtn?.addEventListener("click", async () => {
     plaintextValue.value = plaintext;
     const origin = window.location.origin;
     plaintextInstallCmd.value = `curl -sSL ${origin}/v1/install | sudo bash -s -- --token=${plaintext}`;
+    // Phase 11 C3: if embedded headscale was enabled at server boot,
+    // a matching tskey-... was minted alongside the wg-mac token.
+    // Show both so the operator can hand a unified bundle out.
+    const tsKey = (data as { tailscale_authkey?: string }).tailscale_authkey;
+    if (tsKey && tsKeyValue && tsCmdValue && tsBlock) {
+      tsKeyValue.value = tsKey;
+      tsCmdValue.value = `tailscale up --login-server=${origin} --authkey=${tsKey}`;
+      tsBlock.hidden = false;
+    } else if (tsBlock) {
+      tsBlock.hidden = true;
+    }
     plaintextModal.hidden = false;
     await refreshTokens();
     await refreshHubs();

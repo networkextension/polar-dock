@@ -248,9 +248,22 @@
             </div>
           </div>
           <div class="settings-section-card">
-            <div class="settings-section-title">一键安装命令</div>
+            <div class="settings-section-title">wg-mac 一键安装命令</div>
             <textarea id="plaintextInstallCmd" class="input" readonly rows="2" style="font-family: ui-monospace, Menlo, monospace; font-size: 11px; resize: vertical; min-height: 56px;"></textarea>
             <button id="plaintextInstallCopyBtn" type="button" class="btn-inline btn-secondary" style="margin-top:6px;">📋 复制命令</button>
+          </div>
+          <!-- Phase 11 C3: only shown when WG_HEADSCALE_ENABLED=1 on the
+               dock; a matching tskey-... was minted alongside the wg-mac
+               token so the same operator can install either client flavor. -->
+          <div id="tsBlock" class="settings-section-card" style="margin-top: 8px; border-color: var(--accent, #36c);" hidden>
+            <div class="settings-section-title">🌐 Tailscale 客户端 (PreAuthKey)</div>
+            <div style="display:flex; gap:6px; margin-top:4px;">
+              <input id="tsKeyValue" class="input" type="text" readonly style="font-family: ui-monospace, Menlo, monospace; font-size: 12px;" />
+              <button id="tsKeyCopyBtn" type="button" class="btn-inline btn-secondary">📋</button>
+            </div>
+            <textarea id="tsCmdValue" class="input" readonly rows="2" style="font-family: ui-monospace, Menlo, monospace; font-size: 11px; resize: vertical; min-height: 56px; margin-top: 6px;"></textarea>
+            <button id="tsCmdCopyBtn" type="button" class="btn-inline btn-secondary" style="margin-top:6px;">📋 复制 tailscale up 命令</button>
+            <div class="meta-subtitle" style="margin-top:4px;">原版 Tailscale 客户端用这个 key 入网；wg-mac 客户端用上面那个 token。两边都可用。</div>
           </div>
         </div>
         <div class="lp-modal-foot">

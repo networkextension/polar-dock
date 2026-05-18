@@ -731,6 +731,17 @@ func openDB(dsn string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Phase 11 C2: bound the pool so polar-dock cannot exhaust
+	// Postgres on its own — important once embedded Headscale opens
+	// its own pool against the same DB. Defaults match Headscale's
+	// example config (max_open_conns=10) so a Postgres with the
+	// standard max_connections=100 sees ~10 from each + headroom for
+	// CLI/psql. Override via POLAR_DB_MAX_OPEN_CONNS env if you
+	// raised Postgres limits.
+	maxOpen := envIntDefault("POLAR_DB_MAX_OPEN_CONNS", 20)
+	maxIdle := envIntDefault("POLAR_DB_MAX_IDLE_CONNS", 5)
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
 
 	schema := `
 CREATE TABLE IF NOT EXISTS users (

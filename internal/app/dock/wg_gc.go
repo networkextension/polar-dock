@@ -28,6 +28,17 @@ const (
 	wgStaleGCIntervalDefault = 1 * time.Hour
 )
 
+// envIntDefault parses an integer env var, returning fallback on
+// missing/invalid input. Shared helper for pool sizing + GC tunables.
+func envIntDefault(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
 func wgStaleDeviceTTL() time.Duration {
 	if v := os.Getenv("WG_STALE_DEVICE_TTL_HOURS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

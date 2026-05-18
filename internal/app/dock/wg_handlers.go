@@ -19,6 +19,7 @@ package dock
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -596,6 +597,30 @@ func (s *Server) handleAdminWGTokenCreate(c *gin.Context) {
 		expiresAt = &v
 	}
 	now := time.Now().UTC()
+	// C3: when embedded Headscale is enabled, also mint a matching
+	// PreAuthKey so the operator gets both a wg-mac token AND a
+	// tskey-... in one shot. tsKey is non-fatal: mint failures are
+	// logged and the wg-mac token still ships. hubSlugForTS picks
+	// the namespace name: hub role → operator's slug, device role
+	// → target hub's slug (looked up by ID).
+	hubSlugForTS := ""
+	switch req.Role {
+	case "hub":
+		hubSlugForTS = strings.TrimSpace(req.HubSlug)
+	case "device":
+		if hub, _ := s.getWGHubByID(req.HubID); hub != nil {
+			hubSlugForTS = hub.Slug
+		}
+	}
+	tailscaleAuthKey := ""
+	if hubSlugForTS != "" {
+		if key, err := s.mintTailscaleAuthKey(c.Request.Context(), hubSlugForTS, req.Role, true, false, req.TTLDays); err != nil {
+			log.Printf("headscale: mintTailscaleAuthKey(%q, %q) failed: %v (wg-mac token still issued)", hubSlugForTS, req.Role, err)
+		} else {
+			tailscaleAuthKey = key
+		}
+	}
+
 	switch req.Role {
 	case "hub":
 		tok, hub, err := s.createWGTokenForHub(req.Label, userIDStr, req.HubSlug, req.HubLabel, req.PublicEndpoint, req.MeshCIDR, expiresAt, now)
@@ -603,11 +628,15 @@ func (s *Server) handleAdminWGTokenCreate(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{
+		resp := gin.H{
 			"token":   tok,
 			"hub":     hub,
 			"warning": "plaintext 只显示一次，关闭后无法找回。请立即复制保存。",
-		})
+		}
+		if tailscaleAuthKey != "" {
+			resp["tailscale_authkey"] = tailscaleAuthKey
+		}
+		c.JSON(http.StatusOK, resp)
 	case "device":
 		if req.HubID <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "hub_id required for role=device"})
@@ -618,10 +647,14 @@ func (s *Server) handleAdminWGTokenCreate(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{
+		resp := gin.H{
 			"token":   tok,
 			"warning": "plaintext 只显示一次，关闭后无法找回。请立即复制保存。",
-		})
+		}
+		if tailscaleAuthKey != "" {
+			resp["tailscale_authkey"] = tailscaleAuthKey
+		}
+		c.JSON(http.StatusOK, resp)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "role must be 'hub' or 'device'"})
 	}
