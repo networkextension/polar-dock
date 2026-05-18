@@ -470,3 +470,45 @@ DELETE  /api/admin/wg-bundles/:id               删 (含 blob unlink)
 - Bundle 上传：`internal/app/dock/wg_bundle_handlers.go`（sha256 dedup + 路径围栏）
 - install.sh：`internal/app/dock/wg_install_script.go`
 - UI：`ui/public/wg-tokens.html` + `ui/src/wg-tokens.ts`
+
+### 12.7 Phase 11 — Tailscale 客户端兼容（embedded Headscale，C1 已落，opt-in）
+
+让原版 Tailscale 客户端能用 `--login-server=https://zen.4950.store` 加入我们的 mesh。
+默认 **关闭**，按需 opt-in。
+
+**启用步骤** (在 .57 上)：
+
+1. 准备 Postgres 用户 + 库（headscale 用 gorm 在 `ideamesh` 库里建自己的 `users / nodes / pre_auth_keys` 等表，跟 `wg_*` 不撞）：
+   ```sh
+   psql -d ideamesh -c "CREATE USER headscale WITH PASSWORD 'CHANGE_ME';"
+   psql -d ideamesh -c "GRANT ALL PRIVILEGES ON DATABASE ideamesh TO headscale;"
+   ```
+2. 复制配置文件：
+   ```sh
+   sudo mkdir -p /etc/headscale /var/lib/headscale /var/run/headscale
+   sudo cp /Users/local/github/Polar-/scripts/headscale.yaml.example /etc/headscale/config.yaml
+   sudo $EDITOR /etc/headscale/config.yaml   # 改 server_url + database.postgres.pass
+   ```
+3. 在 `~/restart-polar-dock.sh` 里加：
+   ```sh
+   export WG_HEADSCALE_ENABLED=1
+   export WG_HEADSCALE_CONFIG_PATH=/etc/headscale/config.yaml
+   ```
+4. nginx vhost (`/opt/homebrew/etc/nginx/servers/ssl`) 加：
+   ```nginx
+   location /machine/ { proxy_pass http://127.0.0.1:8081; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto https; }
+   location /derp/    { proxy_pass http://127.0.0.1:8081; proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_read_timeout 3600s; }
+   ```
+5. 重启：`bash ~/restart-polar-dock.sh && nginx -t && nginx -s reload`
+6. 看日志：`grep "headscale:" /tmp/polar-dock.log | tail`
+7. 用 headscale CLI mint PreAuthKey：`headscale --config /etc/headscale/config.yaml users create team-XYZ` → `headscale --config ... preauthkeys create --user team-XYZ --reusable --expiration 90d` → 拿到 `tskey-...`
+8. 客户机：`tailscale up --login-server=https://zen.4950.store --authkey=tskey-...`
+
+**禁用**：`unset WG_HEADSCALE_ENABLED` (或设 `=0`) + 重启 dock。 headscale 那些表保留，无 IO。
+
+**未尽事项**（C2-C7 路线）见 `doc/wg-mac-tailscale-compat-design.md`：
+- C2 Postgres 共享微调（连接池上限协调）
+- C3 Polar `wg-tokens.html` mint 时自动调 headscale gRPC 同步建 PreAuthKey
+- C4-C5 设备视图统一 (Devices tab 列出 headscale Nodes)
+- C6 自建 DERP relay
+- C7 MagicDNS / ACL 桥接

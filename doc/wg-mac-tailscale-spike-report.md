@@ -101,12 +101,15 @@ Original design doc said **8-10 weeks for C1-C7**. After this spike:
 
 Next concrete action: kick off `feat/wg-mac-phase11-c1` to clean up this spike branch into a production-shaped scaffold (real Postgres config, port disambiguation, healthcheck for headscale subsystem, prometheus metrics for it).
 
-## Files left from spike
+## Files left from spike (post-C1 status)
 
-| Path | Keep? |
+| Path | Status |
 |---|---|
-| `internal/app/dock/wg_headscale.go` | ✅ keep (becomes C1 entry point) |
-| `cmd/headscale-spike/main.go` | ⚠ delete in C1 (its job is done; production should mount via wg_headscale.go, not via a separate binary) |
+| `internal/app/dock/wg_headscale.go` | ✅ kept; C1 enabled `go hs.Serve()` in goroutine |
+| `cmd/headscale-spike/main.go` | ✅ deleted in C1 (production mounts via wg_headscale.go) |
+| `scripts/headscale-spike.yaml` | ✅ renamed to `scripts/headscale.yaml.example` with prod-shape Postgres + port-disambiguation comments |
+| `doc/wg-mac-tailscale-spike-report.md` (this file) | ✅ kept as historical record |
+| `doc/wg-mac-tailscale-compat-design.md` | TODO §1 estimate update (8-10wk → 7-9wk) |
 | `scripts/headscale-spike.yaml` | ⚠ migrate into a `scripts/headscale.yaml.example` for ops reference |
 | `doc/wg-mac-tailscale-spike-report.md` (this file) | ✅ keep as historical record |
 | `doc/wg-mac-tailscale-compat-design.md` | ✅ keep; update §1 with the "8-10 weeks → 7-9 weeks" delta |

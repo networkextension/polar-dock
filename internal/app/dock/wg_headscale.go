@@ -1,23 +1,27 @@
 package dock
 
-// Phase 11 spike — Tailscale-client compat via vendored Headscale.
+// Phase 11 — Tailscale-client compat via vendored Headscale.
 //
-// D2 milestone: load a Headscale Config from a yaml file + run
-// hscontrol.NewHeadscale(cfg). This is the smallest test that proves
-// the dependency-injection surface is sane (constructor doesn't error
-// on a clean config, init-time side effects don't conflict with
-// Polar's other globals).
+// C1 milestone (this file): boot Headscale in-process alongside
+// polar-dock when the env gate is on. Headscale takes its own
+// listener (configured via cfg.Addr; example file at
+// scripts/headscale.yaml.example uses :8081 to avoid Polar dock's
+// :8080). nginx fronts both:
 //
-// We do NOT call hs.Serve() yet — that's D3. Serving binds a listener
-// + starts background goroutines (mapBatcher, DERP STUN, SQLite/Postgres
-// migrations). Keep the spike opt-in via env so the production .57
-// deploy stays unchanged when this branch lands.
+//   /v1/* /api/*  → polar dock :8080
+//   /machine/*    → headscale :8081      (tailscale clients)
+//   /derp/*       → headscale :8081
 //
 // Env contract:
 //   WG_HEADSCALE_ENABLED=1                — opt in (default off, no-op)
 //   WG_HEADSCALE_CONFIG_PATH=<path>       — yaml file (default /etc/headscale/config.yaml)
 //
-// See doc/wg-mac-tailscale-compat-design.md for the broader plan.
+// Failure mode: any error during load/construct/serve is logged but
+// does NOT take down polar-dock. Headscale is an opt-in addition; the
+// wg-mac native /v1/* control plane is unaffected.
+//
+// See doc/wg-mac-tailscale-compat-design.md for the broader plan +
+// doc/wg-mac-tailscale-spike-report.md for the spike findings.
 
 import (
 	"log"
@@ -28,14 +32,15 @@ import (
 	"github.com/juanfont/headscale/hscontrol/types"
 )
 
-// startHeadscaleProxy loads + constructs Headscale when the env gate
-// is on. No serving yet. Caller logs the outcome.
+// startHeadscaleProxy loads the yaml config, constructs the embedded
+// Headscale coordinator, and launches its HTTP/gRPC servers in a
+// background goroutine. Idempotent + safe to call on every boot;
+// when WG_HEADSCALE_ENABLED is unset, this is a no-op.
 func (s *Server) startHeadscaleProxy() {
 	if strings.TrimSpace(os.Getenv("WG_HEADSCALE_ENABLED")) != "1" {
-		// Default path: spike is opt-in. Most builds skip silently
-		// so the vendored headscale code is dead weight in the
-		// binary (~+27 MB, see go.mod) until a deploy explicitly
-		// turns it on.
+		// Default path: opt-in. The vendored headscale code is dead
+		// weight in the binary (~+27 MB; see doc/wg-mac-tailscale-spike-report.md)
+		// until a deploy explicitly sets the env.
 		return
 	}
 	cfgPath := strings.TrimSpace(os.Getenv("WG_HEADSCALE_CONFIG_PATH"))
@@ -43,23 +48,29 @@ func (s *Server) startHeadscaleProxy() {
 		cfgPath = "/etc/headscale/config.yaml"
 	}
 
-	log.Printf("wg-mac phase 11 spike: loading headscale config from %s", cfgPath)
+	log.Printf("headscale: loading config from %s", cfgPath)
 	if err := types.LoadConfig(cfgPath, true); err != nil {
-		log.Printf("wg-mac phase 11 spike: LoadConfig(%s) failed: %v — set WG_HEADSCALE_ENABLED=0 to bypass", cfgPath, err)
+		log.Printf("headscale: LoadConfig(%s) failed: %v — set WG_HEADSCALE_ENABLED=0 to bypass", cfgPath, err)
 		return
 	}
 	cfg, err := types.LoadServerConfig()
 	if err != nil {
-		log.Printf("wg-mac phase 11 spike: LoadServerConfig failed: %v", err)
+		log.Printf("headscale: LoadServerConfig failed: %v", err)
 		return
 	}
 	hs, err := hscontrol.NewHeadscale(cfg)
 	if err != nil {
-		log.Printf("wg-mac phase 11 spike: NewHeadscale failed: %v", err)
+		log.Printf("headscale: NewHeadscale failed: %v", err)
 		return
 	}
-	log.Printf("wg-mac phase 11 spike D2: NewHeadscale OK (listen_addr=%s, server_url=%s); Serve() deferred to D3",
-		cfg.Addr, cfg.ServerURL)
-	// D3: launch `go hs.Serve()` here + handle shutdown ctx.
-	_ = hs
+	log.Printf("headscale: starting Serve in goroutine (listen_addr=%s, metrics=%s, grpc=%s, server_url=%s)",
+		cfg.Addr, cfg.MetricsAddr, cfg.GRPCAddr, cfg.ServerURL)
+	go func() {
+		// Serve blocks until shutdown OR returns an error mid-flight.
+		// On error, log + return — polar-dock keeps running (operator
+		// flips WG_HEADSCALE_ENABLED=0 + restarts to recover).
+		if err := hs.Serve(); err != nil {
+			log.Printf("headscale: Serve exited: %v (polar-dock continues; restart with WG_HEADSCALE_ENABLED=0 to fully disable)", err)
+		}
+	}()
 }
