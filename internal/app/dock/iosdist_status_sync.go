@@ -160,7 +160,7 @@ func (s *Server) syncOneIOSAppStatus(ctx context.Context, app *IOSApp, cfg *IOSA
 		st.TFExpiresAt = b.ExpiresAt
 	}
 
-	if n, err := s.ascCountBetaTesters(ctx, cfg, app.ASCAppID); err != nil {
+	if n, err := s.ascCountBetaTesters(ctx, cfg, app.ASCAppID, app.ASCBetaGroupID); err != nil {
 		errParts = append(errParts, "testers: "+err.Error())
 	} else {
 		st.BetaTesterCount = n
