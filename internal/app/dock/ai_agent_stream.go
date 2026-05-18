@@ -258,7 +258,7 @@ func (a *aiAgent) startStreamingRequest(ctx context.Context, providerLabel, reqU
 		if message == "" {
 			message = resp.Status
 		}
-		return nil, fmt.Errorf("%s api returned status %d: %s", providerLabel, resp.StatusCode, message)
+		return nil, classifyUpstreamCreditError(resp.StatusCode, errBody, fmt.Errorf("%s api returned status %d: %s", providerLabel, resp.StatusCode, message))
 	}
 
 	frames, errs := readSSEFrames(streamCtx, resp.Body, watchdog, idleTimeout)

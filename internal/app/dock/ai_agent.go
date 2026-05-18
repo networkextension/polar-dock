@@ -83,6 +83,13 @@ type aiRuntimeConfig struct {
 	// connectivity probes, passthrough bots).
 	LLMConfigID   int64
 	LLMConfigName string
+	// WorkspaceID is the team being billed for this call. Populated
+	// from the proxy token (`tok.WorkspaceID`) for /api/proxy paths
+	// and from `personalWorkspaceForUser(task.UserID)` for in-app
+	// chat (handleTask). Empty = billing gates skipped (back-compat
+	// for paths that don't have a workspace context — system agent
+	// probes, etc.).
+	WorkspaceID string
 	// Endpoint is a caller-supplied tag describing the *feature* that
 	// initiated this LLM call — e.g. "thread_summary",
 	// "task_retrospect", "chat", "post_assist". It surfaces as a label
@@ -401,6 +408,23 @@ func (a *aiAgent) handleTask(task aiAgentTask) {
 		}
 		return
 	}
+	// B5a: in-app chat billing gate. Bills against the requester's
+	// personal team (same shape as the LLM proxy's `tok.WorkspaceID`
+	// gate at llm_proxy_chat_handlers.go:146,166). Absent llm config
+	// or workspace = back-compat skip, matching the proxy.
+	if a.server != nil && cfg.LLMConfigID > 0 && task.UserID != "" {
+		if ws, wErr := a.server.personalWorkspaceForUser(task.UserID); wErr == nil && ws != "" {
+			cfg.WorkspaceID = ws
+			if blocked, body := a.server.checkChatBillingGate(ws, cfg.LLMConfigID); blocked {
+				latency := int64(0)
+				log.Printf("ai agent chat blocked by billing gate: workspace=%s llm_config=%d msg=%s", ws, cfg.LLMConfigID, body)
+				if _, sendErr := a.server.sendFailedBotMessageWithLLM(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, body, &latency, chatLLMSnapshotFromCfg(cfg), time.Now()); sendErr != nil {
+					log.Printf("send billing-gate failed message failed: %v", sendErr)
+				}
+				return
+			}
+		}
+	}
 	// Long-running path: bot has a polar-agent attached. Show a
 	// streaming placeholder ("✦ thinking...") immediately so the
 	// user sees the bot is working — kimi-cli / claude / codex can
@@ -442,7 +466,7 @@ func (a *aiAgent) handleAgentTask(task aiAgentTask, cfg aiRuntimeConfig) {
 	latencyPtr := &latencyMs
 	if err != nil {
 		log.Printf("ai agent reply failed after %dms: %v", latencyMs, err)
-		body := "我暂时无法完成这次处理，请稍后再试。"
+		body := userFriendlyChatErrorBody(err)
 		if finalErr := a.server.finalizeChatMessageWithLLM(placeholderID, body, nil, "", latencyPtr, true, chatLLMSnapshotFromCfg(cfg)); finalErr != nil {
 			log.Printf("finalize agent placeholder (failed) error: %v", finalErr)
 		}
@@ -483,7 +507,7 @@ func (a *aiAgent) handleSyncTask(task aiAgentTask, cfg aiRuntimeConfig) {
 	snap := chatLLMSnapshotFromCfg(cfg)
 	if err != nil {
 		log.Printf("ai agent reply failed after %dms: %v", latencyMs, err)
-		reply = "我暂时无法完成这次处理，请稍后再试。"
+		reply = userFriendlyChatErrorBody(err)
 		if _, sendErr := a.server.sendFailedBotMessageWithLLM(task.ThreadID, task.LLMThreadID, task.ResponderUserID, task.ResponderName, reply, latencyPtr, snap, time.Now()); sendErr != nil {
 			log.Printf("send failed ai agent chat message failed: %v", sendErr)
 		}
@@ -603,8 +627,13 @@ func (a *aiAgent) handleStreamingTask(task aiAgentTask, cfg aiRuntimeConfig) {
 		if partial == "" {
 			partial = strings.TrimSpace(final)
 		}
-		if partial == "" {
-			partial = "我暂时无法完成这次处理，请稍后再试。"
+		if errors.Is(streamErr, errUpstreamOutOfCredit) {
+			// Credit errors usually surface before any tokens arrive
+			// (provider rejects the request outright), so prefer the
+			// clean friendly message over a "got 3 tokens then died" hybrid.
+			partial = userFriendlyChatErrorBody(streamErr)
+		} else if partial == "" {
+			partial = userFriendlyChatErrorBody(streamErr)
 		} else {
 			partial += "\n\n（生成被中断：" + streamErr.Error() + "）"
 		}
@@ -915,9 +944,9 @@ func (a *aiAgent) requestOpenAICompatibleChatCompletion(runtimeConfig aiRuntimeC
 	}
 	if resp.StatusCode >= 400 {
 		if message := parseAIErrorMessage(result.Error); message != "" {
-			return nil, errors.New(message)
+			return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, errors.New(message))
 		}
-		return nil, fmt.Errorf("ai api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, fmt.Errorf("ai api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody))))
 	}
 	if len(result.Choices) == 0 {
 		// Some OpenAI-compatible gateways (e.g. api.soxai.io) proxy Claude and
@@ -975,9 +1004,9 @@ func (a *aiAgent) requestGeminiContent(runtimeConfig aiRuntimeConfig, payload ai
 	}
 	if resp.StatusCode >= 400 {
 		if message := parseAIErrorMessage(result.Error); message != "" {
-			return nil, errors.New(message)
+			return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, errors.New(message))
 		}
-		return nil, fmt.Errorf("gemini api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, fmt.Errorf("gemini api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody))))
 	}
 
 	text := extractGeminiResponseText(result)
@@ -1031,9 +1060,9 @@ func (a *aiAgent) requestXAIResponses(runtimeConfig aiRuntimeConfig, payload aiC
 	}
 	if resp.StatusCode >= 400 {
 		if message := parseAIErrorMessage(result.Error); message != "" {
-			return nil, errors.New(message)
+			return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, errors.New(message))
 		}
-		return nil, fmt.Errorf("xai api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, fmt.Errorf("xai api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody))))
 	}
 
 	text := extractXAIResponseText(result)
@@ -1092,9 +1121,9 @@ func (a *aiAgent) requestVolcesResponses(runtimeConfig aiRuntimeConfig, payload 
 	}
 	if resp.StatusCode >= 400 {
 		if message := parseAIErrorMessage(result.Error); message != "" {
-			return nil, errors.New(message)
+			return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, errors.New(message))
 		}
-		return nil, fmt.Errorf("volces api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, fmt.Errorf("volces api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody))))
 	}
 
 	text := extractXAIResponseText(result)
@@ -1173,9 +1202,9 @@ func (a *aiAgent) requestAnthropicMessages(runtimeConfig aiRuntimeConfig, payloa
 	}
 	if resp.StatusCode >= 400 {
 		if message := parseAIErrorMessage(result.Error); message != "" {
-			return nil, errors.New(message)
+			return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, errors.New(message))
 		}
-		return nil, fmt.Errorf("anthropic api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return nil, classifyUpstreamCreditError(resp.StatusCode, responseBody, fmt.Errorf("anthropic api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody))))
 	}
 
 	text := extractAnthropicResponseText(result)
@@ -1294,6 +1323,44 @@ func compactLogJSON(body []byte) string {
 		return text[:maxLogBytes] + "...(truncated)"
 	}
 	return text
+}
+
+// errUpstreamOutOfCredit is a sentinel wrapped around upstream
+// responses that look like the configured account is out of funds.
+// Chat handlers test it via errors.Is and surface a clearer Chinese
+// message ("provider 余额不足") instead of the generic
+// "我暂时无法完成这次处理". DeepSeek returns 402 with this; xAI
+// returns 403 + "team out of credits" — see classifyUpstreamCreditError.
+var errUpstreamOutOfCredit = errors.New("upstream LLM provider out of credit")
+
+func classifyUpstreamCreditError(status int, body []byte, fallback error) error {
+	if fallback == nil {
+		return nil
+	}
+	if status == http.StatusPaymentRequired {
+		return fmt.Errorf("%w: %s", errUpstreamOutOfCredit, fallback.Error())
+	}
+	if status == http.StatusForbidden {
+		b := strings.ToLower(string(body))
+		if strings.Contains(b, "balance") || strings.Contains(b, "credit") ||
+			strings.Contains(b, "billing") || strings.Contains(b, "insufficient") ||
+			strings.Contains(b, "余额") || strings.Contains(b, "充值") {
+			return fmt.Errorf("%w: %s", errUpstreamOutOfCredit, fallback.Error())
+		}
+	}
+	return fallback
+}
+
+// userFriendlyChatErrorBody picks the user-visible chat bubble text
+// for a failed LLM call. Default: the generic "暂时无法…" line that
+// shipped pre-B5. When the underlying error is errUpstreamOutOfCredit
+// (deepseek 402 / xai 403 "out of credits") surface a clearer message
+// pointing at the provider account, not at "system problem".
+func userFriendlyChatErrorBody(err error) string {
+	if errors.Is(err, errUpstreamOutOfCredit) {
+		return "上游 AI 提供商账户余额不足，请联系管理员充值或切换其他 LLM。"
+	}
+	return "我暂时无法完成这次处理，请稍后再试。"
 }
 
 func parseAIErrorMessage(raw json.RawMessage) string {

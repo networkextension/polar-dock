@@ -186,6 +186,7 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		Streaming:     req.Stream,
 		LLMConfigID:   cfg.ID,
 		LLMConfigName: cfg.Name,
+		WorkspaceID:   tok.WorkspaceID,
 		Endpoint:      "llm_proxy",
 	}
 	payload := aiChatCompletionRequest{
