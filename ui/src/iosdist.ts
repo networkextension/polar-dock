@@ -22,8 +22,10 @@ import {
   fetchIOSASCBetaGroups,
   fetchIOSASCConfigStatus,
   fetchIOSAppDetail,
+  fetchIOSAppStatus,
   fetchIOSAppTestRequests,
   fetchIOSApps,
+  syncIOSAppStatusNow,
   fetchIOSCertificates,
   fetchIOSProfiles,
   fetchIOSAppSignTasks,
@@ -111,6 +113,18 @@ const ascSyncMetaBtn = byId<HTMLButtonElement>("iosASCSyncMetaBtn");
 const ascBindingStatus = byId<HTMLElement>("iosASCBindingStatus");
 
 const ascInviteArea = byId<HTMLElement>("iosASCInviteArea");
+// iosdist M5: ops status snapshot tile.
+const statusCard = byId<HTMLElement>("iosStatusCard");
+const statusSyncBtn = byId<HTMLButtonElement>("iosStatusSyncBtn");
+const statusSyncMeta = byId<HTMLElement>("iosStatusSyncMeta");
+const statusAppStoreStateEl = byId<HTMLElement>("iosStatusAppStoreState");
+const statusAppStoreVersionEl = byId<HTMLElement>("iosStatusAppStoreVersion");
+const statusAppStoreDatesEl = byId<HTMLElement>("iosStatusAppStoreDates");
+const statusBuildVersionEl = byId<HTMLElement>("iosStatusBuildVersion");
+const statusBuildStateEl = byId<HTMLElement>("iosStatusBuildState");
+const statusBuildExpiryEl = byId<HTMLElement>("iosStatusBuildExpiry");
+const statusTesterCountEl = byId<HTMLElement>("iosStatusTesterCount");
+const statusErrorEl = byId<HTMLElement>("iosStatusError");
 const inviteEmailInput = byId<HTMLInputElement>("iosInviteEmail");
 const inviteFirstInput = byId<HTMLInputElement>("iosInviteFirst");
 const inviteLastInput = byId<HTMLInputElement>("iosInviteLast");
@@ -373,6 +387,16 @@ function renderAppDetail(): void {
 
   // Pull test requests for this app every time the user switches to it.
   void loadTestRequests();
+
+  // iosdist M5: ops status snapshot. Hidden when ASC isn't bound — the
+  // tile would only show "—" placeholders. Bound: fetch cached state
+  // (worker refreshes every 15 min) and render badges.
+  if (app.asc_app_id) {
+    statusCard.hidden = false;
+    void loadIOSAppStatus(app.id);
+  } else {
+    statusCard.hidden = true;
+  }
 
   if (activeVersions.length === 0) {
     versionListEl.innerHTML = `<li class="chat-empty">还没有版本，请上传 IPA。</li>`;
@@ -1449,6 +1473,149 @@ document.getElementById("logoutBtn")?.addEventListener("click", async () => {
     await logout();
   } finally {
     window.location.replace("/login.html");
+  }
+});
+
+// iosdist M5: ops status snapshot — render helpers.
+//
+// State enum → (Chinese label, color). Anything not in the table renders
+// as the raw ASC enum so an unfamiliar state still shows something.
+const APPSTORE_STATE_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  READY_FOR_SALE:            { label: "已上架",            color: "#166534", bg: "#dcfce7" },
+  PROCESSING_FOR_APP_STORE:  { label: "处理中",            color: "#9a3412", bg: "#ffedd5" },
+  PENDING_DEVELOPER_RELEASE: { label: "待开发者发布",      color: "#9a3412", bg: "#ffedd5" },
+  IN_REVIEW:                 { label: "审核中",            color: "#9a3412", bg: "#ffedd5" },
+  WAITING_FOR_REVIEW:        { label: "等待审核",          color: "#9a3412", bg: "#ffedd5" },
+  REJECTED:                  { label: "被拒",              color: "#991b1b", bg: "#fee2e2" },
+  METADATA_REJECTED:         { label: "元数据被拒",        color: "#991b1b", bg: "#fee2e2" },
+  DEVELOPER_REJECTED:        { label: "开发者撤回",        color: "#991b1b", bg: "#fee2e2" },
+  PREPARE_FOR_SUBMISSION:    { label: "准备提交",          color: "#374151", bg: "#e5e7eb" },
+  REPLACED_WITH_NEW_VERSION: { label: "已被新版本替换",    color: "#374151", bg: "#e5e7eb" },
+};
+
+const TF_BETA_STATE_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  READY_FOR_BETA_TESTING:     { label: "测试中",       color: "#166534", bg: "#dcfce7" },
+  IN_BETA_TESTING:            { label: "测试中",       color: "#166534", bg: "#dcfce7" },
+  BETA_APPROVED:              { label: "测试已批准",   color: "#166534", bg: "#dcfce7" },
+  IN_BETA_REVIEW:             { label: "TF 审核中",    color: "#9a3412", bg: "#ffedd5" },
+  READY_FOR_BETA_SUBMISSION:  { label: "待提交审核",   color: "#9a3412", bg: "#ffedd5" },
+  WAITING_FOR_BETA_REVIEW:    { label: "等待 TF 审核", color: "#9a3412", bg: "#ffedd5" },
+  BETA_REJECTED:              { label: "TF 被拒",      color: "#991b1b", bg: "#fee2e2" },
+  EXPIRED:                    { label: "已过期",       color: "#991b1b", bg: "#fee2e2" },
+  MISSING_EXPORT_COMPLIANCE:  { label: "缺合规声明",   color: "#991b1b", bg: "#fee2e2" },
+  PROCESSING:                 { label: "Apple 处理中", color: "#374151", bg: "#e5e7eb" },
+  PROCESSING_EXCEPTION:       { label: "处理异常",     color: "#991b1b", bg: "#fee2e2" },
+};
+
+function renderStateBadge(el: HTMLElement, value: string, table: typeof APPSTORE_STATE_BADGE): void {
+  if (!value) {
+    el.innerHTML = '<span class="meta-subtitle">—</span>';
+    return;
+  }
+  const cfg = table[value] ?? { label: value, color: "#374151", bg: "#e5e7eb" };
+  el.innerHTML = `<span style="display:inline-block; padding:2px 10px; border-radius:10px; font-size:12px; font-weight:600; background:${cfg.bg}; color:${cfg.color};">${cfg.label}</span>`;
+}
+
+function fmtDate(iso?: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toISOString().slice(0, 10);
+}
+
+function fmtAgo(iso?: string): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return iso;
+  const sec = Math.floor((Date.now() - t) / 1000);
+  if (sec < 60) return `${sec}s 前`;
+  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时前`;
+  return `${Math.floor(sec / 86400)} 天前`;
+}
+
+function fmtDaysUntil(iso?: string): { text: string; warn: boolean } {
+  if (!iso) return { text: "", warn: false };
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return { text: "", warn: false };
+  const days = Math.ceil(ms / 86400000);
+  if (days < 0) return { text: `已过期 ${-days} 天`, warn: true };
+  if (days === 0) return { text: "今天过期", warn: true };
+  if (days <= 14) return { text: `${days} 天后过期`, warn: true };
+  return { text: `${days} 天后过期`, warn: false };
+}
+
+async function loadIOSAppStatus(appID: number): Promise<void> {
+  statusErrorEl.hidden = true;
+  statusErrorEl.textContent = "";
+  statusSyncMeta.textContent = "加载中...";
+  try {
+    const { data } = await fetchIOSAppStatus(appID);
+    renderIOSAppStatus(data.status);
+  } catch (err) {
+    statusSyncMeta.textContent = "加载失败";
+    statusErrorEl.hidden = false;
+    statusErrorEl.textContent = (err as Error).message;
+  }
+}
+
+function renderIOSAppStatus(status: import("./api/iosdist.js").IOSAppStatus | null): void {
+  if (!status) {
+    statusSyncMeta.textContent = "等待首次后台同步（最多 15 分钟），或点右侧「立即同步」。";
+    renderStateBadge(statusAppStoreStateEl, "", APPSTORE_STATE_BADGE);
+    statusAppStoreVersionEl.textContent = "—";
+    statusAppStoreDatesEl.textContent = "";
+    statusBuildVersionEl.textContent = "—";
+    renderStateBadge(statusBuildStateEl, "", TF_BETA_STATE_BADGE);
+    statusBuildExpiryEl.textContent = "";
+    statusTesterCountEl.textContent = "—";
+    return;
+  }
+  statusSyncMeta.textContent = `上次同步：${fmtAgo(status.synced_at)}`;
+  if (status.sync_error) {
+    statusErrorEl.hidden = false;
+    statusErrorEl.textContent = `同步错误：${status.sync_error}`;
+  } else {
+    statusErrorEl.hidden = true;
+  }
+
+  // App Store side
+  renderStateBadge(statusAppStoreStateEl, status.appstore_state, APPSTORE_STATE_BADGE);
+  statusAppStoreVersionEl.textContent = status.appstore_version ? `版本 ${status.appstore_version}` : "无已提交版本";
+  const dateParts: string[] = [];
+  if (status.appstore_submitted_at) dateParts.push(`提交 ${fmtDate(status.appstore_submitted_at)}`);
+  if (status.appstore_released_at) dateParts.push(`上架 ${fmtDate(status.appstore_released_at)}`);
+  statusAppStoreDatesEl.textContent = dateParts.join(" · ");
+
+  // TestFlight build side
+  statusBuildVersionEl.textContent = status.tf_build_version ? `Build ${status.tf_build_version}` : "无 build";
+  renderStateBadge(statusBuildStateEl, status.tf_beta_state, TF_BETA_STATE_BADGE);
+  const exp = fmtDaysUntil(status.tf_expires_at);
+  if (exp.text) {
+    statusBuildExpiryEl.innerHTML = exp.warn
+      ? `<span style="color:var(--danger, #c00); font-weight:600;">⚠ ${exp.text}</span>`
+      : exp.text;
+  } else {
+    statusBuildExpiryEl.textContent = "";
+  }
+
+  // Tester count
+  statusTesterCountEl.textContent = String(status.beta_tester_count);
+}
+
+statusSyncBtn?.addEventListener("click", async () => {
+  if (!activeAppID) return;
+  statusSyncBtn.disabled = true;
+  statusSyncMeta.textContent = "正在从 ASC 拉取...";
+  try {
+    const { data } = await syncIOSAppStatusNow(activeAppID);
+    renderIOSAppStatus(data.status);
+  } catch (err) {
+    statusErrorEl.hidden = false;
+    statusErrorEl.textContent = `同步失败：${(err as Error).message}`;
+    statusSyncMeta.textContent = "失败";
+  } finally {
+    statusSyncBtn.disabled = false;
   }
 });
 

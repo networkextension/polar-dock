@@ -956,3 +956,181 @@ func summarizeASCError(body []byte) string {
 	}
 	return string(body)
 }
+
+// ---- M-iosdist-status: ops snapshot pulls ----
+//
+// Three thin reads used by the iosdist status sync worker. Each returns
+// nil + nil when the app has nothing to report (no submitted version, no
+// build uploaded, no testers configured) — caller treats nil as "empty
+// but successful" and stores blank fields in the snapshot row.
+
+// ascLatestAppStoreVersionState is the App-Store-side review/release
+// state. It folds three ASC concepts into one snapshot:
+//   - versionString of the most recently created appStoreVersion
+//   - appStoreState enum (READY_FOR_SALE, IN_REVIEW, REJECTED, ...)
+//   - createdDate (when it was first submitted to Apple) +
+//     earliestReleaseDate / releaseDate (when it actually went live, if
+//     applicable — null while still in review)
+type ascLatestAppStoreVersionState struct {
+	Version     string
+	State       string
+	SubmittedAt *time.Time
+	ReleasedAt  *time.Time
+}
+
+func (s *Server) ascLatestAppStoreVersionState(ctx context.Context, cfg *IOSASCConfig, appID string) (*ascLatestAppStoreVersionState, error) {
+	q := url.Values{}
+	q.Set("limit", "10") // ASC rejects sort on the nested route; pick latest client-side
+	q.Set("fields[appStoreVersions]", "createdDate,versionString,appStoreState,earliestReleaseDate,releaseDate")
+	body, err := s.ascDoGET(ctx, cfg, "/v1/apps/"+url.PathEscape(appID)+"/appStoreVersions?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Data []struct {
+			Attributes struct {
+				VersionString       string     `json:"versionString"`
+				AppStoreState       string     `json:"appStoreState"`
+				CreatedDate         time.Time  `json:"createdDate"`
+				EarliestReleaseDate *time.Time `json:"earliestReleaseDate"`
+				ReleaseDate         *time.Time `json:"releaseDate"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("asc appStoreVersions decode: %w", err)
+	}
+	if len(resp.Data) == 0 {
+		return nil, nil
+	}
+	latest := 0
+	for i := 1; i < len(resp.Data); i++ {
+		if resp.Data[i].Attributes.CreatedDate.After(resp.Data[latest].Attributes.CreatedDate) {
+			latest = i
+		}
+	}
+	attr := resp.Data[latest].Attributes
+	out := &ascLatestAppStoreVersionState{
+		Version: attr.VersionString,
+		State:   attr.AppStoreState,
+	}
+	if !attr.CreatedDate.IsZero() {
+		t := attr.CreatedDate
+		out.SubmittedAt = &t
+	}
+	// Prefer releaseDate (when Apple actually shipped it) over
+	// earliestReleaseDate (when the developer requested it).
+	if attr.ReleaseDate != nil && !attr.ReleaseDate.IsZero() {
+		out.ReleasedAt = attr.ReleaseDate
+	} else if attr.EarliestReleaseDate != nil && !attr.EarliestReleaseDate.IsZero() {
+		out.ReleasedAt = attr.EarliestReleaseDate
+	}
+	return out, nil
+}
+
+// ascLatestBuildStatus is the TestFlight-side state of the most-recent
+// build: processingState (PROCESSING / VALID / INVALID), external beta
+// review state (IN_BETA_REVIEW / BETA_APPROVED / BETA_REJECTED / ...),
+// uploadedDate, expirationDate (= uploadedDate + 90d for TF). The beta
+// state comes from the buildBetaDetail relationship — one extra ASC
+// call per app per cycle. Returns nil when the app has no builds.
+type ascLatestBuildStatus struct {
+	Version         string
+	ProcessingState string
+	BetaState       string
+	UploadedAt      *time.Time
+	ExpiresAt       *time.Time
+}
+
+func (s *Server) ascLatestBuildStatus(ctx context.Context, cfg *IOSASCConfig, appID string) (*ascLatestBuildStatus, error) {
+	q := url.Values{}
+	q.Set("limit", "1")
+	q.Set("sort", "-uploadedDate")
+	q.Set("filter[app]", appID)
+	q.Set("include", "buildBetaDetail")
+	q.Set("fields[builds]", "version,processingState,uploadedDate,expirationDate,buildBetaDetail")
+	q.Set("fields[buildBetaDetails]", "externalBuildState,internalBuildState")
+	body, err := s.ascDoGET(ctx, cfg, "/v1/builds?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Data []struct {
+			Attributes struct {
+				Version         string     `json:"version"`
+				ProcessingState string     `json:"processingState"`
+				UploadedDate    *time.Time `json:"uploadedDate"`
+				ExpirationDate  *time.Time `json:"expirationDate"`
+			} `json:"attributes"`
+			Relationships struct {
+				BuildBetaDetail struct {
+					Data *struct {
+						ID string `json:"id"`
+					} `json:"data"`
+				} `json:"buildBetaDetail"`
+			} `json:"relationships"`
+		} `json:"data"`
+		Included []struct {
+			Type       string `json:"type"`
+			ID         string `json:"id"`
+			Attributes struct {
+				ExternalBuildState string `json:"externalBuildState"`
+				InternalBuildState string `json:"internalBuildState"`
+			} `json:"attributes"`
+		} `json:"included"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("asc latest build decode: %w", err)
+	}
+	if len(resp.Data) == 0 {
+		return nil, nil
+	}
+	d := resp.Data[0]
+	out := &ascLatestBuildStatus{
+		Version:         d.Attributes.Version,
+		ProcessingState: d.Attributes.ProcessingState,
+		UploadedAt:      d.Attributes.UploadedDate,
+		ExpiresAt:       d.Attributes.ExpirationDate,
+	}
+	if d.Relationships.BuildBetaDetail.Data != nil {
+		wantID := d.Relationships.BuildBetaDetail.Data.ID
+		for _, inc := range resp.Included {
+			if inc.Type == "buildBetaDetails" && inc.ID == wantID {
+				// External state is what public testers see. Internal is
+				// only relevant when no external state is set yet (build
+				// not submitted to external review).
+				out.BetaState = inc.Attributes.ExternalBuildState
+				if out.BetaState == "" {
+					out.BetaState = inc.Attributes.InternalBuildState
+				}
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// ascCountBetaTesters returns the total number of beta testers attached
+// to the app. ASC exposes the count via the page envelope's meta.paging.total
+// field — we use limit=1 and read total without paginating. 0 is a valid
+// result (no testers added yet); errors propagate.
+func (s *Server) ascCountBetaTesters(ctx context.Context, cfg *IOSASCConfig, appID string) (int, error) {
+	q := url.Values{}
+	q.Set("limit", "1")
+	q.Set("fields[betaTesters]", "email") // smallest field to minimise payload
+	body, err := s.ascDoGET(ctx, cfg, "/v1/apps/"+url.PathEscape(appID)+"/betaTesters?"+q.Encode())
+	if err != nil {
+		return 0, err
+	}
+	var resp struct {
+		Meta struct {
+			Paging struct {
+				Total int `json:"total"`
+			} `json:"paging"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return 0, fmt.Errorf("asc betaTesters count decode: %w", err)
+	}
+	return resp.Meta.Paging.Total, nil
+}

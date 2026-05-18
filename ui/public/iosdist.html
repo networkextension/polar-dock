@@ -130,6 +130,37 @@
                   </div>
                 </header>
 
+                <!-- iosdist M5: ASC status snapshot (review state, latest build, TF testers) -->
+                <section class="settings-section-card" id="iosStatusCard" hidden>
+                  <div class="settings-section-heading">
+                    <div>
+                      <div class="settings-section-title">运营状态</div>
+                      <p class="settings-section-text" id="iosStatusSyncMeta">—</p>
+                    </div>
+                    <button id="iosStatusSyncBtn" class="btn-inline btn-secondary" type="button" title="强制立即从 ASC 拉一遍最新数据">立即同步</button>
+                  </div>
+                  <div id="iosStatusGrid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-top:8px;">
+                    <div class="status-tile" style="padding:10px 12px; background:var(--lp-bg-elev, rgba(0,0,0,0.03)); border-radius:8px;">
+                      <div class="meta-subtitle" style="font-size:11px; letter-spacing:0.04em;">App Store</div>
+                      <div id="iosStatusAppStoreState" style="font-size:15px; font-weight:600; margin-top:4px;">—</div>
+                      <div id="iosStatusAppStoreVersion" class="meta-subtitle" style="margin-top:2px;">—</div>
+                      <div id="iosStatusAppStoreDates" class="meta-subtitle" style="margin-top:4px; font-size:11px;"></div>
+                    </div>
+                    <div class="status-tile" style="padding:10px 12px; background:var(--lp-bg-elev, rgba(0,0,0,0.03)); border-radius:8px;">
+                      <div class="meta-subtitle" style="font-size:11px; letter-spacing:0.04em;">最新 Build</div>
+                      <div id="iosStatusBuildVersion" style="font-size:15px; font-weight:600; margin-top:4px;">—</div>
+                      <div id="iosStatusBuildState" class="meta-subtitle" style="margin-top:2px;">—</div>
+                      <div id="iosStatusBuildExpiry" class="meta-subtitle" style="margin-top:4px; font-size:11px;"></div>
+                    </div>
+                    <div class="status-tile" style="padding:10px 12px; background:var(--lp-bg-elev, rgba(0,0,0,0.03)); border-radius:8px;">
+                      <div class="meta-subtitle" style="font-size:11px; letter-spacing:0.04em;">公测人数</div>
+                      <div id="iosStatusTesterCount" style="font-size:22px; font-weight:700; margin-top:4px;">—</div>
+                      <div class="meta-subtitle" style="margin-top:2px;">绑定的 Beta 组实时人数</div>
+                    </div>
+                  </div>
+                  <div id="iosStatusError" class="status-text" hidden style="color:var(--danger, #c00); margin-top:8px; font-size:12px;"></div>
+                </section>
+
                 <section class="settings-section-card">
                   <div class="settings-section-heading">
                     <div>

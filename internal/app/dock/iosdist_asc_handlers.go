@@ -698,3 +698,75 @@ func (s *Server) respondASCError(c *gin.Context, err error) {
 	}
 	c.JSON(http.StatusBadGateway, gin.H{"error": "调用 ASC API 失败：" + err.Error()})
 }
+
+// handleIOSAppStatusGet returns the cached snapshot. 200 with body
+// {"status": null} when no snapshot exists yet — the UI shows "等待
+// 首次同步". Workspace-scoped; cross-tenant id returns 404.
+func (s *Server) handleIOSAppStatusGet(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, ok := parseInt64Param(c, "id")
+	if !ok {
+		return
+	}
+	app, err := s.getIOSApp(id, workspaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if app == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
+		return
+	}
+	st, err := s.getIOSAppStatus(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": st})
+}
+
+// handleIOSAppStatusSync forces a single-app refresh and returns the
+// freshly-written snapshot. 400 when the app has no ASC binding (the
+// worker would skip it anyway, but a user-triggered call deserves a
+// clear error). 502 on ASC failure — the row's sync_error is still
+// updated so the next GET shows the failure.
+func (s *Server) handleIOSAppStatusSync(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, ok := parseInt64Param(c, "id")
+	if !ok {
+		return
+	}
+	app, err := s.getIOSApp(id, workspaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if app == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "应用不存在"})
+		return
+	}
+	if strings.TrimSpace(app.ASCAppID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "应用尚未绑定 ASC App ID，无法同步"})
+		return
+	}
+	cfg, _ := s.requireASCConfig(c, workspaceID)
+	if cfg == nil {
+		return
+	}
+	if err := s.syncOneIOSAppStatus(c.Request.Context(), app, cfg); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "同步失败：" + err.Error()})
+		return
+	}
+	st, err := s.getIOSAppStatus(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": st})
+}
