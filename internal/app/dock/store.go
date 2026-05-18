@@ -2958,6 +2958,64 @@ ALTER TABLE wg_devices ADD  CONSTRAINT wg_devices_d_idx_range CHECK (d_index BET
 CREATE INDEX IF NOT EXISTS ix_wg_devices_hub ON wg_devices(hub_id) WHERE removed_at IS NULL;
 CREATE INDEX IF NOT EXISTS ix_wg_sites_hub ON wg_sites(hub_id);
 CREATE INDEX IF NOT EXISTS ix_wg_tokens_hub ON wg_tokens(hub_id);
+
+-- ============================================================
+-- LLM billing (B1): admin-set pricing per shared llm_config,
+-- per-team monthly USD budget against a specific shared config,
+-- and an application audit row when a team requests access.
+--
+-- Workflow:
+--   1. Admin sets price_per_million_input_usd + _output_usd on
+--      a shared llm_configs row.
+--   2. Team POSTs /api/llm-config-applications, auto-approved →
+--      creates an llm_config_team_quotas row at admin default
+--      monthly_budget_usd (env LLM_TEAM_DEFAULT_MONTHLY_BUDGET_USD).
+--   3. Chat handler enforces BOTH per-token (Phase 1 P4) AND
+--      team-aggregate quota; 402 when either tripped.
+-- ============================================================
+
+ALTER TABLE llm_configs
+    ADD COLUMN IF NOT EXISTS price_per_million_input_usd NUMERIC(10,4),
+    ADD COLUMN IF NOT EXISTS price_per_million_output_usd NUMERIC(10,4);
+
+CREATE TABLE IF NOT EXISTS llm_config_team_quotas (
+    id BIGSERIAL PRIMARY KEY,
+    llm_config_id BIGINT NOT NULL REFERENCES llm_configs(id) ON DELETE CASCADE,
+    workspace_id  TEXT   NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    monthly_budget_usd NUMERIC(10,4) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (llm_config_id, workspace_id)
+);
+CREATE INDEX IF NOT EXISTS ix_llm_config_team_quotas_workspace
+    ON llm_config_team_quotas(workspace_id);
+
+CREATE TABLE IF NOT EXISTS llm_config_applications (
+    id BIGSERIAL PRIMARY KEY,
+    llm_config_id BIGINT NOT NULL REFERENCES llm_configs(id) ON DELETE CASCADE,
+    workspace_id  TEXT   NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    requested_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    note TEXT NOT NULL DEFAULT '',
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at TIMESTAMPTZ,
+    decided_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    granted_budget_usd NUMERIC(10,4) NOT NULL DEFAULT 0
+);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'llm_config_applications_status_check'
+    ) THEN
+        ALTER TABLE llm_config_applications
+            ADD CONSTRAINT llm_config_applications_status_check
+            CHECK (status IN ('pending', 'approved', 'rejected'));
+    END IF;
+END$$;
+CREATE INDEX IF NOT EXISTS ix_llm_config_applications_workspace
+    ON llm_config_applications(workspace_id, applied_at DESC);
+CREATE INDEX IF NOT EXISTS ix_llm_config_applications_status
+    ON llm_config_applications(status, applied_at DESC);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

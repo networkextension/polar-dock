@@ -99,3 +99,22 @@ func estimateLLMProxyCallCost(modelResolved string, promptTokens, completionToke
 	}
 	return 0, false
 }
+
+// estimateLLMProxyCallCostWithConfig is the B1 cost-lookup wrapper:
+// when the admin has set per-1M-token override prices on the
+// llm_configs row (price_per_million_{input,output}_usd), use those
+// instead of the hardcoded prefix-match table. Falls back to the
+// hardcoded path when either column is NULL.
+//
+// Caller passes llmConfigID = 0 for the legacy direct-CLI path
+// (skip override lookup, prefix-match only).
+func (s *Server) estimateLLMProxyCallCostWithConfig(llmConfigID int64, modelResolved string, promptTokens, completionTokens int) (float64, bool) {
+	if llmConfigID > 0 && (promptTokens > 0 || completionTokens > 0) {
+		if p, err := s.getLLMConfigPricing(llmConfigID); err == nil && p != nil && p.PricePerMillionInput != nil && p.PricePerMillionOutput != nil {
+			cost := float64(promptTokens)*(*p.PricePerMillionInput)/1_000_000.0 +
+				float64(completionTokens)*(*p.PricePerMillionOutput)/1_000_000.0
+			return cost, true
+		}
+	}
+	return estimateLLMProxyCallCost(modelResolved, promptTokens, completionTokens)
+}

@@ -743,6 +743,15 @@ func (s *Server) registerRoutes() {
 		api.GET("/llm-configs/shared/:shareId", s.AuthMiddleware(), s.handleLLMConfigGetByShareID)
 		api.PUT("/llm-configs/:id", s.AuthMiddleware(), s.handleLLMConfigUpdate)
 		api.DELETE("/llm-configs/:id", s.AuthMiddleware(), s.handleLLMConfigDelete)
+		// LLM billing (B1) — shared-config marketplace, applications,
+		// and per-team budgets.
+		api.GET("/llm-configs/marketplace", s.AuthMiddleware(), s.handleSharedLLMConfigList)
+		api.GET("/llm-config-applications", s.AuthMiddleware(), s.handleLLMConfigApplicationsListMine)
+		api.POST("/llm-config-applications", s.AuthMiddleware(), s.handleLLMConfigApply)
+		api.PUT("/admin/llm-configs/:id/pricing", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigPricingUpdate)
+		api.GET("/admin/llm-config-team-quotas", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigTeamQuotaList)
+		api.PUT("/admin/llm-config-team-quotas", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigTeamQuotaUpsert)
+		api.GET("/admin/llm-config-applications", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigApplicationsList)
 		// LLM proxy — admin-gated token CRUD. The plaintext is shown
 		// once at create-time and never returnable again.
 		api.GET("/llm-proxy/dashboard-stats", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyDashboardStats)
