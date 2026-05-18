@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -201,6 +202,16 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 	}
 	resp, err := s.aiAgent.requestChatCompletion(runtimeConfig, payload)
 	if err != nil {
+		// Upstream provider out of funds → surface as 402 not opaque 502,
+		// so SDK clients see insufficient_quota (OpenAI-compat) and stop
+		// retrying. errUpstreamOutOfCredit is set by classifyUpstreamCreditError
+		// when the upstream returned 402 OR 403+credit-keyword.
+		if errors.Is(err, errUpstreamOutOfCredit) {
+			s.recordProxyCallFailure(tok, req.Model, cfg.Model, cfg.ID, http.StatusPaymentRequired, "upstream out of credit: "+err.Error(), start)
+			s.metricsRegistry.recordLLMProxyCall(tok.Name, cfg.Model, "nonstream", http.StatusPaymentRequired, time.Since(start), 0, 0)
+			openAIError(c, http.StatusPaymentRequired, "insufficient_quota", "upstream LLM provider account is out of credit — top up or switch model: "+err.Error())
+			return
+		}
 		s.recordProxyCallFailure(tok, req.Model, cfg.Model, cfg.ID, http.StatusBadGateway, "upstream: "+err.Error(), start)
 		s.metricsRegistry.recordLLMProxyCall(tok.Name, cfg.Model, "nonstream", http.StatusBadGateway, time.Since(start), 0, 0)
 		openAIError(c, http.StatusBadGateway, "upstream_error", "upstream LLM error: "+err.Error())
@@ -373,19 +384,31 @@ func (s *Server) streamLLMProxyChatCompletion(c *gin.Context, tok *LLMProxyToken
 	)
 	if err != nil {
 		// Try to deliver an error frame; even if it fails the audit
-		// row still records the upstream failure.
+		// row still records the upstream failure. Credit-exhaustion
+		// gets a typed code so SDK clients can distinguish "retry
+		// later" from "give up, top up account".
+		errMessage := "upstream LLM error: " + err.Error()
+		errType := "upstream_error"
+		errCode := "upstream_error"
+		recordedStatus := http.StatusBadGateway
+		if errors.Is(err, errUpstreamOutOfCredit) {
+			errMessage = "upstream LLM provider account is out of credit — top up or switch model: " + err.Error()
+			errType = "insufficient_quota"
+			errCode = "insufficient_quota"
+			recordedStatus = http.StatusPaymentRequired
+		}
 		_ = emit(map[string]any{
 			"error": map[string]any{
-				"message": "upstream LLM error: " + err.Error(),
-				"type":    "upstream_error",
-				"code":    "upstream_error",
+				"message": errMessage,
+				"type":    errType,
+				"code":    errCode,
 			},
 		})
 		_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
 		c.Writer.Flush()
 		elapsed := time.Since(start)
-		s.recordProxyCallFailure(tok, modelRequested, modelResolved, cfg.ID, http.StatusBadGateway, "upstream: "+err.Error(), start)
-		s.metricsRegistry.recordLLMProxyCall(tok.Name, modelResolved, "stream", http.StatusBadGateway, elapsed, 0, 0)
+		s.recordProxyCallFailure(tok, modelRequested, modelResolved, cfg.ID, recordedStatus, "upstream: "+err.Error(), start)
+		s.metricsRegistry.recordLLMProxyCall(tok.Name, modelResolved, "stream", recordedStatus, elapsed, 0, 0)
 		return
 	}
 
