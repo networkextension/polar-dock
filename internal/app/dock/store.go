@@ -3065,6 +3065,55 @@ CREATE TABLE IF NOT EXISTS llm_config_team_recharges (
 );
 CREATE INDEX IF NOT EXISTS ix_llm_config_team_recharges_lookup
     ON llm_config_team_recharges(workspace_id, llm_config_id, created_at DESC);
+
+-- expense (家庭账本) — L1 schema. See doc/laopo/design.md.
+--
+-- expense_categories holds the per-workspace dictionary; first read for a
+-- workspace bootstraps the 7 presets (生活/教育/医疗/交通/娱乐/大件/其他).
+-- expenses references it with ON DELETE SET NULL so deleting a category
+-- doesn't lose flow rows.
+CREATE TABLE IF NOT EXISTS expense_categories (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    icon TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '#888',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_hidden BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_expense_categories_workspace_name
+    ON expense_categories(workspace_id, name);
+
+-- expenses — the flow table. consume_time is TIMESTAMPTZ (time-zone aware)
+-- because old chat-style ledgers got bitten by storing local-only dates.
+-- has_detail_time tells the UI whether to render "05-19 14:23" or just
+-- "05-19" (OCR sometimes only catches the date, e.g. handwritten 小票).
+-- status: 0=待确认 (OCR draft) / 1=已确认.
+-- raw_image_id points to attachments(id) which is TEXT (UUID), nullable
+-- for manual entries.
+CREATE TABLE IF NOT EXISTS expenses (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    amount NUMERIC(12, 2) NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'CNY',
+    merchant TEXT NOT NULL DEFAULT '',
+    category_id BIGINT REFERENCES expense_categories(id) ON DELETE SET NULL,
+    consume_time TIMESTAMPTZ NOT NULL,
+    has_detail_time BOOLEAN NOT NULL DEFAULT FALSE,
+    region TEXT NOT NULL DEFAULT '',
+    raw_image_id TEXT REFERENCES attachments(id) ON DELETE SET NULL,
+    status SMALLINT NOT NULL DEFAULT 1,
+    confidence SMALLINT NOT NULL DEFAULT 100,
+    remark TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_workspace_consume
+    ON expenses(workspace_id, consume_time DESC);
+CREATE INDEX IF NOT EXISTS idx_expenses_workspace_status
+    ON expenses(workspace_id, status, created_at DESC);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
