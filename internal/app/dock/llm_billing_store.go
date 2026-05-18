@@ -414,3 +414,28 @@ func llmTeamDefaultMonthlyBudget() float64 {
 	}
 	return 10
 }
+
+// checkChatBillingGate mirrors the dual gate in llm_proxy_chat_handlers.go
+// (4b monthly_budget + 4c credit_balance) for the in-app chat path.
+// Returns (blocked, userMessage). Absent quota row + absent recharge =
+// back-compat free use, matching the proxy. Caller is the chat task
+// handler in ai_agent.go; user message goes straight into the failed
+// bot message bubble (no openAIError equivalent here — it's a chat).
+func (s *Server) checkChatBillingGate(workspaceID string, llmConfigID int64) (bool, string) {
+	if workspaceID == "" || llmConfigID <= 0 {
+		return false, ""
+	}
+	if quota, qErr := s.getLLMConfigTeamQuota(llmConfigID, workspaceID); qErr == nil && quota != nil && quota.MonthlyBudgetUSD > 0 {
+		spend, _ := s.teamLLMConfigMonthSpend(workspaceID, llmConfigID)
+		if spend >= quota.MonthlyBudgetUSD {
+			return true, fmt.Sprintf("本月该 LLM 的团队额度已用完（$%.2f / $%.2f），请联系管理员上调或等待下个月重置。", spend, quota.MonthlyBudgetUSD)
+		}
+	}
+	if hasRecharge, _ := s.teamHasLLMConfigRecharge(workspaceID, llmConfigID); hasRecharge {
+		balance, _ := s.teamLLMConfigBalance(workspaceID, llmConfigID)
+		if balance <= 0 {
+			return true, fmt.Sprintf("该 LLM 的团队充值余额已耗尽（当前 $%.2f），请联系管理员充值后再试。", balance)
+		}
+	}
+	return false, ""
+}
