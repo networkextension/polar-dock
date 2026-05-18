@@ -40,6 +40,11 @@ const tokenTbody = byId<HTMLTableSectionElement>("tokenTbody");
 const tokenEmpty = byId<HTMLElement>("tokenEmpty");
 const tokenLoading = byId<HTMLElement>("tokenLoading");
 const tokenCount = byId<HTMLElement>("tokenCount");
+const showRevokedToggle = byId<HTMLInputElement>("showRevokedToggle");
+
+// Revoked tokens accumulate over time (test keys, rotated keys) and
+// add visual noise. Default: hide them; flip the toggle to audit.
+let allTokens: LLMProxyToken[] = [];
 
 const createModal = byId<HTMLElement>("createModal");
 const createCloseBtn = byId<HTMLButtonElement>("createCloseBtn");
@@ -173,17 +178,33 @@ async function refreshTokenList(): Promise<void> {
 
   try {
     const { data } = await listProxyTokens();
-    const items = data.tokens ?? [];
-    tokenTbody.innerHTML = "";
-    items.forEach((tok) => tokenTbody.appendChild(renderTokenRow(tok)));
-    tokenCount.textContent = `${items.length} 个`;
-    tokenTable.hidden = items.length === 0;
-    tokenEmpty.hidden = items.length !== 0;
+    allTokens = data.tokens ?? [];
+    renderTokenTable();
   } catch (err) {
     tokenEmpty.hidden = false;
     tokenEmpty.textContent = `加载失败：${(err as Error).message}`;
   } finally {
     tokenLoading.hidden = true;
+  }
+}
+
+function renderTokenTable(): void {
+  const showRevoked = showRevokedToggle?.checked ?? false;
+  const visible = showRevoked ? allTokens : allTokens.filter((t) => !t.revoked_at);
+  const revokedCount = allTokens.filter((t) => t.revoked_at).length;
+
+  tokenTbody.innerHTML = "";
+  visible.forEach((tok) => tokenTbody.appendChild(renderTokenRow(tok)));
+
+  if (revokedCount > 0 && !showRevoked) {
+    tokenCount.textContent = `${visible.length} 个 (隐藏 ${revokedCount} 个已撤销)`;
+  } else {
+    tokenCount.textContent = `${visible.length} 个`;
+  }
+  tokenTable.hidden = visible.length === 0;
+  tokenEmpty.hidden = visible.length !== 0;
+  if (visible.length === 0 && allTokens.length > 0) {
+    tokenEmpty.textContent = '没有启用中的 token。勾选「显示已撤销」查看历史。';
   }
 }
 
@@ -592,6 +613,7 @@ async function copyToClipboard(value: string, btn: HTMLButtonElement): Promise<v
 }
 
 newTokenBtn.addEventListener("click", openCreateModal);
+showRevokedToggle?.addEventListener("change", () => renderTokenTable());
 createCloseBtn.addEventListener("click", closeCreateModal);
 createCancelBtn.addEventListener("click", closeCreateModal);
 createSubmitBtn.addEventListener("click", () => void onSubmitCreate());
