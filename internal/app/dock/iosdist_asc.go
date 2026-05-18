@@ -1110,15 +1110,28 @@ func (s *Server) ascLatestBuildStatus(ctx context.Context, cfg *IOSASCConfig, ap
 	return out, nil
 }
 
-// ascCountBetaTesters returns the total number of beta testers attached
-// to the app. ASC exposes the count via the page envelope's meta.paging.total
-// field — we use limit=1 and read total without paginating. 0 is a valid
-// result (no testers added yet); errors propagate.
-func (s *Server) ascCountBetaTesters(ctx context.Context, cfg *IOSASCConfig, appID string) (int, error) {
+// ascCountBetaTesters returns the public-test participant count. Prefers
+// the bound Beta Group's testers (/v1/betaGroups/:id/betaTesters), where
+// 99% of testers actually live: the standard ASC workflow is "create
+// Beta Group → add testers to group → invite". Falls back to the
+// app-direct list (/v1/apps/:id/betaTesters) when no group is bound —
+// that endpoint only returns individually-attached testers (the rare
+// "Individual Testers" tab in ASC). Pre-fix this counted app-direct
+// only and almost always showed 0.
+//
+// 0 is a valid result; errors propagate. Reads meta.paging.total via
+// limit=1 so we don't paginate.
+func (s *Server) ascCountBetaTesters(ctx context.Context, cfg *IOSASCConfig, appID, betaGroupID string) (int, error) {
+	var path string
+	if strings.TrimSpace(betaGroupID) != "" {
+		path = "/v1/betaGroups/" + url.PathEscape(betaGroupID) + "/betaTesters"
+	} else {
+		path = "/v1/apps/" + url.PathEscape(appID) + "/betaTesters"
+	}
 	q := url.Values{}
 	q.Set("limit", "1")
 	q.Set("fields[betaTesters]", "email") // smallest field to minimise payload
-	body, err := s.ascDoGET(ctx, cfg, "/v1/apps/"+url.PathEscape(appID)+"/betaTesters?"+q.Encode())
+	body, err := s.ascDoGET(ctx, cfg, path+"?"+q.Encode())
 	if err != nil {
 		return 0, err
 	}

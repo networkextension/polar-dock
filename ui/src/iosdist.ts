@@ -124,6 +124,7 @@ const statusBuildVersionEl = byId<HTMLElement>("iosStatusBuildVersion");
 const statusBuildStateEl = byId<HTMLElement>("iosStatusBuildState");
 const statusBuildExpiryEl = byId<HTMLElement>("iosStatusBuildExpiry");
 const statusTesterCountEl = byId<HTMLElement>("iosStatusTesterCount");
+const statusTesterSourceEl = byId<HTMLElement>("iosStatusTesterSource");
 const statusErrorEl = byId<HTMLElement>("iosStatusError");
 const inviteEmailInput = byId<HTMLInputElement>("iosInviteEmail");
 const inviteFirstInput = byId<HTMLInputElement>("iosInviteFirst");
@@ -1599,8 +1600,16 @@ function renderIOSAppStatus(status: import("./api/iosdist.js").IOSAppStatus | nu
     statusBuildExpiryEl.textContent = "";
   }
 
-  // Tester count
+  // Tester count. The source depends on what's bound: a Beta Group → the
+  // group's testers (the usual case); no group → app-direct Individual
+  // Testers (rare). The subtitle reflects which, so 0 isn't ambiguous.
   statusTesterCountEl.textContent = String(status.beta_tester_count);
+  const app = apps.find((a) => a.id === status.app_id);
+  if (app?.asc_beta_group_id) {
+    statusTesterSourceEl.textContent = "绑定 Beta 组的人数";
+  } else {
+    statusTesterSourceEl.textContent = "App 直挂的 Individual Testers（未绑 Beta 组）";
+  }
 }
 
 statusSyncBtn?.addEventListener("click", async () => {
