@@ -12,10 +12,20 @@
 //   - Applications section: history of every workspace's requests.
 
 import { requestJson } from "./api/http.js";
+import {
+  fetchMyProxyTokenCalls,
+  fetchMyProxyTokenCallsAggregate,
+  listMyProxyTokens,
+} from "./api/llm_proxy.js";
 import { logout } from "./api/session.js";
 import { byId } from "./lib/dom.js";
 import { hydrateSidebarFoot, hydrateSiteBrand } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
+import type {
+  LLMProxyCall,
+  LLMProxyCallAggregate,
+  LLMProxyToken,
+} from "./types/llm_proxy.js";
 
 initStoredTheme();
 bindThemeSync();
@@ -491,6 +501,359 @@ function readActiveWorkspaceID(): string {
   }
 }
 
+// ---------- B6: 我的 API Token 用量 ----------
+//
+// Reuses the same audit modal shape as /proxy-tokens.html (PR #251) —
+// renderers duplicated here rather than extracted into a shared module
+// because the two pages have separate ts bundles and the render code
+// is small. Worth factoring out if a third page wants it.
+
+const myTokensTable = byId<HTMLTableElement>("myTokensTable");
+const myTokensTbody = byId<HTMLTableSectionElement>("myTokensTbody");
+const myTokensEmpty = byId<HTMLElement>("myTokensEmpty");
+const myTokensLoading = byId<HTMLElement>("myTokensLoading");
+const myTokensCount = byId<HTMLElement>("myTokensCount");
+
+const auditModal = byId<HTMLElement>("auditModal");
+const auditTitle = byId<HTMLElement>("auditTitle");
+const auditSubtitle = byId<HTMLElement>("auditSubtitle");
+const auditCloseBtn = byId<HTMLButtonElement>("auditCloseBtn");
+const auditDays = byId<HTMLSelectElement>("auditDays");
+const auditDaysGroup = byId<HTMLElement>("auditDaysGroup");
+const auditRefreshBtn = byId<HTMLButtonElement>("auditRefreshBtn");
+const auditStatus = byId<HTMLElement>("auditStatus");
+const auditAggregateTable = byId<HTMLTableElement>("auditAggregateTable");
+const auditAggregateTbody = byId<HTMLTableSectionElement>("auditAggregateTbody");
+const auditAggregateEmpty = byId<HTMLElement>("auditAggregateEmpty");
+const auditCallsTable = byId<HTMLTableElement>("auditCallsTable");
+const auditCallsTbody = byId<HTMLTableSectionElement>("auditCallsTbody");
+const auditCallsEmpty = byId<HTMLElement>("auditCallsEmpty");
+
+let auditCurrentToken: LLMProxyToken | null = null;
+
+function fmtRelative(iso?: string): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return iso;
+  const ageSec = Math.floor((Date.now() - t) / 1000);
+  if (ageSec < 60) return `${ageSec}s 前`;
+  if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m 前`;
+  if (ageSec < 86400) return `${Math.floor(ageSec / 3600)}h 前`;
+  return `${Math.floor(ageSec / 86400)}d 前`;
+}
+
+function statusBadgeColors(status: number): { bg: string; fg: string } {
+  if (status >= 500) return { bg: "#fee2e2", fg: "#991b1b" };
+  if (status >= 400) return { bg: "#ffedd5", fg: "#9a3412" };
+  if (status >= 200 && status < 300) return { bg: "#dcfce7", fg: "#166534" };
+  return { bg: "#e5e7eb", fg: "#374151" };
+}
+
+function renderStatusBadge(status: number): HTMLSpanElement {
+  const span = document.createElement("span");
+  const c = statusBadgeColors(status);
+  span.textContent = String(status);
+  span.style.cssText = `display:inline-block; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:600; background:${c.bg}; color:${c.fg};`;
+  return span;
+}
+
+function renderLatencyCell(latencyMs: number): HTMLElement {
+  const wrap = document.createElement("span");
+  if (latencyMs <= 0) {
+    wrap.textContent = "—";
+    return wrap;
+  }
+  let color = "#16a34a";
+  if (latencyMs >= 3000) color = "#dc2626";
+  else if (latencyMs >= 300) color = "#d97706";
+  const dot = document.createElement("span");
+  dot.style.cssText = `display:inline-block; width:8px; height:8px; border-radius:50%; background:${color}; margin-right:6px; vertical-align:middle;`;
+  wrap.appendChild(dot);
+  wrap.appendChild(document.createTextNode(latencyMs >= 1000 ? `${(latencyMs / 1000).toFixed(2)}s` : `${latencyMs}ms`));
+  return wrap;
+}
+
+function renderAuditAggregateRow(a: LLMProxyCallAggregate): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  const mk = (text: string) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    return td;
+  };
+  tr.appendChild(mk(a.model || "—"));
+  tr.appendChild(mk(a.calls.toLocaleString()));
+
+  const rateTd = document.createElement("td");
+  const pct = a.calls > 0 ? (a.ok_count / a.calls) * 100 : 0;
+  const barColor = pct >= 99 ? "#16a34a" : pct >= 90 ? "#d97706" : "#dc2626";
+  rateTd.innerHTML = `
+    <div style="display:flex; align-items:center; gap:6px; min-width:180px;">
+      <div style="flex:1; height:6px; background:#e5e7eb; border-radius:3px; overflow:hidden;">
+        <div style="width:${pct.toFixed(1)}%; height:100%; background:${barColor};"></div>
+      </div>
+      <span style="font-size:12px; white-space:nowrap; color:#374151;">${a.ok_count}/${a.calls} (${pct.toFixed(1)}%)</span>
+    </div>`;
+  tr.appendChild(rateTd);
+
+  tr.appendChild(mk(a.prompt_tokens.toLocaleString()));
+  tr.appendChild(mk(a.completion_tokens.toLocaleString()));
+  tr.appendChild(mk(a.total_tokens.toLocaleString()));
+
+  const usdTd = document.createElement("td");
+  usdTd.textContent = a.cost_usd > 0 ? `$${a.cost_usd.toFixed(4)}` : "—";
+  usdTd.style.cssText = "font-weight:600; font-size:14px;";
+  tr.appendChild(usdTd);
+
+  return tr;
+}
+
+function renderAuditCallRow(c: LLMProxyCall): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  const mk = (text: string) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    return td;
+  };
+  tr.appendChild(mk(fmtRelative(c.created_at)));
+
+  const statusTd = document.createElement("td");
+  statusTd.appendChild(renderStatusBadge(c.status_code));
+  tr.appendChild(statusTd);
+
+  tr.appendChild(mk(c.model_resolved || c.model_requested || "—"));
+  tr.appendChild(mk(`${c.prompt_tokens} / ${c.completion_tokens}`));
+  tr.appendChild(mk(c.cost_usd != null ? `$${c.cost_usd.toFixed(4)}` : "—"));
+
+  const latTd = document.createElement("td");
+  latTd.appendChild(renderLatencyCell(c.latency_ms));
+  tr.appendChild(latTd);
+
+  const errTd = mk(c.error_text || "");
+  if (c.error_text) {
+    errTd.style.color = "var(--danger, #c00)";
+    errTd.title = c.error_text;
+  }
+  tr.appendChild(errTd);
+
+  if (c.status_code >= 400) {
+    tr.style.background = "rgba(220, 38, 38, 0.04)";
+  }
+  return tr;
+}
+
+async function loadMyTokens(): Promise<void> {
+  if (!myTokensTable || !myTokensTbody || !myTokensEmpty || !myTokensLoading || !myTokensCount) return;
+  myTokensLoading.hidden = false;
+  myTokensTable.hidden = true;
+  myTokensEmpty.hidden = true;
+
+  try {
+    const { data } = await listMyProxyTokens();
+    const tokens = data.tokens ?? [];
+    myTokensTbody.innerHTML = "";
+    myTokensCount.textContent = `${tokens.length} 个`;
+    if (tokens.length === 0) {
+      myTokensEmpty.hidden = false;
+      myTokensLoading.hidden = true;
+      return;
+    }
+    // Render rows immediately with placeholder usage; fetch per-token
+    // aggregates concurrently and patch each row in place. Avoids
+    // blocking the whole table on the slowest aggregate.
+    const rowByID = new Map<number, HTMLTableRowElement>();
+    tokens.forEach((tok) => {
+      const tr = renderMyTokenRow(tok);
+      rowByID.set(tok.id, tr);
+      myTokensTbody.appendChild(tr);
+    });
+    myTokensTable.hidden = false;
+    myTokensLoading.hidden = true;
+
+    await Promise.allSettled(
+      tokens.map(async (tok) => {
+        try {
+          const { data: aggData } = await fetchMyProxyTokenCallsAggregate(tok.id, 30);
+          const agg = aggData.aggregate ?? [];
+          const tr = rowByID.get(tok.id);
+          if (tr) patchMyTokenRowWithAggregate(tr, agg);
+        } catch {
+          // Leave placeholder cells as "—"; one slow upstream
+          // shouldn't kill the rest of the section.
+        }
+      }),
+    );
+  } catch (err) {
+    myTokensEmpty.hidden = false;
+    myTokensEmpty.textContent = `加载失败：${(err as Error).message}`;
+    myTokensLoading.hidden = true;
+  }
+}
+
+function renderMyTokenRow(tok: LLMProxyToken): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  if (tok.revoked_at) tr.style.opacity = "0.5";
+
+  const cellName = document.createElement("td");
+  cellName.textContent = tok.name;
+
+  const cellPrefix = document.createElement("td");
+  const code = document.createElement("code");
+  code.textContent = tok.prefix + "…";
+  code.style.fontSize = "11px";
+  cellPrefix.appendChild(code);
+
+  const cellLLM = document.createElement("td");
+  cellLLM.textContent = tok.default_llm_config_id != null ? `#${tok.default_llm_config_id}` : "—";
+
+  // Placeholders patched later by aggregate fetch.
+  const cellCalls = document.createElement("td");
+  cellCalls.textContent = "—";
+  cellCalls.dataset.role = "calls";
+
+  const cellRate = document.createElement("td");
+  cellRate.textContent = "—";
+  cellRate.dataset.role = "rate";
+
+  const cellUSD = document.createElement("td");
+  cellUSD.textContent = "—";
+  cellUSD.dataset.role = "usd";
+  cellUSD.style.cssText = "font-weight:600;";
+
+  const cellLastUsed = document.createElement("td");
+  cellLastUsed.textContent = fmtRelative(tok.last_used_at);
+
+  const cellAct = document.createElement("td");
+  const auditBtn = document.createElement("button");
+  auditBtn.type = "button";
+  auditBtn.className = "btn-inline btn-secondary";
+  auditBtn.textContent = "📊 审计";
+  auditBtn.addEventListener("click", () => openAuditModal(tok));
+  cellAct.appendChild(auditBtn);
+
+  tr.append(cellName, cellPrefix, cellLLM, cellCalls, cellRate, cellUSD, cellLastUsed, cellAct);
+  return tr;
+}
+
+function patchMyTokenRowWithAggregate(tr: HTMLTableRowElement, agg: LLMProxyCallAggregate[]): void {
+  let totalCalls = 0;
+  let totalOK = 0;
+  let totalUSD = 0;
+  for (const a of agg) {
+    totalCalls += a.calls;
+    totalOK += a.ok_count;
+    totalUSD += a.cost_usd;
+  }
+  const callsCell = tr.querySelector<HTMLTableCellElement>('td[data-role="calls"]');
+  const rateCell = tr.querySelector<HTMLTableCellElement>('td[data-role="rate"]');
+  const usdCell = tr.querySelector<HTMLTableCellElement>('td[data-role="usd"]');
+  if (callsCell) callsCell.textContent = totalCalls.toLocaleString();
+  if (rateCell) {
+    if (totalCalls === 0) {
+      rateCell.textContent = "—";
+    } else {
+      const pct = (totalOK / totalCalls) * 100;
+      const color = pct >= 99 ? "#16a34a" : pct >= 90 ? "#d97706" : "#dc2626";
+      rateCell.innerHTML = `<span style="color:${color}; font-weight:600;">${pct.toFixed(1)}%</span> <span class="meta-subtitle">(${totalOK}/${totalCalls})</span>`;
+    }
+  }
+  if (usdCell) usdCell.textContent = totalUSD > 0 ? `$${totalUSD.toFixed(4)}` : "—";
+}
+
+function openAuditModal(tok: LLMProxyToken): void {
+  if (!auditModal || !auditTitle || !auditSubtitle) return;
+  auditCurrentToken = tok;
+  auditTitle.textContent = `审计日志 — ${tok.name}`;
+
+  auditSubtitle.innerHTML = "";
+  const prefixSpan = document.createElement("span");
+  prefixSpan.textContent = `${tok.prefix}…`;
+  prefixSpan.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, monospace";
+  auditSubtitle.appendChild(prefixSpan);
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.title = "复制完整前缀";
+  copyBtn.textContent = "📋";
+  copyBtn.style.cssText = "background: transparent; border: none; cursor: pointer; padding: 0 4px; font-size: 13px;";
+  copyBtn.addEventListener("click", () => {
+    void navigator.clipboard.writeText(tok.prefix).then(() => {
+      copyBtn.textContent = "✓";
+      window.setTimeout(() => (copyBtn.textContent = "📋"), 1200);
+    });
+  });
+  auditSubtitle.appendChild(copyBtn);
+
+  syncAuditDaysButtons();
+  auditModal.hidden = false;
+  void refreshAuditModal();
+}
+
+function closeAuditModal(): void {
+  auditCurrentToken = null;
+  if (auditModal) auditModal.hidden = true;
+  if (auditAggregateTbody) auditAggregateTbody.innerHTML = "";
+  if (auditCallsTbody) auditCallsTbody.innerHTML = "";
+  if (auditStatus) auditStatus.textContent = "";
+}
+
+function syncAuditDaysButtons(): void {
+  if (!auditDays || !auditDaysGroup) return;
+  const current = auditDays.value;
+  auditDaysGroup.querySelectorAll<HTMLButtonElement>(".audit-day-btn").forEach((btn) => {
+    const active = btn.dataset.days === current;
+    btn.style.background = active ? "var(--accent, #3b82f6)" : "transparent";
+    btn.style.color = active ? "#fff" : "var(--text, #374151)";
+    btn.style.fontWeight = active ? "600" : "400";
+  });
+}
+
+async function refreshAuditModal(): Promise<void> {
+  if (!auditCurrentToken || !auditDays || !auditStatus) return;
+  if (!auditAggregateTable || !auditAggregateTbody || !auditAggregateEmpty) return;
+  if (!auditCallsTable || !auditCallsTbody || !auditCallsEmpty) return;
+  const tokenID = auditCurrentToken.id;
+  const days = parseInt(auditDays.value, 10) || 7;
+
+  auditStatus.textContent = "加载中...";
+  try {
+    const [aggResp, callsResp] = await Promise.all([
+      fetchMyProxyTokenCallsAggregate(tokenID, days),
+      fetchMyProxyTokenCalls(tokenID, 100),
+    ]);
+
+    auditAggregateTbody.innerHTML = "";
+    const aggList = aggResp.data.aggregate ?? [];
+    aggList.forEach((a) => auditAggregateTbody.appendChild(renderAuditAggregateRow(a)));
+    auditAggregateTable.hidden = aggList.length === 0;
+    auditAggregateEmpty.hidden = aggList.length !== 0;
+
+    auditCallsTbody.innerHTML = "";
+    const callsList = callsResp.data.calls ?? [];
+    callsList.forEach((c) => auditCallsTbody.appendChild(renderAuditCallRow(c)));
+    auditCallsTable.hidden = callsList.length === 0;
+    auditCallsEmpty.hidden = callsList.length !== 0;
+
+    auditStatus.textContent = `聚合 ${aggList.length} 行 / 最近 ${callsList.length} 次`;
+  } catch (err) {
+    auditStatus.textContent = `加载失败：${(err as Error).message}`;
+  }
+}
+
+auditCloseBtn?.addEventListener("click", closeAuditModal);
+auditRefreshBtn?.addEventListener("click", () => void refreshAuditModal());
+auditDays?.addEventListener("change", () => {
+  syncAuditDaysButtons();
+  void refreshAuditModal();
+});
+auditDaysGroup?.addEventListener("click", (ev) => {
+  const target = (ev.target as HTMLElement).closest<HTMLButtonElement>(".audit-day-btn");
+  if (!target || !auditDays) return;
+  const days = target.dataset.days;
+  if (!days) return;
+  auditDays.value = days;
+  syncAuditDaysButtons();
+  void refreshAuditModal();
+});
+
 async function bootstrap(): Promise<void> {
   hydrateSiteBrand();
   hydrateSidebarFoot();
@@ -506,7 +869,7 @@ async function bootstrap(): Promise<void> {
     if (adminQuotasSection) adminQuotasSection.hidden = false;
     if (adminAppsSection) adminAppsSection.hidden = false;
   }
-  await loadMarket();
+  await Promise.all([loadMarket(), loadMyTokens()]);
   if (isAdmin) {
     await Promise.all([loadQuotas(), loadApplications()]);
   }

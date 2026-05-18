@@ -766,6 +766,15 @@ func (s *Server) registerRoutes() {
 		api.GET("/llm-proxy/tokens/:id/calls/aggregate", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenCallsAggregate)
 		api.GET("/llm-proxy/tokens/:id/routes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenRoutesList)
 		api.PUT("/llm-proxy/tokens/:id/routes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyTokenRoutesReplace)
+		// B6: member-side audit. The three GET handlers above are
+		// already workspace-scoped via requireWorkspaceID +
+		// getLLMProxyToken(workspaceID, id) — only the admin gate
+		// blocked non-admin team members from viewing their own
+		// tokens. Re-wire under /me/ without AdminMiddleware so a
+		// customer team can see its own consumption history.
+		api.GET("/me/llm-proxy/tokens", s.AuthMiddleware(), s.handleLLMProxyTokenList)
+		api.GET("/me/llm-proxy/tokens/:id/calls", s.AuthMiddleware(), s.handleLLMProxyTokenCalls)
+		api.GET("/me/llm-proxy/tokens/:id/calls/aggregate", s.AuthMiddleware(), s.handleLLMProxyTokenCallsAggregate)
 		// Public OpenAI-compatible chat completion endpoint. Auth is
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.
