@@ -63,8 +63,9 @@ func (s *Server) startHeadscaleProxy() {
 		log.Printf("headscale: NewHeadscale failed: %v", err)
 		return
 	}
-	log.Printf("headscale: starting Serve in goroutine (listen_addr=%s, metrics=%s, grpc=%s, server_url=%s)",
-		cfg.Addr, cfg.MetricsAddr, cfg.GRPCAddr, cfg.ServerURL)
+	s.headscaleSocketPath = cfg.UnixSocket
+	log.Printf("headscale: starting Serve in goroutine (listen_addr=%s, metrics=%s, grpc=%s, unix=%s, server_url=%s)",
+		cfg.Addr, cfg.MetricsAddr, cfg.GRPCAddr, cfg.UnixSocket, cfg.ServerURL)
 	go func() {
 		// Serve blocks until shutdown OR returns an error mid-flight.
 		// On error, log + return — polar-dock keeps running (operator
