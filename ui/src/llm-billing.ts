@@ -25,6 +25,7 @@ interface MarketRow {
   name: string;
   model: string;
   is_platform: boolean;
+  owned_by_my_workspace: boolean;
   price_per_million_input_usd?: number | null;
   price_per_million_output_usd?: number | null;
   my_monthly_budget_usd?: number | null;
@@ -182,14 +183,14 @@ function renderMarket(): void {
 
     const tdStatus = document.createElement("td");
     const hasBudget = row.my_monthly_budget_usd !== null && row.my_monthly_budget_usd !== undefined;
-    if (hasBudget) {
-      const used = row.my_month_spend_usd ?? 0;
-      const budget = row.my_monthly_budget_usd ?? 0;
-      if (budget > 0 && used >= budget) {
-        tdStatus.innerHTML = '<span style="color: var(--danger, #c00);">已超额</span>';
-      } else {
-        tdStatus.innerHTML = '<span style="color: var(--ok, #0a7a3a);">✓ 已开通</span>';
-      }
+    const used = row.my_month_spend_usd ?? 0;
+    const budget = row.my_monthly_budget_usd ?? 0;
+    if (hasBudget && budget > 0 && used >= budget) {
+      tdStatus.innerHTML = '<span style="color: var(--danger, #c00);">已超额</span>';
+    } else if (hasBudget) {
+      tdStatus.innerHTML = '<span style="color: var(--ok, #0a7a3a);">✓ 已开通</span>';
+    } else if (row.owned_by_my_workspace) {
+      tdStatus.innerHTML = '<span style="color: var(--ok, #0a7a3a);">✓ 自有 · 未设额度</span>';
     } else if (row.my_application_status) {
       tdStatus.textContent = row.my_application_status;
     } else {

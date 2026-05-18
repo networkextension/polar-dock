@@ -32,6 +32,7 @@ type sharedLLMConfigDTO struct {
 	Name                     string   `json:"name"`
 	Model                    string   `json:"model"`
 	IsPlatform               bool     `json:"is_platform"`
+	OwnedByMyWorkspace       bool     `json:"owned_by_my_workspace"`
 	PricePerMillionInputUSD  *float64 `json:"price_per_million_input_usd,omitempty"`
 	PricePerMillionOutputUSD *float64 `json:"price_per_million_output_usd,omitempty"`
 	MyMonthlyBudgetUSD       *float64 `json:"my_monthly_budget_usd,omitempty"`
@@ -47,11 +48,12 @@ func (s *Server) handleSharedLLMConfigList(c *gin.Context) {
 	}
 
 	rows, err := s.db.Query(
-		`SELECT id, name, model, is_platform, price_per_million_input_usd, price_per_million_output_usd
+		`SELECT id, COALESCE(workspace_id, ''), name, model, is_platform, price_per_million_input_usd, price_per_million_output_usd
 		   FROM llm_configs
-		  WHERE (shared = TRUE OR is_platform = TRUE)
+		  WHERE (shared = TRUE OR is_platform = TRUE OR workspace_id = $1)
 		    AND (provider_kind = 'text' OR provider_kind = '' OR provider_kind IS NULL)
-		  ORDER BY is_platform DESC, name ASC`,
+		  ORDER BY (workspace_id = $1) DESC, is_platform DESC, name ASC`,
+		workspaceID,
 	)
 	if err != nil {
 		jsonError(c, http.StatusInternalServerError, "llm_configs.list_failed")
@@ -62,11 +64,13 @@ func (s *Server) handleSharedLLMConfigList(c *gin.Context) {
 	out := make([]sharedLLMConfigDTO, 0)
 	for rows.Next() {
 		var dto sharedLLMConfigDTO
+		var ownerWorkspaceID string
 		var inUSD, outUSD sql.NullFloat64
-		if scanErr := rows.Scan(&dto.ID, &dto.Name, &dto.Model, &dto.IsPlatform, &inUSD, &outUSD); scanErr != nil {
+		if scanErr := rows.Scan(&dto.ID, &ownerWorkspaceID, &dto.Name, &dto.Model, &dto.IsPlatform, &inUSD, &outUSD); scanErr != nil {
 			jsonError(c, http.StatusInternalServerError, "llm_configs.scan_failed")
 			return
 		}
+		dto.OwnedByMyWorkspace = ownerWorkspaceID != "" && ownerWorkspaceID == workspaceID
 		if inUSD.Valid {
 			v := inUSD.Float64
 			dto.PricePerMillionInputUSD = &v
@@ -75,12 +79,17 @@ func (s *Server) handleSharedLLMConfigList(c *gin.Context) {
 			v := outUSD.Float64
 			dto.PricePerMillionOutputUSD = &v
 		}
+		// Spend is queried unconditionally so a workspace can see its
+		// month-to-date consumption even before applying for a budget.
+		// llm_proxy_calls.cost_usd is written on every call (B1 P6
+		// cost ledger), so this is real data — Root + non-applied
+		// teams alike.
+		if sp, spErr := s.teamLLMConfigMonthSpend(workspaceID, dto.ID); spErr == nil {
+			dto.MyMonthSpendUSD = &sp
+		}
 		if q, qErr := s.getLLMConfigTeamQuota(dto.ID, workspaceID); qErr == nil && q != nil {
 			b := q.MonthlyBudgetUSD
 			dto.MyMonthlyBudgetUSD = &b
-			if sp, spErr := s.teamLLMConfigMonthSpend(workspaceID, dto.ID); spErr == nil {
-				dto.MyMonthSpendUSD = &sp
-			}
 		}
 		out = append(out, dto)
 	}
