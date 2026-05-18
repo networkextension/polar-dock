@@ -37,6 +37,8 @@ type sharedLLMConfigDTO struct {
 	PricePerMillionOutputUSD *float64 `json:"price_per_million_output_usd,omitempty"`
 	MyMonthlyBudgetUSD       *float64 `json:"my_monthly_budget_usd,omitempty"`
 	MyMonthSpendUSD          *float64 `json:"my_month_spend_usd,omitempty"`
+	MyCreditBalanceUSD       *float64 `json:"my_credit_balance_usd,omitempty"`
+	MyHasRecharge            bool     `json:"my_has_recharge"`
 	MyApplicationStatus      string   `json:"my_application_status,omitempty"`
 }
 
@@ -90,6 +92,16 @@ func (s *Server) handleSharedLLMConfigList(c *gin.Context) {
 		if q, qErr := s.getLLMConfigTeamQuota(dto.ID, workspaceID); qErr == nil && q != nil {
 			b := q.MonthlyBudgetUSD
 			dto.MyMonthlyBudgetUSD = &b
+		}
+		// B4: credit balance (recharges - all-time spend). Returned
+		// unconditionally so the team can see "余额 $X" even before
+		// the first recharge. has_recharge flag drives the chat
+		// handler's enforcement on/off.
+		if bal, bErr := s.teamLLMConfigBalance(workspaceID, dto.ID); bErr == nil {
+			dto.MyCreditBalanceUSD = &bal
+		}
+		if hr, hErr := s.teamHasLLMConfigRecharge(workspaceID, dto.ID); hErr == nil {
+			dto.MyHasRecharge = hr
 		}
 		out = append(out, dto)
 	}
@@ -278,4 +290,67 @@ func (s *Server) handleAdminLLMConfigApplicationsList(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// POST /api/admin/llm-config-team-quotas/recharge — body:
+//
+//	{ "llm_config_id": 12, "workspace_id": "team-abc", "amount_usd": 100, "note": "首次充值" }
+//
+// Negative amount_usd is allowed (claw back unused credit). Caller is
+// admin (route is admin-gated). The chat handler immediately reflects
+// the new balance since teamLLMConfigBalance is computed on every
+// request (no caching).
+type llmConfigTeamRechargeRequest struct {
+	LLMConfigID int64   `json:"llm_config_id"`
+	WorkspaceID string  `json:"workspace_id"`
+	AmountUSD   float64 `json:"amount_usd"`
+	Note        string  `json:"note"`
+}
+
+func (s *Server) handleAdminLLMConfigTeamRecharge(c *gin.Context) {
+	userID := strings.TrimSpace(c.GetString("user_id"))
+	if userID == "" {
+		jsonError(c, http.StatusUnauthorized, "auth.required")
+		return
+	}
+	var req llmConfigTeamRechargeRequest
+	if err := c.BindJSON(&req); err != nil {
+		jsonError(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	if req.LLMConfigID <= 0 || strings.TrimSpace(req.WorkspaceID) == "" {
+		jsonError(c, http.StatusBadRequest, "llm_config_id_or_workspace_id.required")
+		return
+	}
+	if req.AmountUSD == 0 {
+		jsonError(c, http.StatusBadRequest, "amount_usd.nonzero")
+		return
+	}
+	r, err := s.createLLMConfigTeamRecharge(req.LLMConfigID, req.WorkspaceID, req.Note, userID, req.AmountUSD)
+	if err != nil {
+		jsonError(c, http.StatusInternalServerError, "recharge.create_failed")
+		return
+	}
+	balance, _ := s.teamLLMConfigBalance(req.WorkspaceID, req.LLMConfigID)
+	c.JSON(http.StatusOK, gin.H{"recharge": r, "new_balance_usd": balance})
+}
+
+// GET /api/admin/llm-config-team-quotas/recharges?workspace_id=...&llm_config_id=...
+// — full recharge history for a (workspace, config). Both query params
+// required.
+func (s *Server) handleAdminLLMConfigTeamRechargeList(c *gin.Context) {
+	workspaceID := strings.TrimSpace(c.Query("workspace_id"))
+	cfgIDStr := strings.TrimSpace(c.Query("llm_config_id"))
+	cfgID, _ := strconv.ParseInt(cfgIDStr, 10, 64)
+	if workspaceID == "" || cfgID <= 0 {
+		jsonError(c, http.StatusBadRequest, "workspace_id_and_llm_config_id.required")
+		return
+	}
+	items, err := s.listLLMConfigTeamRecharges(workspaceID, cfgID)
+	if err != nil {
+		jsonError(c, http.StatusInternalServerError, "recharges.list_failed")
+		return
+	}
+	balance, _ := s.teamLLMConfigBalance(workspaceID, cfgID)
+	c.JSON(http.StatusOK, gin.H{"items": items, "balance_usd": balance})
 }

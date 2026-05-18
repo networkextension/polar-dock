@@ -312,6 +312,99 @@ func (s *Server) listLLMConfigApplications(workspaceID string) ([]LLMConfigAppli
 	return out, rows.Err()
 }
 
+// ---- recharges / credit balance (B4) ----
+
+type LLMConfigTeamRecharge struct {
+	ID              int64     `json:"id"`
+	LLMConfigID     int64     `json:"llm_config_id"`
+	WorkspaceID     string    `json:"workspace_id"`
+	AmountUSD       float64   `json:"amount_usd"`
+	Note            string    `json:"note"`
+	CreatedByUserID string    `json:"created_by_user_id"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func (s *Server) createLLMConfigTeamRecharge(llmConfigID int64, workspaceID, note, createdByUserID string, amountUSD float64) (*LLMConfigTeamRecharge, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	createdByUserID = strings.TrimSpace(createdByUserID)
+	if workspaceID == "" || createdByUserID == "" {
+		return nil, errors.New("workspace_id + created_by_user_id required")
+	}
+	var id int64
+	var createdAt time.Time
+	err := s.db.QueryRow(
+		`INSERT INTO llm_config_team_recharges (llm_config_id, workspace_id, amount_usd, note, created_by_user_id)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING id, created_at`,
+		llmConfigID, workspaceID, amountUSD, strings.TrimSpace(note), createdByUserID,
+	).Scan(&id, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	return &LLMConfigTeamRecharge{
+		ID:              id,
+		LLMConfigID:     llmConfigID,
+		WorkspaceID:     workspaceID,
+		AmountUSD:       amountUSD,
+		Note:            strings.TrimSpace(note),
+		CreatedByUserID: createdByUserID,
+		CreatedAt:       createdAt,
+	}, nil
+}
+
+// teamLLMConfigBalance — current prepaid balance = SUM(recharges) -
+// SUM(all-time cost_usd) for (workspace, config). 0 if no rows of
+// either kind. Negative = team owes (chat handler rejects).
+func (s *Server) teamLLMConfigBalance(workspaceID string, llmConfigID int64) (float64, error) {
+	var v float64
+	err := s.db.QueryRow(
+		`SELECT
+		   COALESCE((SELECT SUM(amount_usd) FROM llm_config_team_recharges
+		              WHERE workspace_id = $1 AND llm_config_id = $2), 0)::FLOAT8
+		   -
+		   COALESCE((SELECT SUM(cost_usd) FROM llm_proxy_calls
+		              WHERE workspace_id = $1 AND llm_config_id = $2), 0)::FLOAT8`,
+		workspaceID, llmConfigID,
+	).Scan(&v)
+	return v, err
+}
+
+// teamHasLLMConfigRecharge reports whether at least one recharge
+// row exists. Used as the gate trigger — no recharge history = no
+// credit-balance enforcement (back-compat with B1 no-quota free-use).
+func (s *Server) teamHasLLMConfigRecharge(workspaceID string, llmConfigID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM llm_config_team_recharges
+		  WHERE workspace_id = $1 AND llm_config_id = $2`,
+		workspaceID, llmConfigID,
+	).Scan(&n)
+	return n > 0, err
+}
+
+func (s *Server) listLLMConfigTeamRecharges(workspaceID string, llmConfigID int64) ([]LLMConfigTeamRecharge, error) {
+	rows, err := s.db.Query(
+		`SELECT id, llm_config_id, workspace_id, amount_usd, note, COALESCE(created_by_user_id, ''), created_at
+		   FROM llm_config_team_recharges
+		  WHERE workspace_id = $1 AND llm_config_id = $2
+		  ORDER BY created_at DESC`,
+		workspaceID, llmConfigID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]LLMConfigTeamRecharge, 0)
+	for rows.Next() {
+		var r LLMConfigTeamRecharge
+		if scanErr := rows.Scan(&r.ID, &r.LLMConfigID, &r.WorkspaceID, &r.AmountUSD, &r.Note, &r.CreatedByUserID, &r.CreatedAt); scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // llmTeamDefaultMonthlyBudget returns the auto-approve grant amount
 // (env-overridable). Defaults to $10/month so first-time teams get
 // a usable allowance without admin intervention.

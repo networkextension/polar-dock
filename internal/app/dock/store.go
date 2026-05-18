@@ -3016,6 +3016,23 @@ CREATE INDEX IF NOT EXISTS ix_llm_config_applications_workspace
     ON llm_config_applications(workspace_id, applied_at DESC);
 CREATE INDEX IF NOT EXISTS ix_llm_config_applications_status
     ON llm_config_applications(status, applied_at DESC);
+
+-- B4: per-team prepaid credit ledger. Admin "充值" appends an
+-- amount; effective balance = SUM(recharges) - SUM(llm_proxy_calls.cost_usd)
+-- for the same (workspace, llm_config). Chat handler 402s when
+-- balance <= 0 AND at least one recharge exists (no recharge =
+-- back-compat free use, same idea as the no-quota-row escape hatch).
+CREATE TABLE IF NOT EXISTS llm_config_team_recharges (
+    id BIGSERIAL PRIMARY KEY,
+    llm_config_id BIGINT NOT NULL REFERENCES llm_configs(id) ON DELETE CASCADE,
+    workspace_id  TEXT   NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    amount_usd NUMERIC(10,4) NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_llm_config_team_recharges_lookup
+    ON llm_config_team_recharges(workspace_id, llm_config_id, created_at DESC);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

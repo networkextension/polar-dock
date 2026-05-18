@@ -30,6 +30,8 @@ interface MarketRow {
   price_per_million_output_usd?: number | null;
   my_monthly_budget_usd?: number | null;
   my_month_spend_usd?: number | null;
+  my_credit_balance_usd?: number | null;
+  my_has_recharge?: boolean;
   my_application_status?: string;
 }
 
@@ -102,12 +104,23 @@ const quotaSubmitBtn = byId<HTMLButtonElement>("quotaSubmitBtn");
 const quotaBudget = byId<HTMLInputElement>("quotaBudget");
 const quotaError = byId<HTMLElement>("quotaError");
 
+const rechargeModal = byId<HTMLElement>("rechargeModal");
+const rechargeTitle = byId<HTMLElement>("rechargeTitle");
+const rechargeCloseBtn = byId<HTMLButtonElement>("rechargeCloseBtn");
+const rechargeCancelBtn = byId<HTMLButtonElement>("rechargeCancelBtn");
+const rechargeSubmitBtn = byId<HTMLButtonElement>("rechargeSubmitBtn");
+const rechargeAmount = byId<HTMLInputElement>("rechargeAmount");
+const rechargeNote = byId<HTMLInputElement>("rechargeNote");
+const rechargeError = byId<HTMLElement>("rechargeError");
+
 const logoutBtn = byId<HTMLButtonElement>("logoutBtn");
 
 let isAdmin = false;
+let myWorkspaceID = "";
 let pricingTargetId = 0;
 let applyTargetId = 0;
 let quotaTarget: { llm_config_id: number; workspace_id: string } | null = null;
+let rechargeTarget: { llm_config_id: number; workspace_id: string; name: string } | null = null;
 let marketRows: MarketRow[] = [];
 
 function setStatus(text: string): void {
@@ -181,12 +194,27 @@ function renderMarket(): void {
     tdBudget.textContent = fmtBudget(row.my_monthly_budget_usd);
     tr.appendChild(tdBudget);
 
+    const tdBalance = document.createElement("td");
+    const bal = row.my_credit_balance_usd ?? 0;
+    if (row.my_has_recharge) {
+      const color = bal <= 0 ? "var(--danger, #c00)" : (bal < 5 ? "var(--warn, #c80)" : "var(--ok, #0a7a3a)");
+      tdBalance.innerHTML = `<span style="color: ${color}; font-weight: 600;">${fmtBudget(bal)}</span>`;
+    } else {
+      tdBalance.innerHTML = '<span class="meta-subtitle">未充值</span>';
+    }
+    tr.appendChild(tdBalance);
+
     const tdStatus = document.createElement("td");
     const hasBudget = row.my_monthly_budget_usd !== null && row.my_monthly_budget_usd !== undefined;
     const used = row.my_month_spend_usd ?? 0;
     const budget = row.my_monthly_budget_usd ?? 0;
-    if (hasBudget && budget > 0 && used >= budget) {
-      tdStatus.innerHTML = '<span style="color: var(--danger, #c00);">已超额</span>';
+    // Priority: credit exhausted > monthly exceeded > opened > owned-no-cap > applied-pending > none
+    if (row.my_has_recharge && bal <= 0) {
+      tdStatus.innerHTML = '<span style="color: var(--danger, #c00);">余额耗尽</span>';
+    } else if (hasBudget && budget > 0 && used >= budget) {
+      tdStatus.innerHTML = '<span style="color: var(--danger, #c00);">月度超额</span>';
+    } else if (row.my_has_recharge) {
+      tdStatus.innerHTML = '<span style="color: var(--ok, #0a7a3a);">✓ 已充值</span>';
     } else if (hasBudget) {
       tdStatus.innerHTML = '<span style="color: var(--ok, #0a7a3a);">✓ 已开通</span>';
     } else if (row.owned_by_my_workspace) {
@@ -208,12 +236,19 @@ function renderMarket(): void {
       tdAct.appendChild(btn);
     }
     if (isAdmin) {
-      const btn = document.createElement("button");
-      btn.className = "btn-inline btn-secondary";
-      btn.style.marginLeft = "6px";
-      btn.textContent = "✏ 价格";
-      btn.addEventListener("click", () => openPricingModal(row));
-      tdAct.appendChild(btn);
+      const btnP = document.createElement("button");
+      btnP.className = "btn-inline btn-secondary";
+      btnP.style.marginLeft = "6px";
+      btnP.textContent = "✏ 价格";
+      btnP.addEventListener("click", () => openPricingModal(row));
+      tdAct.appendChild(btnP);
+
+      const btnR = document.createElement("button");
+      btnR.className = "btn-inline btn-secondary";
+      btnR.style.marginLeft = "6px";
+      btnR.textContent = "💰 充值";
+      btnR.addEventListener("click", () => openRechargeModal(row, myWorkspaceID));
+      tdAct.appendChild(btnR);
     }
     tr.appendChild(tdAct);
 
@@ -414,6 +449,48 @@ async function loadApplications(): Promise<void> {
   }
 }
 
+function openRechargeModal(row: MarketRow, workspaceID: string): void {
+  rechargeTarget = { llm_config_id: row.id, workspace_id: workspaceID, name: row.name };
+  if (rechargeTitle) rechargeTitle.textContent = `充值：${row.name}（当前余额 ${fmtBudget(row.my_credit_balance_usd ?? 0)}）`;
+  if (rechargeAmount) rechargeAmount.value = "";
+  if (rechargeNote) rechargeNote.value = "";
+  if (rechargeError) rechargeError.textContent = "";
+  openModal(rechargeModal);
+}
+
+async function submitRecharge(): Promise<void> {
+  if (!rechargeTarget) return;
+  if (rechargeError) rechargeError.textContent = "";
+  const amt = Number(rechargeAmount?.value ?? 0);
+  if (Number.isNaN(amt) || amt === 0) {
+    if (rechargeError) rechargeError.textContent = "金额必须为非零数字（允许负数清退）";
+    return;
+  }
+  try {
+    await requestJson("/api/admin/llm-config-team-quotas/recharge", {
+      method: "POST",
+      body: {
+        llm_config_id: rechargeTarget.llm_config_id,
+        workspace_id: rechargeTarget.workspace_id,
+        amount_usd: amt,
+        note: rechargeNote?.value?.trim() ?? "",
+      },
+    });
+    closeModal(rechargeModal);
+    await loadMarket();
+  } catch (err) {
+    if (rechargeError) rechargeError.textContent = `充值失败：${(err as Error).message}`;
+  }
+}
+
+function readActiveWorkspaceID(): string {
+  try {
+    return localStorage.getItem("polar_active_workspace_id") || "";
+  } catch {
+    return "";
+  }
+}
+
 async function bootstrap(): Promise<void> {
   hydrateSiteBrand();
   hydrateSidebarFoot();
@@ -423,6 +500,7 @@ async function bootstrap(): Promise<void> {
   } catch {
     isAdmin = false;
   }
+  myWorkspaceID = readActiveWorkspaceID();
   if (isAdmin) {
     if (adminPricingSection) adminPricingSection.hidden = false;
     if (adminQuotasSection) adminQuotasSection.hidden = false;
@@ -446,6 +524,10 @@ applySubmitBtn?.addEventListener("click", () => void submitApply());
 quotaCloseBtn?.addEventListener("click", () => closeModal(quotaModal));
 quotaCancelBtn?.addEventListener("click", () => closeModal(quotaModal));
 quotaSubmitBtn?.addEventListener("click", () => void submitQuota());
+
+rechargeCloseBtn?.addEventListener("click", () => closeModal(rechargeModal));
+rechargeCancelBtn?.addEventListener("click", () => closeModal(rechargeModal));
+rechargeSubmitBtn?.addEventListener("click", () => void submitRecharge());
 
 logoutBtn?.addEventListener("click", () => {
   void logout().then(() => {

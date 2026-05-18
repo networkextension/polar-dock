@@ -156,6 +156,26 @@ func (s *Server) handleLLMProxyChatCompletions(c *gin.Context) {
 		}
 	}
 
+	// 4c) Prepaid credit balance gate (B4). Only enforced when at
+	// least one recharge row exists for (workspace, config) — no
+	// recharge = the team hasn't opted into the prepaid model, free
+	// use continues (same back-compat shape as 4b). Balance is
+	// SUM(recharges) - SUM(all-time cost_usd); negative or zero
+	// rejects with 402 insufficient_credit so the UI can show a
+	// "充值" prompt.
+	if hasRecharge, _ := s.teamHasLLMConfigRecharge(tok.WorkspaceID, cfg.ID); hasRecharge {
+		balance, _ := s.teamLLMConfigBalance(tok.WorkspaceID, cfg.ID)
+		if balance <= 0 {
+			s.recordProxyCallFailure(tok, req.Model, cfg.Model, cfg.ID, http.StatusPaymentRequired,
+				fmt.Sprintf("credit balance exhausted: $%.4f", balance), start)
+			s.metricsRegistry.recordLLMProxyCall(tok.Name, cfg.Model, mode, http.StatusPaymentRequired, time.Since(start), 0, 0)
+			s.metricsRegistry.recordLLMProxyQuotaExceeded(tok.Name)
+			openAIError(c, http.StatusPaymentRequired, "insufficient_credit",
+				fmt.Sprintf("team prepaid balance for this LLM is exhausted (current: $%.4f) — please top up", balance))
+			return
+		}
+	}
+
 	// 5) Dispatch.
 	runtimeConfig := aiRuntimeConfig{
 		APIKey:        apiKey,
