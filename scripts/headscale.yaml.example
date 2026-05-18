@@ -1,0 +1,112 @@
+# Headscale config for embedded mode inside polar-dock.
+#
+# Load via env on the dock process:
+#   WG_HEADSCALE_ENABLED=1
+#   WG_HEADSCALE_CONFIG_PATH=/etc/headscale/config.yaml
+#
+# Polar dock listens on :8080. Headscale gets a separate listener
+# (:8081 here) so they coexist. nginx vhost fronts both:
+#   /v1/* /api/*   → 127.0.0.1:8080   (polar dock)
+#   /machine/*     → 127.0.0.1:8081   (headscale; tailscale clients)
+#   /derp/*        → 127.0.0.1:8081
+#
+# This file is a TEMPLATE. Copy + edit:
+#   sudo mkdir -p /etc/headscale && sudo cp scripts/headscale.yaml.example /etc/headscale/config.yaml
+#   sudo $EDITOR /etc/headscale/config.yaml         # at minimum: server_url, database password
+
+# Public URL clients use.
+server_url: https://zen.4950.store
+
+# Headscale's own HTTP listener. Polar dock owns :8080; do not collide.
+listen_addr: 127.0.0.1:8081
+
+# Metrics on a separate port. polar-dock owns :9090-ish so use 9092.
+metrics_listen_addr: 127.0.0.1:9092
+
+# gRPC for the headscale CLI. Keep on loopback only.
+grpc_listen_addr: 127.0.0.1:50443
+grpc_allow_insecure: false
+
+# Noise protocol private key for the control-plane handshake. Auto-
+# generated on first start if missing.
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+# CGNAT range — must match Polar's default (Phase 3) so wg-mac and
+# tailscale clients don't collide in the same mesh.
+prefixes:
+  v4: 100.64.0.0/10
+
+# === Database ===
+# Production: reuse Polar's Postgres. Headscale uses gorm + creates
+# its own tables (users, nodes, pre_auth_keys, ...) — namespace will
+# NOT collide with Polar's wg_* tables. Run headscale + polar against
+# the same `ideamesh` database for simpler ops.
+database:
+  type: postgres
+  postgres:
+    host: 127.0.0.1
+    port: 5432
+    name: ideamesh
+    user: ideamesh
+    pass: REPLACE_ME      # match Polar's DSN at config.go
+    ssl: false
+    max_open_conns: 10
+    max_idle_conns: 5
+    conn_max_idle_time_secs: 3600
+#  # For local smoke testing without Postgres:
+#  type: sqlite
+#  sqlite:
+#    path: /tmp/headscale-spike/db.sqlite
+
+# DERP — defer running our own relay until Phase 11 C6. For C1, use
+# Tailscale's public DERP map so clients can still establish if direct
+# fails.
+derp:
+  server:
+    enabled: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  auto_update_enabled: false
+  update_frequency: 24h
+
+dns:
+  base_domain: ts.zen.4950.store
+  magic_dns: false
+  override_local_dns: false
+  nameservers:
+    global: []
+
+# OIDC disabled for C1. Operator-mints PreAuthKey via headscale CLI,
+# distributes to operators (just like wg-mac tokens today).
+oidc:
+  only_start_if_oidc_is_available: false
+
+log:
+  level: info
+  format: text
+
+logtail:
+  enabled: false
+
+# Mark devices "stale" after this much silence. Headscale will then
+# evict them from the network map. Defaults match wg-mac stale GC
+# (7d in Polar's wg_gc.go).
+ephemeral_node_inactivity_timeout: 30m
+node_update_check_interval: 10s
+
+# TLS: terminate at nginx in front; headscale itself stays plaintext
+# on loopback.
+tls:
+  letsencrypt_listen: ""
+  letsencrypt_hostname: ""
+  cert_path: ""
+  key_path: ""
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+
+cli:
+  timeout: 5s
+  insecure: false
