@@ -387,8 +387,22 @@ func (s *Server) handleExpenseFromImage(c *gin.Context) {
 		e.Confidence = draft.Confidence
 		e.Remark = draft.Remark
 		t, hasDetail := parseExpenseConsumeTime(draft.ConsumeTime)
-		e.ConsumeTime = t
-		e.HasDetailTime = hasDetail
+		if clamped, didClamp := clampExpenseConsumeTime(t); didClamp {
+			log.Printf("expense from-image: consume_time %s out of window, defaulting to today", t.Format(time.RFC3339))
+			e.ConsumeTime = clamped
+			e.HasDetailTime = false
+			if e.Confidence > 40 {
+				e.Confidence = 40
+			}
+			if e.Remark == "" {
+				e.Remark = "原识别日期 " + t.Format("2006-01-02") + " 异常，已默认今日，请复核"
+			} else {
+				e.Remark += "（原识别日期 " + t.Format("2006-01-02") + " 异常，已默认今日）"
+			}
+		} else {
+			e.ConsumeTime = t
+			e.HasDetailTime = hasDetail
+		}
 	}
 	if err := s.createExpense(e); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})

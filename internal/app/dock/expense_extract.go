@@ -203,3 +203,21 @@ func parseExpenseConsumeTime(s string) (time.Time, bool) {
 	}
 	return time.Now().UTC(), false
 }
+
+// clampExpenseConsumeTime rejects obviously hallucinated dates. The
+// LLM sometimes latches onto a stray timestamp printed on the receipt
+// image (issue/order id, terminal serial, photo EXIF year) and returns
+// e.g. 2017-10-09 for a 2026 expense. Letting that through means the
+// row goes into the DB with status=1 but disappears from the month
+// view (filtered by consume_time), so the user sees "确认后就丢".
+//
+// Acceptable window: now-1y to now+30d. Anything outside collapses to
+// time.Now and we report `clamped=true` so the caller can lower the
+// confidence and the UI prompts review.
+func clampExpenseConsumeTime(t time.Time) (time.Time, bool) {
+	now := time.Now().UTC()
+	if t.Before(now.AddDate(-1, 0, 0)) || t.After(now.AddDate(0, 0, 30)) {
+		return now, true
+	}
+	return t, false
+}
