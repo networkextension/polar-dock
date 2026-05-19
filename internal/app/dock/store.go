@@ -2756,6 +2756,14 @@ CREATE INDEX IF NOT EXISTS idx_llm_proxy_routes_token
 -- truth. NULL = pricing unknown for this model/provider.
 ALTER TABLE llm_proxy_calls
     ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(12,6);
+
+-- Make token_id nullable so the agent (non-proxy) path can write rows
+-- attributable to (workspace, llm_config) without a proxy token. The
+-- audit viewer and aggregate query already filter by token_id equals
+-- the proxy token id, so they only see proxy rows; the new agent rows
+-- show up in workspace-scope queries like teamLLMConfigMonthSpend.
+ALTER TABLE llm_proxy_calls
+    ALTER COLUMN token_id DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_created
     ON llm_proxy_calls(workspace_id, created_at DESC)
     WHERE cost_usd IS NOT NULL;

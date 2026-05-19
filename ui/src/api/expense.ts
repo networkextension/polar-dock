@@ -136,6 +136,10 @@ export async function deleteExpense(id: number) {
 export interface ExpenseFromImageResponse {
   expense: Expense;
   extract_error?: string;
+  // "quota_exhausted" when the team's marketplace quota / prepaid
+  // balance for the multimodal LLM is drained — UI shows a deep link
+  // to /llm-billing.html instead of the generic alert.
+  extract_error_kind?: "quota_exhausted" | string;
 }
 
 export async function uploadExpenseImage(file: File): Promise<{ data: ExpenseFromImageResponse }> {
