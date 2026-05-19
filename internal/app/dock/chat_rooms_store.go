@@ -307,6 +307,27 @@ func (s *Server) listChatRoomMembers(ctx context.Context, roomID int64) ([]ChatR
 // but leaves thread_id NULL — the schema relaxed that column to nullable
 // in P0b so room-only rows don't need a sentinel. Returns the new id.
 func (s *Server) insertRoomMessage(ctx context.Context, roomID int64, senderID, messageType, content string, createdAt time.Time) (int64, error) {
+	return s.insertRoomMessageWithMetrics(ctx, roomID, senderID, messageType, content, createdAt, roomMessageMetrics{})
+}
+
+// roomMessageMetrics carries optional per-call telemetry to snapshot
+// into the chat_messages row alongside the bot reply. Zero values =
+// not recorded (rendered as "—" by the UI metadata pill).
+type roomMessageMetrics struct {
+	LLMConfigID      int64   // 0 = no llm involved
+	LLMConfigName    string  // snapshot for stable history
+	LLMModel         string  // snapshot — includes any model_override
+	LatencyMS        int     // round-trip including network
+	PromptTokens     int     // from upstream Usage block
+	CompletionTokens int     // from upstream Usage block
+	CostUSD          float64 // -1 = not estimable, 0 = estimable-zero
+}
+
+// insertRoomMessageWithMetrics is the bot-reply-aware variant. It
+// writes the llm_config_id/name/model + latency + token + cost snapshot
+// columns so the rooms UI can render the metadata pill without a
+// second round-trip.
+func (s *Server) insertRoomMessageWithMetrics(ctx context.Context, roomID int64, senderID, messageType, content string, createdAt time.Time, m roomMessageMetrics) (int64, error) {
 	if roomID <= 0 {
 		return 0, errors.New("roomID required")
 	}
@@ -316,12 +337,44 @@ func (s *Server) insertRoomMessage(ctx context.Context, roomID int64, senderID, 
 	if messageType == "" {
 		messageType = "text"
 	}
+	// llm_config_name and llm_model are NOT NULL DEFAULT ''; pass the
+	// empty string for absent values. The numeric metrics columns are
+	// nullable, so we use any-typed args that can be nil.
+	var (
+		llmCfgArg     any = nil
+		latencyArg    any = nil
+		promptArg     any = nil
+		completionArg any = nil
+		costArg       any = nil
+	)
+	if m.LLMConfigID > 0 {
+		llmCfgArg = m.LLMConfigID
+	}
+	if m.LatencyMS > 0 {
+		latencyArg = int64(m.LatencyMS)
+	}
+	if m.PromptTokens > 0 {
+		promptArg = m.PromptTokens
+	}
+	if m.CompletionTokens > 0 {
+		completionArg = m.CompletionTokens
+	}
+	if m.CostUSD >= 0 && (m.PromptTokens > 0 || m.CompletionTokens > 0) {
+		// Only record cost when we have tokens to bind it to — keeps
+		// "estimable zero" from polluting reporting with 0-cost rows.
+		costArg = m.CostUSD
+	}
 	var id int64
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO chat_messages (room_id, sender_id, message_type, failed, content, created_at)
-		 VALUES ($1, $2, $3, FALSE, $4, $5)
+		`INSERT INTO chat_messages
+		   (room_id, sender_id, message_type, failed, content, created_at,
+		    llm_config_id, llm_config_name, llm_model, latency_ms,
+		    prompt_tokens, completion_tokens, cost_usd)
+		 VALUES ($1, $2, $3, FALSE, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 RETURNING id`,
 		roomID, senderID, messageType, content, createdAt,
+		llmCfgArg, m.LLMConfigName, m.LLMModel, latencyArg,
+		promptArg, completionArg, costArg,
 	).Scan(&id)
 	return id, err
 }
@@ -338,7 +391,8 @@ func (s *Server) listRoomMessages(ctx context.Context, roomID int64, beforeID *i
 	             m.markdown_entry_id, m.markdown_title, m.latency_ms,
 	             m.streaming, m.seq, m.updated_at, m.created_at,
 	             m.deleted_at, m.deleted_by, m.llm_config_id,
-	             COALESCE(m.llm_config_name, ''), COALESCE(m.llm_model, '')
+	             COALESCE(m.llm_config_name, ''), COALESCE(m.llm_model, ''),
+	             m.prompt_tokens, m.completion_tokens, m.cost_usd
 	      FROM chat_messages m
 	      JOIN users u ON u.id = m.sender_id
 	     WHERE m.room_id = $1`
@@ -366,6 +420,8 @@ func (s *Server) listRoomMessages(ctx context.Context, roomID int64, beforeID *i
 		var deletedAt sql.NullTime
 		var deletedBy sql.NullString
 		var llmConfigID sql.NullInt64
+		var promptTokens, completionTokens sql.NullInt64
+		var costUSD sql.NullFloat64
 		if err := rows.Scan(
 			&msg.ID, &roomIDOut, &llmThreadID,
 			&msg.SenderID, &msg.SenderUsername, &msg.SenderIcon,
@@ -374,8 +430,21 @@ func (s *Server) listRoomMessages(ctx context.Context, roomID int64, beforeID *i
 			&msg.Streaming, &msg.Seq, &updatedAt, &msg.CreatedAt,
 			&deletedAt, &deletedBy, &llmConfigID,
 			&msg.LLMConfigName, &msg.LLMModel,
+			&promptTokens, &completionTokens, &costUSD,
 		); err != nil {
 			return nil, err
+		}
+		if promptTokens.Valid {
+			v := int(promptTokens.Int64)
+			msg.PromptTokens = &v
+		}
+		if completionTokens.Valid {
+			v := int(completionTokens.Int64)
+			msg.CompletionTokens = &v
+		}
+		if costUSD.Valid {
+			v := costUSD.Float64
+			msg.CostUSD = &v
 		}
 		if roomIDOut.Valid {
 			v := roomIDOut.Int64

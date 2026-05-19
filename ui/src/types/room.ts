@@ -48,6 +48,13 @@ export interface RoomMessage {
   llm_config_id?: number;
   llm_config_name?: string;
   llm_model?: string;
+  // Qunliao β: per-message LLM call telemetry snapshot. Populated for
+  // bot replies; null/0 on user posts. UI surfaces these via the
+  // 📊 元数据 toggle on /rooms.html (default OFF).
+  latency_ms?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  cost_usd?: number;
 }
 
 export interface RoomListResponse {

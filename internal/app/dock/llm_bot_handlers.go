@@ -294,6 +294,7 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 		LLMConfigID   int64  `json:"llm_config_id"`
 		BotKind       string `json:"bot_kind"`       // "" → classic
 		PreferredTool string `json:"preferred_tool"` // optional hint
+		ModelOverride string `json:"model_override"` // qunliao β: empty = use cfg.model
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
@@ -321,6 +322,7 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 		LLMConfigID:   req.LLMConfigID,
 		BotKind:       kind,
 		PreferredTool: strings.TrimSpace(req.PreferredTool),
+		ModelOverride: strings.TrimSpace(req.ModelOverride),
 	}, time.Now())
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "uniq_bot_users_workspace_name") {
@@ -354,6 +356,7 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 		LLMConfigID   int64  `json:"llm_config_id"`
 		BotKind       string `json:"bot_kind"`
 		PreferredTool string `json:"preferred_tool"`
+		ModelOverride string `json:"model_override"`
 		// HostSkillID (P1d): pointer so the FE can distinguish
 		// "field omitted → don't touch" from "explicit null → unbind"
 		// from "non-zero → bind". Validated server-side against the
@@ -384,6 +387,7 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 		LLMConfigID:   req.LLMConfigID,
 		BotKind:       kind,
 		PreferredTool: strings.TrimSpace(req.PreferredTool),
+		ModelOverride: strings.TrimSpace(req.ModelOverride),
 	}
 	if req.HostSkillID != nil {
 		input.HostSkillIDSet = true

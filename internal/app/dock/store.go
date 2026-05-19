@@ -462,9 +462,14 @@ type BotUser struct {
 	// passthrough/tool-loop path. Pointer so JSON can serialize null
 	// when unbound, and the FE can distinguish "no binding set" from
 	// "binding set to 0".
-	HostSkillID *int64    `json:"host_skill_id,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	HostSkillID *int64 `json:"host_skill_id,omitempty"`
+	// ModelOverride (qunliao β): when non-empty, fanout + idle loop
+	// pass this model name to the LLM call instead of cfg.Model.
+	// Lets one llm_configs row power multiple bots running different
+	// model variants under the same api_key.
+	ModelOverride string    `json:"model_override,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Bot kind constants. Defined string literals (not iota) since they
@@ -593,13 +598,20 @@ type ChatMessage struct {
 	// for passthrough-bot replies (no LLM config used). Survive even
 	// after the source llm_configs row is deleted (FK SET NULL +
 	// snapshot columns).
-	LLMConfigID    *int64    `json:"llm_config_id,omitempty"`
-	LLMConfigName  string    `json:"llm_config_name,omitempty"`
-	LLMModel       string    `json:"llm_model,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
-	DeletedBy      string    `json:"deleted_by,omitempty"`
-	Deleted        bool      `json:"deleted"`
+	LLMConfigID   *int64 `json:"llm_config_id,omitempty"`
+	LLMConfigName string `json:"llm_config_name,omitempty"`
+	LLMModel      string `json:"llm_model,omitempty"`
+	// Qunliao β: per-message LLM metrics (snapshot at insert).
+	// Populated for bot replies via insertRoomMessageWithMetrics;
+	// nil/0 for user posts and pre-β bot rows. UI surfaces them as
+	// an opt-in pill controlled by the rooms.html metadata toggle.
+	PromptTokens     *int       `json:"prompt_tokens,omitempty"`
+	CompletionTokens *int       `json:"completion_tokens,omitempty"`
+	CostUSD          *float64   `json:"cost_usd,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
+	DeletedBy        string     `json:"deleted_by,omitempty"`
+	Deleted          bool       `json:"deleted"`
 }
 
 // chatLLMSnapshot is the per-message LLM info captured at write
@@ -3272,6 +3284,24 @@ CREATE TABLE IF NOT EXISTS chat_room_agent_loops (
 CREATE INDEX IF NOT EXISTS idx_chat_room_agent_loops_due
     ON chat_room_agent_loops(last_decided_at)
     WHERE enabled = TRUE;
+
+-- Qunliao β1 — bot_users can override the LLM's default model so one
+-- llm_configs row (kimi+api_key) can power multiple bots running
+-- different model variants (kimi-k2.5 vs kimi-k1.5 vs custom). NULL =
+-- use llm_configs.model verbatim (existing behavior).
+ALTER TABLE bot_users
+    ADD COLUMN IF NOT EXISTS model_override TEXT;
+
+-- Qunliao β2 — per-message LLM call metrics so the rooms UI can show
+-- model/latency/tokens/cost pills (default hidden, user toggles on).
+-- Snapshot at insert time so a later llm_configs edit doesn't rewrite
+-- history. NULL on non-bot messages and bot messages from pre-β2.
+ALTER TABLE chat_messages
+    ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER;
+ALTER TABLE chat_messages
+    ADD COLUMN IF NOT EXISTS completion_tokens INTEGER;
+ALTER TABLE chat_messages
+    ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(12,6);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
@@ -4113,7 +4143,7 @@ func decodePackTunnelJSON(raw []byte, dest any) error {
 // every bot_users read. Joined with llm_configs via LEFT JOIN
 // (passthrough bots may not have an llm_config_id), so c.name is
 // scanned through sql.NullString.
-const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.host_skill_id, b.created_at, b.updated_at`
+const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.host_skill_id, COALESCE(b.model_override, ''), b.created_at, b.updated_at`
 
 // scanBotUser reads one row from a query that selected
 // botUserSelectColumns. nullable scan targets handle passthrough
@@ -4128,7 +4158,7 @@ func scanBotUser(scanFn func(...any) error) (*BotUser, error) {
 		&item.Name, &item.Description, &item.SystemPrompt,
 		&llmConfigID, &configName,
 		&item.BotKind, &item.PreferredTool, &item.IsAutoRegistered,
-		&hostSkillID,
+		&hostSkillID, &item.ModelOverride,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
@@ -4248,6 +4278,7 @@ type CreateBotUserInput struct {
 	LLMConfigID   int64  // 0 allowed when BotKind = passthrough
 	BotKind       string // "" → "classic"; "passthrough" → llm_config_id may be 0
 	PreferredTool string // freeform hint; "kimi"/"claude"/"codex" recommended
+	ModelOverride string // qunliao β: empty = use llm_configs.model
 }
 
 func (s *Server) createBotUser(in CreateBotUserInput, now time.Time) (*BotUser, error) {
@@ -4305,9 +4336,9 @@ func (s *Server) createBotUser(in CreateBotUserInput, now time.Time) (*BotUser, 
 		llmConfigArg = nil
 	}
 	if _, err = tx.Exec(
-		`INSERT INTO bot_users (owner_user_id, workspace_id, bot_user_id, name, description, system_prompt, llm_config_id, bot_kind, preferred_tool, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
-		in.OwnerUserID, in.WorkspaceID, botUserID, in.Name, in.Description, in.SystemPrompt, llmConfigArg, in.BotKind, in.PreferredTool, now,
+		`INSERT INTO bot_users (owner_user_id, workspace_id, bot_user_id, name, description, system_prompt, llm_config_id, bot_kind, preferred_tool, model_override, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+		in.OwnerUserID, in.WorkspaceID, botUserID, in.Name, in.Description, in.SystemPrompt, llmConfigArg, in.BotKind, in.PreferredTool, in.ModelOverride, now,
 	); err != nil {
 		return nil, err
 	}
@@ -4611,6 +4642,7 @@ type UpdateBotUserInput struct {
 	// accidentally clear an existing binding.
 	HostSkillIDSet bool
 	HostSkillID    int64
+	ModelOverride  string // qunliao β: empty = use llm_configs.model
 }
 
 func (s *Server) updateBotUser(workspaceID string, id int64, in UpdateBotUserInput, now time.Time) (*BotUser, error) {
@@ -4662,9 +4694,9 @@ func (s *Server) updateBotUser(workspaceID string, id int64, in UpdateBotUserInp
 	}
 	if _, err = tx.Exec(
 		`UPDATE bot_users
-		    SET name = $3, description = $4, system_prompt = $5, llm_config_id = $6, bot_kind = $7, preferred_tool = $8, updated_at = $9
+		    SET name = $3, description = $4, system_prompt = $5, llm_config_id = $6, bot_kind = $7, preferred_tool = $8, model_override = $9, updated_at = $10
 		  WHERE id = $1 AND workspace_id = $2`,
-		id, workspaceID, in.Name, in.Description, in.SystemPrompt, llmConfigArg, in.BotKind, in.PreferredTool, now,
+		id, workspaceID, in.Name, in.Description, in.SystemPrompt, llmConfigArg, in.BotKind, in.PreferredTool, in.ModelOverride, now,
 	); err != nil {
 		return nil, err
 	}
