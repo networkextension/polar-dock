@@ -323,9 +323,15 @@ func (s *Server) handleChatRoomMessageSend(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	// WS broadcast comes in P0c when the wsHub gains roomViewers. For
-	// now the client polls /api/rooms/:id/messages (or already saw the
-	// 201 reply payload).
+	// Realtime fanout via Redis chat:events → wsHub → all room members'
+	// connected clients. The subscriber runs on every dock instance so
+	// fanout is cross-host correct. Same shape as thread message events.
+	s.publishChatInternalEvent(chatInternalEvent{
+		Event:     chatEventRoomMessageCreated,
+		RoomID:    id,
+		MessageID: msgID,
+		SenderID:  userID,
+	})
 	c.JSON(http.StatusCreated, gin.H{
 		"message": gin.H{
 			"id":           msgID,

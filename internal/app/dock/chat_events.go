@@ -11,14 +11,16 @@ import (
 )
 
 const (
-	chatEventMessageCreated = "chat.message.created"
-	chatEventRead           = "chat.message.read"
-	chatEventRevoked        = "chat.message.revoked"
+	chatEventMessageCreated     = "chat.message.created"
+	chatEventRead               = "chat.message.read"
+	chatEventRevoked            = "chat.message.revoked"
+	chatEventRoomMessageCreated = "chat.room.message.created" // qunliao P0c
 )
 
 type chatInternalEvent struct {
 	Event      string     `json:"event"`
-	ChatID     int64      `json:"chat_id"`
+	ChatID     int64      `json:"chat_id,omitempty"` // 1:1 thread id; omit for room events
+	RoomID     int64      `json:"room_id,omitempty"` // qunliao P0c — chat_rooms.id
 	MessageID  int64      `json:"message_id,omitempty"`
 	SenderID   string     `json:"sender_id,omitempty"`
 	UserID     string     `json:"user_id,omitempty"`
@@ -114,8 +116,51 @@ func (s *Server) handleChatInternalEvent(event chatInternalEvent) {
 		s.handleReadEvent(event)
 	case chatEventRevoked:
 		s.handleRevokeEvent(event)
+	case chatEventRoomMessageCreated:
+		s.handleRoomMessageCreatedEvent(event)
 	}
 }
+
+// handleRoomMessageCreatedEvent fans a room message out to every member's
+// active WS clients. P0c-1 keeps it simple: no viewer/active-room
+// filtering, no push integration — client-side filters by RoomID.
+func (s *Server) handleRoomMessageCreatedEvent(event chatInternalEvent) {
+	if s.wsHub == nil {
+		return
+	}
+	before := event.MessageID + 1
+	msgs, err := s.listRoomMessages(context.Background(), event.RoomID, &before, 1)
+	if err != nil {
+		log.Printf("ws room: load message failed: room=%d msg=%d err=%v", event.RoomID, event.MessageID, err)
+		return
+	}
+	if len(msgs) == 0 {
+		// listRoomMessages uses id<before_id so a single-row lookup
+		// matches; if missing the row was probably deleted between
+		// publish and consume.
+		log.Printf("ws room: message %d not found (room=%d)", event.MessageID, event.RoomID)
+		return
+	}
+	msg := msgs[0]
+	members, err := s.listChatRoomMembers(context.Background(), event.RoomID)
+	if err != nil {
+		log.Printf("ws room: load members failed: room=%d err=%v", event.RoomID, err)
+		return
+	}
+	if len(members) == 0 {
+		return
+	}
+	userIDs := make([]string, 0, len(members))
+	for _, m := range members {
+		userIDs = append(userIDs, m.UserID)
+	}
+	s.broadcastChatEvent(userIDs, chatEvent{
+		Type:    "room_message",
+		RoomID:  event.RoomID,
+		Message: &msg,
+	})
+}
+
 
 func (s *Server) handleMessageCreatedEvent(event chatInternalEvent) {
 	if s.wsHub != nil {
