@@ -21,6 +21,14 @@ export interface RoomMember {
   role: RoomRole;
   joined_at: string;
   last_read_message_id?: number;
+  // Denormalized display fields populated by listChatRoomMembers
+  // (JOIN users + LEFT JOIN bot_users). UI uses these instead of the
+  // opaque user_id, and bot_name is the @mention token that the P1
+  // fanout looks up by.
+  username?: string;
+  icon?: string;
+  is_bot?: boolean;
+  bot_name?: string;
 }
 
 // RoomMessage reuses the same chat_messages row shape as 1:1 DMs, just

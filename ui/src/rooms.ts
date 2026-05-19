@@ -215,18 +215,33 @@ function renderMembers(): void {
     const li = document.createElement("li");
     li.style.cssText = "padding:6px 10px; display:flex; align-items:center; gap:6px; border-bottom:1px solid var(--border,#eee);";
     const roleBadge = m.role === "owner" ? "👑" : m.role === "observer" ? "👁" : "";
-    // Bot rows have user_id starting with "bot_" (createBotUser
-    // mints these via generateSessionID-prefixed strings). For
-    // those, render the 🤖 toggle next to the remove button.
-    const isBot = m.user_id.startsWith("bot_");
+    // Bot detection comes from backend now (is_bot via LEFT JOIN
+    // bot_users); fallback to the user_id prefix for old payloads.
+    const isBot = !!m.is_bot || m.user_id.startsWith("bot_");
     const loop = activeAgentLoops.get(m.user_id);
     const loopDot = isBot && loop?.enabled ? "🟢" : isBot ? "💤" : "";
     const toggleBtn = isBot
       ? `<button class="btn-inline btn-secondary" data-loop="${escapeHTML(m.user_id)}" title="自主性" style="padding:2px 6px;">🤖${loopDot}</button>`
       : "";
-    li.innerHTML = `<span style="flex:1;">${roleBadge} ${escapeHTML(m.user_id)}</span>` +
+    // Show the bot's @mention name (bot_users.name) so the user
+    // knows what to type. For humans, show username with no @.
+    const display = m.username || m.user_id;
+    const mentionHint = isBot && m.bot_name
+      ? ` <button class="btn-inline btn-secondary" data-mention="${escapeHTML(m.bot_name)}" title="插入 @${escapeHTML(m.bot_name)}" style="padding:2px 6px; font-family:monospace;">@${escapeHTML(m.bot_name)}</button>`
+      : "";
+    li.innerHTML = `<span style="flex:1;">${roleBadge} ${escapeHTML(display)}${mentionHint}</span>` +
       toggleBtn +
       `<button class="btn-inline btn-secondary" data-remove="${escapeHTML(m.user_id)}" title="移除" style="padding:2px 6px;">✕</button>`;
+    // Clicking the @name chip inserts it into the send input.
+    li.querySelector("[data-mention]")?.addEventListener("click", () => {
+      const tok = `@${m.bot_name} `;
+      const at = sendInput.selectionStart ?? sendInput.value.length;
+      const before = sendInput.value.slice(0, at);
+      const after = sendInput.value.slice(at);
+      sendInput.value = before + tok + after;
+      sendInput.focus();
+      sendInput.selectionStart = sendInput.selectionEnd = (before + tok).length;
+    });
     li.querySelector("[data-remove]")?.addEventListener("click", async () => {
       if (!activeRoomId) return;
       if (!confirm(`移除 ${m.user_id}？`)) return;
