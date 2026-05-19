@@ -391,6 +391,166 @@ func (s *Server) listRoomMessages(ctx context.Context, roomID int64, beforeID *i
 	return out, rows.Err()
 }
 
+// ChatRoomAgentLoop is one row in chat_room_agent_loops (qunliao P3).
+// Owner-controlled per-(room, bot) "speak up on your own" config.
+type ChatRoomAgentLoop struct {
+	RoomID            int64      `json:"room_id"`
+	BotUserID         string     `json:"bot_user_id"`
+	Enabled           bool       `json:"enabled"`
+	IntervalSecs      int        `json:"interval_secs"`
+	MaxPerHour        int        `json:"max_per_hour"`
+	LastDecidedAt     *time.Time `json:"last_decided_at,omitempty"`
+	LastPostedAt      *time.Time `json:"last_posted_at,omitempty"`
+	DecisionsThisHour int        `json:"decisions_this_hour"`
+	HourWindowStart   *time.Time `json:"hour_window_start,omitempty"`
+}
+
+// listChatRoomAgentLoops returns all loop rows for the room. Used by
+// the owner-facing /api/rooms/:id/agent-loops GET handler.
+func (s *Server) listChatRoomAgentLoops(ctx context.Context, roomID int64) ([]ChatRoomAgentLoop, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT room_id, bot_user_id, enabled, interval_secs, max_per_hour,
+		       last_decided_at, last_posted_at, decisions_this_hour, hour_window_start
+		  FROM chat_room_agent_loops
+		 WHERE room_id = $1
+		 ORDER BY bot_user_id`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ChatRoomAgentLoop{}
+	for rows.Next() {
+		var l ChatRoomAgentLoop
+		var ld, lp, hw sql.NullTime
+		if err := rows.Scan(&l.RoomID, &l.BotUserID, &l.Enabled, &l.IntervalSecs, &l.MaxPerHour,
+			&ld, &lp, &l.DecisionsThisHour, &hw); err != nil {
+			return nil, err
+		}
+		if ld.Valid {
+			t := ld.Time
+			l.LastDecidedAt = &t
+		}
+		if lp.Valid {
+			t := lp.Time
+			l.LastPostedAt = &t
+		}
+		if hw.Valid {
+			t := hw.Time
+			l.HourWindowStart = &t
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// upsertChatRoomAgentLoop sets the owner-controllable fields. Counter
+// state (last_decided_at, decisions_this_hour, etc.) is preserved on
+// UPDATE — toggling enabled doesn't reset throttle.
+func (s *Server) upsertChatRoomAgentLoop(ctx context.Context, l ChatRoomAgentLoop) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO chat_room_agent_loops (room_id, bot_user_id, enabled, interval_secs, max_per_hour)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (room_id, bot_user_id) DO UPDATE SET
+		  enabled       = EXCLUDED.enabled,
+		  interval_secs = EXCLUDED.interval_secs,
+		  max_per_hour  = EXCLUDED.max_per_hour`,
+		l.RoomID, l.BotUserID, l.Enabled, l.IntervalSecs, l.MaxPerHour)
+	return err
+}
+
+// deleteChatRoomAgentLoop removes the row (≡ disable + forget settings).
+func (s *Server) deleteChatRoomAgentLoop(ctx context.Context, roomID int64, botUserID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM chat_room_agent_loops WHERE room_id=$1 AND bot_user_id=$2`,
+		roomID, botUserID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// dueChatRoomAgentLoops returns enabled loops that are past their next
+// tick window. Used by the background goroutine. The caller is
+// expected to bump last_decided_at immediately to avoid double-fire
+// on slow LLMs.
+func (s *Server) dueChatRoomAgentLoops(ctx context.Context, now time.Time, limit int) ([]ChatRoomAgentLoop, error) {
+	if limit <= 0 {
+		limit = 32
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT room_id, bot_user_id, enabled, interval_secs, max_per_hour,
+		       last_decided_at, last_posted_at, decisions_this_hour, hour_window_start
+		  FROM chat_room_agent_loops
+		 WHERE enabled = TRUE
+		   AND (last_decided_at IS NULL OR $1::timestamptz - last_decided_at >= make_interval(secs => interval_secs))
+		 ORDER BY COALESCE(last_decided_at, '1970-01-01'::timestamptz) ASC
+		 LIMIT $2`, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ChatRoomAgentLoop{}
+	for rows.Next() {
+		var l ChatRoomAgentLoop
+		var ld, lp, hw sql.NullTime
+		if err := rows.Scan(&l.RoomID, &l.BotUserID, &l.Enabled, &l.IntervalSecs, &l.MaxPerHour,
+			&ld, &lp, &l.DecisionsThisHour, &hw); err != nil {
+			return nil, err
+		}
+		if ld.Valid {
+			t := ld.Time
+			l.LastDecidedAt = &t
+		}
+		if lp.Valid {
+			t := lp.Time
+			l.LastPostedAt = &t
+		}
+		if hw.Valid {
+			t := hw.Time
+			l.HourWindowStart = &t
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// markChatRoomAgentLoopDecided bumps last_decided_at and rotates the
+// hourly throttle counter. Called for every tick — including "model
+// chose nothing" — so spacing is by attempt, not by post.
+func (s *Server) markChatRoomAgentLoopDecided(ctx context.Context, roomID int64, botUserID string, now time.Time, posted bool) error {
+	// Hour window: if hour_window_start is NULL or older than 1h,
+	// reset the counter; else just increment. Done in SQL so concurrent
+	// goroutines don't race on a read-modify-write loop.
+	q := `
+		UPDATE chat_room_agent_loops
+		   SET last_decided_at     = $3,
+		       last_posted_at      = CASE WHEN $4 THEN $3 ELSE last_posted_at END,
+		       hour_window_start   = CASE
+		                               WHEN hour_window_start IS NULL OR $3::timestamptz - hour_window_start >= INTERVAL '1 hour'
+		                               THEN $3
+		                               ELSE hour_window_start
+		                             END,
+		       decisions_this_hour = CASE
+		                               WHEN hour_window_start IS NULL OR $3::timestamptz - hour_window_start >= INTERVAL '1 hour'
+		                               THEN 1
+		                               ELSE decisions_this_hour + 1
+		                             END
+		 WHERE room_id = $1 AND bot_user_id = $2`
+	_, err := s.db.ExecContext(ctx, q, roomID, botUserID, now, posted)
+	return err
+}
+
+// disableChatRoomAgentLoop flips enabled = FALSE. Called by the
+// background loop when a billing gate trips so we don't loop and
+// burn through retries.
+func (s *Server) disableChatRoomAgentLoop(ctx context.Context, roomID int64, botUserID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE chat_room_agent_loops SET enabled = FALSE WHERE room_id = $1 AND bot_user_id = $2`,
+		roomID, botUserID)
+	return err
+}
+
 // findBotInRoom returns the bot_users row matching (workspace, name)
 // only when that bot is also a member of roomID. Returns (nil, nil)
 // when there's no such bot or membership — callers treat a miss as

@@ -9,12 +9,16 @@ import {
   addRoomMember,
   archiveRoom,
   createRoom,
+  deleteAgentLoop,
+  fetchAgentLoops,
   fetchRoomMembers,
   fetchRoomMessages,
   fetchRooms,
   removeRoomMember,
+  saveAgentLoop,
   sendRoomMessage,
 } from "./api/rooms.js";
+import type { AgentLoop } from "./types/room.js";
 import { logout } from "./api/session.js";
 import { byId } from "./lib/dom.js";
 import { hydrateSidebarFoot, hydrateSiteBrand } from "./lib/site.js";
@@ -59,6 +63,7 @@ let rooms: Room[] = [];
 let activeRoomId: number | null = null;
 let activeMessages: RoomMessage[] = [];
 let activeMembers: RoomMember[] = [];
+let activeAgentLoops: Map<string, AgentLoop> = new Map();
 
 function escapeHTML(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -182,6 +187,15 @@ async function loadMembers(roomId: number): Promise<void> {
   try {
     const { data } = await fetchRoomMembers(roomId);
     activeMembers = data.members ?? [];
+    // Best-effort: load agent-loop config so member rows can show the
+    // 🤖 toggle. 403 (non-owner) is expected for member-role callers —
+    // we just leave the map empty and skip rendering the toggle.
+    try {
+      const loops = await fetchAgentLoops(roomId);
+      activeAgentLoops = new Map((loops.data.loops ?? []).map((l) => [l.bot_user_id, l]));
+    } catch {
+      activeAgentLoops = new Map();
+    }
     renderMembers();
   } catch (err) {
     memberListEl.innerHTML = `<div class="meta-subtitle" style="color:var(--danger,#c00);">${escapeHTML((err as Error).message)}</div>`;
@@ -201,7 +215,17 @@ function renderMembers(): void {
     const li = document.createElement("li");
     li.style.cssText = "padding:6px 10px; display:flex; align-items:center; gap:6px; border-bottom:1px solid var(--border,#eee);";
     const roleBadge = m.role === "owner" ? "👑" : m.role === "observer" ? "👁" : "";
+    // Bot rows have user_id starting with "bot_" (createBotUser
+    // mints these via generateSessionID-prefixed strings). For
+    // those, render the 🤖 toggle next to the remove button.
+    const isBot = m.user_id.startsWith("bot_");
+    const loop = activeAgentLoops.get(m.user_id);
+    const loopDot = isBot && loop?.enabled ? "🟢" : isBot ? "💤" : "";
+    const toggleBtn = isBot
+      ? `<button class="btn-inline btn-secondary" data-loop="${escapeHTML(m.user_id)}" title="自主性" style="padding:2px 6px;">🤖${loopDot}</button>`
+      : "";
     li.innerHTML = `<span style="flex:1;">${roleBadge} ${escapeHTML(m.user_id)}</span>` +
+      toggleBtn +
       `<button class="btn-inline btn-secondary" data-remove="${escapeHTML(m.user_id)}" title="移除" style="padding:2px 6px;">✕</button>`;
     li.querySelector("[data-remove]")?.addEventListener("click", async () => {
       if (!activeRoomId) return;
@@ -213,8 +237,47 @@ function renderMembers(): void {
         alert(`移除失败：${(err as Error).message}`);
       }
     });
+    li.querySelector("[data-loop]")?.addEventListener("click", () => {
+      if (!activeRoomId) return;
+      void openAgentLoopDialog(activeRoomId, m.user_id, loop);
+    });
     memberListEl.appendChild(li);
   });
+}
+
+async function openAgentLoopDialog(roomId: number, botUserId: string, current?: AgentLoop): Promise<void> {
+  const enabled = confirm(
+    `启用 bot 自主发言？\n\n点确定 = 启用，点取消 = 停用。\n` +
+      `当前：${current?.enabled ? "已启用" : "未启用"}` +
+      (current?.last_posted_at ? `\n上次发言：${new Date(current.last_posted_at).toLocaleString()}` : ""),
+  );
+  if (!enabled && !current) {
+    return; // not currently configured + user chose disable → noop
+  }
+  const intervalStr = prompt("发言间隔（秒，60-3600）：", String(current?.interval_secs ?? 900));
+  if (intervalStr === null) return;
+  const interval = parseInt(intervalStr, 10);
+  if (!interval || interval < 60 || interval > 3600) {
+    alert("interval 必须 60-3600");
+    return;
+  }
+  const maxStr = prompt("每小时上限：", String(current?.max_per_hour ?? 4));
+  if (maxStr === null) return;
+  const max = parseInt(maxStr, 10);
+  if (!max || max < 1 || max > 30) {
+    alert("max 必须 1-30");
+    return;
+  }
+  try {
+    if (!enabled && current) {
+      await deleteAgentLoop(roomId, botUserId);
+    } else {
+      await saveAgentLoop(roomId, botUserId, { enabled, interval_secs: interval, max_per_hour: max });
+    }
+    await loadMembers(roomId);
+  } catch (err) {
+    alert(`保存失败：${(err as Error).message}`);
+  }
 }
 
 addMemberBtn.addEventListener("click", async () => {
