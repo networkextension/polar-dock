@@ -3175,6 +3175,34 @@ BEGIN
     END IF;
 END
 $$;
+
+-- Qunliao P0a — multi-participant rooms. Sits alongside chat_threads
+-- (1:1 DM) without replacing it; the wire-up that lets chat_messages
+-- belong to a room instead of a thread comes in P0b. See
+-- doc/qunliao/dev-plan.md for the full phasing.
+CREATE TABLE IF NOT EXISTS chat_rooms (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'room',
+    name TEXT NOT NULL DEFAULT '',
+    topic TEXT NOT NULL DEFAULT '',
+    created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    archived_at TIMESTAMPTZ,
+    CONSTRAINT chat_rooms_kind_check CHECK (kind IN ('room','dm','whisper','convene'))
+);
+CREATE INDEX IF NOT EXISTS idx_chat_rooms_workspace ON chat_rooms(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS chat_room_members (
+    room_id BIGINT NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member',
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_read_message_id BIGINT,
+    PRIMARY KEY (room_id, user_id),
+    CONSTRAINT chat_room_members_role_check CHECK (role IN ('owner','member','observer'))
+);
+CREATE INDEX IF NOT EXISTS idx_chat_room_members_user ON chat_room_members(user_id);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
