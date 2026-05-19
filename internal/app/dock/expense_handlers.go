@@ -386,12 +386,13 @@ func (s *Server) handleExpenseFromImage(c *gin.Context) {
 		e.Region = draft.Region
 		e.Confidence = draft.Confidence
 		e.Remark = draft.Remark
-		// consume_time intentionally NOT taken from the receipt — the
-		// printed timestamp is unreliable (the LLM often latches onto a
-		// stray order id / EXIF year and returns dates from years ago).
-		// Filing time = "now"; user can edit on the draft if needed.
-		e.ConsumeTime = time.Now().UTC()
-		e.HasDetailTime = false
+		// Use the LLM-extracted consume_time as-is. The receipt date is
+		// real data — earlier "looks too old" guards were wrong: the
+		// list view defaults to 全部 so out-of-month rows still show up,
+		// and the user can edit on the draft if anything's off.
+		t, hasDetail := parseExpenseConsumeTime(draft.ConsumeTime)
+		e.ConsumeTime = t
+		e.HasDetailTime = hasDetail
 	}
 	if err := s.createExpense(e); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
