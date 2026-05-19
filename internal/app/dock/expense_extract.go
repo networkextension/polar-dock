@@ -176,30 +176,3 @@ func usagePromptTokens(u *aiUsage) int {
 	return u.PromptTokens
 }
 
-// parseExpenseConsumeTime turns the LLM's free-form date string into a
-// time.Time + has_detail flag. Accepts both "YYYY-MM-DD HH:mm" and
-// date-only "YYYY-MM-DD". Falls back to time.Now when both fail (and
-// flips status to draft so the user can fix it).
-func parseExpenseConsumeTime(s string) (time.Time, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Now().UTC(), false
-	}
-	formats := []struct {
-		layout    string
-		hasDetail bool
-	}{
-		{"2006-01-02 15:04:05", true},
-		{"2006-01-02 15:04", true},
-		{"2006/01/02 15:04:05", true},
-		{"2006/01/02 15:04", true},
-		{"2006-01-02", false},
-		{"2006/01/02", false},
-	}
-	for _, f := range formats {
-		if t, err := time.ParseInLocation(f.layout, s, time.Local); err == nil {
-			return t, f.hasDetail
-		}
-	}
-	return time.Now().UTC(), false
-}
