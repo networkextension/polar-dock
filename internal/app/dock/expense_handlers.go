@@ -7,7 +7,10 @@ package dock
 // OCR / LLM extraction lives in expense_extract.go (L2 — separate PR).
 
 import (
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -294,4 +297,120 @@ func (s *Server) handleExpenseDelete(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// handleExpenseFromImage — L2 upload flow. multipart `file` field
+// (jpg/png/heic/webp ≤ 25 MiB). Saves the image, runs OCR + LLM
+// extraction, inserts a status=0 draft expense, returns the row so the
+// UI can pre-fill its confirm modal. Heavy-lifting is in extract_*.go;
+// this handler is just the HTTP shell.
+func (s *Server) handleExpenseFromImage(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	userIDAny, _ := c.Get("user_id")
+	userID, _ := userIDAny.(string)
+	if strings.TrimSpace(userID) == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 file 字段"})
+		return
+	}
+	if file.Size <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "文件为空"})
+		return
+	}
+
+	// Stage then content-address — same shape as attachments_handlers
+	// but stored in expense-images/<sha>.<ext>.
+	stage := filepath.Join(s.uploadDir, "expense-staging-"+generateResourceID()+filepath.Ext(file.Filename))
+	if err := os.MkdirAll(filepath.Dir(stage), 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if err := c.SaveUploadedFile(file, stage); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "文件保存失败"})
+		return
+	}
+	relPath, sha, err := s.saveExpenseImage(stage, file.Filename)
+	if err != nil {
+		_ = os.Remove(stage)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	log.Printf("expense from-image: workspace=%s user=%s file=%s sha=%s rel=%s",
+		workspaceID, userID, file.Filename, sha[:12], relPath)
+
+	// OCR + LLM extraction. Failures still create a status=0 expense
+	// (with raw_image_id set), so the user can manually fill it instead
+	// of losing the image. Sync_error stored in remark.
+	abs := filepath.Join(s.uploadDir, relPath)
+	draft, extErr := s.extractExpenseFromImage(c.Request.Context(), workspaceID, abs)
+	e := &Expense{
+		WorkspaceID:     workspaceID,
+		CreatedByUserID: userID,
+		RawImageID:      &relPath,
+		Status:          ExpenseStatusDraft,
+		Currency:        "CNY",
+		Confidence:      0,
+		ConsumeTime:     time.Now().UTC(),
+	}
+	if extErr != nil {
+		log.Printf("expense from-image: extract failed: %v", extErr)
+		e.Remark = "自动抽取失败：" + extErr.Error()
+	} else if draft != nil {
+		e.Amount = draft.Amount
+		e.Currency = draft.Currency
+		e.Merchant = draft.Merchant
+		e.CategoryID = draft.CategoryID
+		e.Region = draft.Region
+		e.Confidence = draft.Confidence
+		e.Remark = draft.Remark
+		t, hasDetail := parseExpenseConsumeTime(draft.ConsumeTime)
+		e.ConsumeTime = t
+		e.HasDetailTime = hasDetail
+	}
+	if err := s.createExpense(e); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	resp := gin.H{"expense": e}
+	if extErr != nil {
+		resp["extract_error"] = extErr.Error()
+	}
+	c.JSON(http.StatusCreated, resp)
+}
+
+// handleExpenseImageDownload serves the original image bytes for a stored
+// expense. Workspace-scoped via the expense row's workspace_id, not the
+// blob path (since blobs are deduped across workspaces).
+func (s *Server) handleExpenseImageDownload(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, ok := parseInt64Param(c, "id")
+	if !ok {
+		return
+	}
+	e, err := s.getExpense(id, workspaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if e == nil || e.RawImageID == nil || *e.RawImageID == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "没有原始图片"})
+		return
+	}
+	abs := s.resolveExpenseImagePath(*e.RawImageID)
+	if abs == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "图片文件已不存在"})
+		return
+	}
+	c.File(abs)
 }

@@ -1121,6 +1121,10 @@ func (s *Server) registerRoutes() {
 		api.POST("/expenses", s.AuthMiddleware(), s.handleExpenseCreate)
 		api.PUT("/expenses/:id", s.AuthMiddleware(), s.handleExpenseUpdate)
 		api.DELETE("/expenses/:id", s.AuthMiddleware(), s.handleExpenseDelete)
+		// L2: receipt upload — multipart image → Apple Vision OCR →
+		// LLM-structured draft (status=0). User confirms via PUT above.
+		api.POST("/expenses/from-image", s.AuthMiddleware(), s.handleExpenseFromImage)
+		api.GET("/expenses/:id/image", s.AuthMiddleware(), s.handleExpenseImageDownload)
 		api.GET("/admin/logs", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLogs)
 		api.GET("/admin/users", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserList)
 		api.GET("/admin/users/:id/login-history", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserLoginHistory)

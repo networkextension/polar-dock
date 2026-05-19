@@ -15,6 +15,7 @@ import {
   fetchExpenses,
   updateExpense,
   updateExpenseCategory,
+  uploadExpenseImage,
   type Expense,
   type ExpenseCategory,
   type ExpenseListFilter,
@@ -29,9 +30,19 @@ bindThemeSync();
 
 // ---- DOM refs ----
 const tabExpensesBtn = byId<HTMLButtonElement>("tabExpenses");
+const tabDraftsBtn = byId<HTMLButtonElement>("tabDrafts");
 const tabCategoriesBtn = byId<HTMLButtonElement>("tabCategories");
 const paneExpenses = byId<HTMLElement>("paneExpenses");
+const paneDrafts = byId<HTMLElement>("paneDrafts");
 const paneCategories = byId<HTMLElement>("paneCategories");
+const draftBadge = byId<HTMLElement>("draftBadge");
+const draftCount = byId<HTMLElement>("draftCount");
+const draftTable = byId<HTMLTableElement>("draftTable");
+const draftTbody = byId<HTMLTableSectionElement>("draftTbody");
+const draftEmpty = byId<HTMLElement>("draftEmpty");
+const draftRefreshBtn = byId<HTMLButtonElement>("draftRefreshBtn");
+const uploadReceiptBtn = byId<HTMLButtonElement>("uploadReceiptBtn");
+const uploadReceiptInput = byId<HTMLInputElement>("uploadReceiptInput");
 
 const expenseTable = byId<HTMLTableElement>("expenseTable");
 const expenseTbody = byId<HTMLTableSectionElement>("expenseTbody");
@@ -134,23 +145,20 @@ function currentPeriodRange(): { start?: string; end?: string } {
 }
 
 // ---- tab switching ----
-function switchTab(tab: "expenses" | "categories"): void {
-  if (tab === "expenses") {
-    paneExpenses.hidden = false;
-    paneCategories.hidden = true;
-    tabExpensesBtn.classList.add("lp-tab-active");
-    tabCategoriesBtn.classList.remove("lp-tab-active");
-    void loadExpenses();
-  } else {
-    paneExpenses.hidden = true;
-    paneCategories.hidden = false;
-    tabExpensesBtn.classList.remove("lp-tab-active");
-    tabCategoriesBtn.classList.add("lp-tab-active");
-    renderCategoryTable();
-  }
+function switchTab(tab: "expenses" | "drafts" | "categories"): void {
+  paneExpenses.hidden = tab !== "expenses";
+  paneDrafts.hidden = tab !== "drafts";
+  paneCategories.hidden = tab !== "categories";
+  tabExpensesBtn.classList.toggle("lp-tab-active", tab === "expenses");
+  tabDraftsBtn.classList.toggle("lp-tab-active", tab === "drafts");
+  tabCategoriesBtn.classList.toggle("lp-tab-active", tab === "categories");
+  if (tab === "expenses") void loadExpenses();
+  else if (tab === "drafts") void loadDrafts();
+  else if (tab === "categories") renderCategoryTable();
 }
 
 tabExpensesBtn.addEventListener("click", () => switchTab("expenses"));
+tabDraftsBtn.addEventListener("click", () => switchTab("drafts"));
 tabCategoriesBtn.addEventListener("click", () => switchTab("categories"));
 
 // ---- expenses ----
@@ -160,7 +168,9 @@ async function loadExpenses(): Promise<void> {
   expenseTable.hidden = true;
   expenseEmpty.hidden = true;
   const range = currentPeriodRange();
-  const filter: ExpenseListFilter = { ...range, limit: 200 };
+  // 流水 tab shows confirmed only; drafts have their own tab so the
+  // main list isn't polluted by half-extracted rows.
+  const filter: ExpenseListFilter = { ...range, status: 1, limit: 200 };
   const catVal = filterCategory.value;
   if (catVal) filter.category_id = parseInt(catVal, 10);
   try {
@@ -468,6 +478,178 @@ categoryModalCloseBtn.addEventListener("click", () => (categoryModal.hidden = tr
 categoryModalCancelBtn.addEventListener("click", () => (categoryModal.hidden = true));
 categoryModalSubmitBtn.addEventListener("click", () => void submitCategory());
 
+// ---- L2: upload receipt → OCR → LLM draft ----
+
+async function onUploadReceipt(file: File): Promise<void> {
+  if (!file) return;
+  // Quick client-side guards; backend re-validates.
+  if (file.size > 25 * 1024 * 1024) {
+    alert("图片超过 25 MiB 上限");
+    return;
+  }
+  uploadReceiptBtn.disabled = true;
+  const original = uploadReceiptBtn.textContent;
+  uploadReceiptBtn.textContent = "⏳ 抽取中...";
+  try {
+    const { data } = await uploadExpenseImage(file);
+    const tip = data.extract_error
+      ? `已落草稿（抽取失败：${data.extract_error.slice(0, 80)}），请到「待确认」手填确认。`
+      : `已落草稿（金额 ¥${data.expense.amount.toFixed(2)}，置信度 ${data.expense.confidence}），到「待确认」核对。`;
+    alert(tip);
+    await refreshDraftBadge();
+    switchTab("drafts");
+  } catch (err) {
+    alert(`上传失败：${(err as Error).message}`);
+  } finally {
+    uploadReceiptBtn.disabled = false;
+    uploadReceiptBtn.textContent = original;
+    uploadReceiptInput.value = ""; // allow re-pick of same file
+  }
+}
+
+uploadReceiptBtn.addEventListener("click", () => uploadReceiptInput.click());
+uploadReceiptInput.addEventListener("change", () => {
+  const f = uploadReceiptInput.files?.[0];
+  if (f) void onUploadReceipt(f);
+});
+
+// Drag-drop on the entire expense pane
+paneExpenses.addEventListener("dragover", (ev) => {
+  ev.preventDefault();
+  paneExpenses.style.outline = "2px dashed var(--accent, #3b82f6)";
+  paneExpenses.style.outlineOffset = "-8px";
+});
+paneExpenses.addEventListener("dragleave", () => {
+  paneExpenses.style.outline = "";
+});
+paneExpenses.addEventListener("drop", (ev) => {
+  ev.preventDefault();
+  paneExpenses.style.outline = "";
+  const f = ev.dataTransfer?.files?.[0];
+  if (f && f.type.startsWith("image/")) void onUploadReceipt(f);
+});
+
+async function refreshDraftBadge(): Promise<void> {
+  try {
+    const { data } = await fetchExpenses({ status: 0, limit: 1 });
+    const n = data.total;
+    if (n > 0) {
+      draftBadge.hidden = false;
+      draftBadge.textContent = String(n);
+    } else {
+      draftBadge.hidden = true;
+    }
+  } catch {
+    /* silent */
+  }
+}
+
+async function loadDrafts(): Promise<void> {
+  const { data } = await fetchExpenses({ status: 0, limit: 100 });
+  const items = data.expenses ?? [];
+  draftCount.textContent = `${items.length} 条`;
+  draftTbody.innerHTML = "";
+  for (const e of items) draftTbody.appendChild(renderDraftRow(e));
+  draftTable.hidden = items.length === 0;
+  draftEmpty.hidden = items.length !== 0;
+}
+
+function renderDraftRow(e: Expense): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  const failed = (e.remark || "").startsWith("自动抽取失败");
+
+  const tdImg = document.createElement("td");
+  if (e.raw_image_id) {
+    const img = document.createElement("img");
+    img.src = `/api/expenses/${e.id}/image`;
+    img.style.cssText = "width:40px; height:40px; object-fit:cover; border-radius:4px; cursor:zoom-in;";
+    img.title = "点击查看原图";
+    img.addEventListener("click", () => window.open(`/api/expenses/${e.id}/image`, "_blank"));
+    tdImg.appendChild(img);
+  } else {
+    tdImg.innerHTML = '<span class="meta-subtitle">—</span>';
+  }
+
+  const tdTime = document.createElement("td");
+  tdTime.textContent = fmtConsumeTime(e.consume_time, e.has_detail_time);
+  tdTime.style.whiteSpace = "nowrap";
+
+  const tdMerchant = document.createElement("td");
+  tdMerchant.textContent = e.merchant || "—";
+
+  const tdCat = document.createElement("td");
+  const cat = e.category_id != null ? categories.find((c) => c.id === e.category_id) : null;
+  tdCat.textContent = cat ? `${cat.icon} ${cat.name}` : "未分类";
+
+  const tdAmt = document.createElement("td");
+  tdAmt.style.textAlign = "right";
+  tdAmt.style.fontWeight = "600";
+  tdAmt.textContent = e.amount > 0 ? fmtAmount(e.amount, e.currency) : "—";
+
+  const tdConf = document.createElement("td");
+  const conf = e.confidence;
+  const confColor = conf >= 80 ? "#16a34a" : conf >= 50 ? "#d97706" : "#dc2626";
+  tdConf.innerHTML = `<span style="color:${confColor}; font-weight:600;">${conf}%</span>`;
+
+  const tdRemark = document.createElement("td");
+  tdRemark.textContent = e.remark || "";
+  if (failed) tdRemark.style.color = "var(--danger, #c00)";
+  tdRemark.style.maxWidth = "260px";
+  tdRemark.style.overflow = "hidden";
+  tdRemark.style.textOverflow = "ellipsis";
+  tdRemark.style.whiteSpace = "nowrap";
+  if (e.remark) tdRemark.title = e.remark;
+
+  const tdAct = document.createElement("td");
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button";
+  confirmBtn.className = "btn-inline btn-primary";
+  confirmBtn.textContent = "✓ 确认";
+  confirmBtn.style.marginRight = "4px";
+  confirmBtn.disabled = !(e.amount > 0);
+  confirmBtn.title = e.amount > 0 ? "确认入正式账" : "金额为 0，先编辑";
+  confirmBtn.addEventListener("click", async () => {
+    try {
+      await updateExpense(e.id, { status: 1 });
+      await refreshDraftBadge();
+      void loadDrafts();
+    } catch (err) {
+      alert(`确认失败：${(err as Error).message}`);
+    }
+  });
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.className = "btn-inline btn-secondary";
+  editBtn.textContent = "✎";
+  editBtn.style.marginRight = "4px";
+  editBtn.title = "编辑";
+  editBtn.addEventListener("click", () => openExpenseModal(e));
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "btn-inline btn-secondary";
+  delBtn.textContent = "🗑";
+  delBtn.title = "放弃";
+  delBtn.addEventListener("click", async () => {
+    if (!confirm("放弃此草稿？")) return;
+    try {
+      await deleteExpense(e.id);
+      await refreshDraftBadge();
+      void loadDrafts();
+    } catch (err) {
+      alert(`删除失败：${(err as Error).message}`);
+    }
+  });
+  tdAct.append(confirmBtn, editBtn, delBtn);
+
+  tr.append(tdImg, tdTime, tdMerchant, tdCat, tdAmt, tdConf, tdRemark, tdAct);
+  return tr;
+}
+
+draftRefreshBtn.addEventListener("click", () => {
+  void refreshDraftBadge();
+  void loadDrafts();
+});
+
 // ---- bootstrap ----
 
 logoutBtn?.addEventListener("click", () => {
@@ -480,7 +662,7 @@ async function bootstrap(): Promise<void> {
   hydrateSiteBrand();
   hydrateSidebarFoot();
   await loadCategories(); // also bootstraps backend presets if empty
-  await loadExpenses();
+  await Promise.all([loadExpenses(), refreshDraftBadge()]);
 }
 
 void bootstrap();

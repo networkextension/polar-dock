@@ -129,3 +129,24 @@ export async function updateExpense(
 export async function deleteExpense(id: number) {
   return request(`/api/expenses/${id}`, { method: "DELETE" });
 }
+
+// L2 — upload receipt → Apple Vision OCR → LLM structuring →
+// status=0 draft Expense. extract_error is non-empty when OCR or LLM
+// fell over; the draft is still created so the user can fill it in.
+export interface ExpenseFromImageResponse {
+  expense: Expense;
+  extract_error?: string;
+}
+
+export async function uploadExpenseImage(file: File): Promise<{ data: ExpenseFromImageResponse }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return requestJson<ExpenseFromImageResponse>("/api/expenses/from-image", {
+    method: "POST",
+    body: fd,
+  });
+}
+
+export function expenseImageURL(id: number): string {
+  return `/api/expenses/${id}/image`;
+}
