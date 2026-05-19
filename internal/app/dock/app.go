@@ -922,6 +922,18 @@ func (s *Server) registerRoutes() {
 		api.POST("/tasks/:id/select-candidate", s.AuthMiddleware(), s.handleTaskSelectCandidate)
 		api.GET("/tasks/:id/results", s.AuthMiddleware(), s.handleTaskResultsList)
 		api.POST("/tasks/:id/results", s.AuthMiddleware(), s.handleTaskResultCreate)
+		// Qunliao P0a — multi-participant rooms. Coexists with the
+		// 1:1 /chats/* surface; message wiring lands in P0b. See
+		// doc/qunliao/dev-plan.md for the phasing.
+		api.GET("/rooms", s.AuthMiddleware(), s.handleChatRoomList)
+		api.POST("/rooms", s.AuthMiddleware(), s.handleChatRoomCreate)
+		api.GET("/rooms/:id", s.AuthMiddleware(), s.handleChatRoomGet)
+		api.PUT("/rooms/:id", s.AuthMiddleware(), s.handleChatRoomUpdate)
+		api.DELETE("/rooms/:id", s.AuthMiddleware(), s.handleChatRoomDelete)
+		api.GET("/rooms/:id/members", s.AuthMiddleware(), s.handleChatRoomMemberList)
+		api.POST("/rooms/:id/members", s.AuthMiddleware(), s.handleChatRoomMemberAdd)
+		api.DELETE("/rooms/:id/members/:userId", s.AuthMiddleware(), s.handleChatRoomMemberRemove)
+
 		api.GET("/chats", s.AuthMiddleware(), s.handleChatList)
 		api.POST("/chats/start", s.AuthMiddleware(), s.handleChatStart)
 		api.GET("/chats/:id/llm-threads", s.AuthMiddleware(), s.handleChatLLMThreads)
