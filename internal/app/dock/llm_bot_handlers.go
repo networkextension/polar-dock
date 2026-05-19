@@ -323,6 +323,10 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 		PreferredTool: strings.TrimSpace(req.PreferredTool),
 	}, time.Now())
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "uniq_bot_users_workspace_name") {
+			c.JSON(http.StatusConflict, gin.H{"error": "工作区内已有同名 Bot — 请换一个名字"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
 	}
@@ -387,6 +391,10 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 	}
 	item, err := s.updateBotUser(workspaceID, id, input, time.Now())
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "uniq_bot_users_workspace_name") {
+			c.JSON(http.StatusConflict, gin.H{"error": "工作区内已有同名 Bot — 请换一个名字"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
 	}
