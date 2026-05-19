@@ -346,11 +346,26 @@ func (s *Server) handleExpenseFromImage(c *gin.Context) {
 	log.Printf("expense from-image: workspace=%s user=%s file=%s sha=%s rel=%s",
 		workspaceID, userID, file.Filename, sha[:12], relPath)
 
-	// OCR + LLM extraction. Failures still create a status=0 expense
-	// (with raw_image_id set), so the user can manually fill it instead
-	// of losing the image. Sync_error stored in remark.
+	// Extract. Pipeline branch:
+	//   EXPENSE_EXTRACT_MULTIMODAL_LLM_CONFIG_ID set
+	//     → multimodal vision LLM directly (better on visual-layout
+	//        receipts like 支付宝/微信账单详情 where numbers cluster)
+	//   else → OCR (Apple Vision) → text LLM (cheaper, fine for plain
+	//        text receipts)
+	// Both produce ExpenseExtractDraft. Failures still create a status=0
+	// draft (image is preserved, user can manually fill).
 	abs := filepath.Join(s.uploadDir, relPath)
-	draft, extErr := s.extractExpenseFromImage(c.Request.Context(), workspaceID, abs)
+	var draft *ExpenseExtractDraft
+	var extErr error
+	if expenseMultimodalLLMConfigID() > 0 {
+		draft, extErr = s.extractExpenseFromImageMultimodal(c.Request.Context(), workspaceID, abs)
+		if extErr != nil {
+			log.Printf("expense from-image: multimodal failed, falling back to OCR: %v", extErr)
+			draft, extErr = s.extractExpenseFromImage(c.Request.Context(), workspaceID, abs)
+		}
+	} else {
+		draft, extErr = s.extractExpenseFromImage(c.Request.Context(), workspaceID, abs)
+	}
 	e := &Expense{
 		WorkspaceID:     workspaceID,
 		CreatedByUserID: userID,
