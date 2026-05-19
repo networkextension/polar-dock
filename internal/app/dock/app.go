@@ -933,6 +933,8 @@ func (s *Server) registerRoutes() {
 		api.GET("/rooms/:id/members", s.AuthMiddleware(), s.handleChatRoomMemberList)
 		api.POST("/rooms/:id/members", s.AuthMiddleware(), s.handleChatRoomMemberAdd)
 		api.DELETE("/rooms/:id/members/:userId", s.AuthMiddleware(), s.handleChatRoomMemberRemove)
+		api.GET("/rooms/:id/messages", s.AuthMiddleware(), s.handleChatRoomMessageList)
+		api.POST("/rooms/:id/messages", s.AuthMiddleware(), s.handleChatRoomMessageSend)
 
 		api.GET("/chats", s.AuthMiddleware(), s.handleChatList)
 		api.POST("/chats/start", s.AuthMiddleware(), s.handleChatStart)

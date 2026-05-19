@@ -572,7 +572,8 @@ type ChatMessageAttachment struct {
 
 type ChatMessage struct {
 	ID              int64                  `json:"id"`
-	ThreadID        int64                  `json:"thread_id"`
+	ThreadID        int64                  `json:"thread_id,omitempty"` // 0 for room-routed messages (P0b+)
+	RoomID          *int64                 `json:"room_id,omitempty"`   // qunliao P0b — present for multi-participant rooms
 	LLMThreadID     *int64                 `json:"llm_thread_id,omitempty"`
 	SenderID        string                 `json:"sender_id"`
 	SenderUsername  string                 `json:"sender_username"`
@@ -3203,6 +3204,36 @@ CREATE TABLE IF NOT EXISTS chat_room_members (
     CONSTRAINT chat_room_members_role_check CHECK (role IN ('owner','member','observer'))
 );
 CREATE INDEX IF NOT EXISTS idx_chat_room_members_user ON chat_room_members(user_id);
+
+-- Qunliao P0b — chat_messages can now belong to a room *or* a thread.
+-- thread_id stays NOT NULL for now (DM rows still need it); room
+-- messages set room_id and use a sentinel thread_id of 0 mapped via
+-- the insert helper. A follow-up will relax thread_id to nullable
+-- once the DM path is migrated to rooms; this incremental shape
+-- avoids a hot-path NOT NULL alter on a large table.
+ALTER TABLE chat_messages
+    ADD COLUMN IF NOT EXISTS room_id BIGINT;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chat_messages_room_id_fkey'
+    ) THEN
+        ALTER TABLE chat_messages
+            ADD CONSTRAINT chat_messages_room_id_fkey
+            FOREIGN KEY (room_id) REFERENCES chat_rooms(id) ON DELETE CASCADE;
+    END IF;
+END
+$$;
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_room_id_created_at
+    ON chat_messages(room_id, created_at DESC) WHERE room_id IS NOT NULL;
+
+-- Relax thread_id to nullable so room-only messages don't need a
+-- sentinel. Existing DM rows keep their non-NULL thread_id; only new
+-- room-routed inserts will write NULL here.
+ALTER TABLE chat_messages
+    ALTER COLUMN thread_id DROP NOT NULL;
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
