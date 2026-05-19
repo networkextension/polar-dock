@@ -9,7 +9,6 @@ package dock
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -66,7 +65,7 @@ func (s *Server) fanoutOneBotReply(workspaceID string, roomID, triggerMsgID int6
 	// On block we *do* post — as the bot — so the room sees what
 	// happened. This mirrors PR #262's expense extract behavior.
 	if blocked, msg := s.checkChatBillingGate(workspaceID, bot.LLMConfigID); blocked {
-		body := fmt.Sprintf("（系统提示）%s — 本月该 LLM 额度已用完，请到 /llm-billing.html 充值或调高月预算。", msg)
+		_, body := classifyBotError(msg, bot.Name)
 		s.insertAndBroadcastBotReply(ctx, roomID, bot.BotUserID, body)
 		return
 	}
@@ -137,7 +136,8 @@ func (s *Server) fanoutOneBotReply(workspaceID string, roomID, triggerMsgID int6
 
 	if err != nil {
 		log.Printf("room mention: llm failed workspace=%s bot=%q: %v", workspaceID, bot.Name, err)
-		s.insertAndBroadcastBotReply(ctx, roomID, bot.BotUserID, fmt.Sprintf("（系统提示）%s 暂时无法回复 — %s", bot.Name, truncateForLog(err.Error(), 120)))
+		_, body := classifyBotError(err.Error(), bot.Name)
+		s.insertAndBroadcastBotReply(ctx, roomID, bot.BotUserID, body)
 		return
 	}
 	if resp == nil || len(resp.Choices) == 0 {

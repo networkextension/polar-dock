@@ -117,6 +117,11 @@ func (s *Server) idleLoopDecideOne(parentCtx context.Context, l ChatRoomAgentLoo
 
 	if blocked, msg := s.checkChatBillingGate(room.WorkspaceID, bot.LLMConfigID); blocked {
 		log.Printf("room idle: billing gate blocked room=%d bot=%q — auto-disabling. reason=%s", l.RoomID, bot.Name, msg)
+		// One-shot placeholder so the room sees WHY autonomy went
+		// quiet. We don't post on every tick (would spam) — the disable
+		// flip prevents future ticks from re-firing this path.
+		_, body := classifyBotError(msg, bot.Name)
+		s.insertAndBroadcastBotReply(ctx, l.RoomID, bot.BotUserID, body+" 自主性已自动关闭。")
 		if dErr := s.disableChatRoomAgentLoop(ctx, l.RoomID, l.BotUserID); dErr != nil {
 			log.Printf("room idle: disable on quota fail room=%d bot=%s: %v", l.RoomID, l.BotUserID, dErr)
 		}
