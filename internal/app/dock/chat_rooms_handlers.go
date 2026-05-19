@@ -332,6 +332,13 @@ func (s *Server) handleChatRoomMessageSend(c *gin.Context) {
 		MessageID: msgID,
 		SenderID:  userID,
 	})
+	// Qunliao P1: parse @bot_name mentions and fan out one LLM-backed
+	// reply per matched bot. No @ = no reply (avoids in-room bot
+	// self-chatter). Fire-and-forget; each goroutine handles its own
+	// billing gate, ledger record, and WS publish.
+	if mentions := parseBotMentions(req.Content); len(mentions) > 0 {
+		s.fanoutRoomMentions(workspaceID, id, msgID, userID, req.Content, mentions)
+	}
 	c.JSON(http.StatusCreated, gin.H{
 		"message": gin.H{
 			"id":           msgID,

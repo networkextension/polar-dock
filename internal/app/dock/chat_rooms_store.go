@@ -391,6 +391,49 @@ func (s *Server) listRoomMessages(ctx context.Context, roomID int64, beforeID *i
 	return out, rows.Err()
 }
 
+// findBotInRoom returns the bot_users row matching (workspace, name)
+// only when that bot is also a member of roomID. Returns (nil, nil)
+// when there's no such bot or membership — callers treat a miss as
+// silent "wrong @, ignore".
+//
+// Relies on the uniq_bot_users_workspace_name constraint (PR #271) so
+// the SELECT is deterministic without ORDER BY.
+func (s *Server) findBotInRoom(ctx context.Context, workspaceID string, roomID int64, name string) (*BotUser, error) {
+	if strings.TrimSpace(workspaceID) == "" || roomID <= 0 || strings.TrimSpace(name) == "" {
+		return nil, nil
+	}
+	row := s.db.QueryRowContext(ctx, `
+		SELECT b.id, b.owner_user_id, b.workspace_id, b.bot_user_id, b.name,
+		       b.description, b.system_prompt,
+		       COALESCE(b.llm_config_id, 0), b.bot_kind,
+		       COALESCE(b.preferred_tool, ''), b.is_auto_registered,
+		       b.host_skill_id, b.created_at, b.updated_at
+		  FROM bot_users b
+		  JOIN chat_room_members m ON m.user_id = b.bot_user_id AND m.room_id = $3
+		 WHERE b.workspace_id = $1 AND b.name = $2
+		 LIMIT 1`,
+		workspaceID, name, roomID)
+	var bot BotUser
+	var hostSkillID sql.NullInt64
+	if err := row.Scan(
+		&bot.ID, &bot.OwnerUserID, &bot.WorkspaceID, &bot.BotUserID, &bot.Name,
+		&bot.Description, &bot.SystemPrompt,
+		&bot.LLMConfigID, &bot.BotKind,
+		&bot.PreferredTool, &bot.IsAutoRegistered,
+		&hostSkillID, &bot.CreatedAt, &bot.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if hostSkillID.Valid {
+		v := hostSkillID.Int64
+		bot.HostSkillID = &v
+	}
+	return &bot, nil
+}
+
 // getChatRoomMember returns the membership row, or nil if absent. Used
 // by handlers to gate "is this user actually in this room" before
 // admitting them into the WS broadcast set (P0c).
