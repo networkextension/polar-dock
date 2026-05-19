@@ -46,13 +46,22 @@ type ChatRoom struct {
 	ArchivedAt      *time.Time `json:"archived_at,omitempty"`
 }
 
-// ChatRoomMember is one row in chat_room_members.
+// ChatRoomMember is one row in chat_room_members. Username + Icon +
+// IsBot are denormalized from users + bot_users so the UI can render
+// without a second round-trip; nil when the join misses (deleted user
+// — shouldn't happen given ON DELETE CASCADE but the columns are safe
+// fallbacks). BotName is the bot_users.name when this member is a
+// bot, which is the @mention token that lookup uses (NOT user_id).
 type ChatRoomMember struct {
 	RoomID            int64     `json:"room_id"`
 	UserID            string    `json:"user_id"`
 	Role              string    `json:"role"`
 	JoinedAt          time.Time `json:"joined_at"`
 	LastReadMessageID *int64    `json:"last_read_message_id,omitempty"`
+	Username          string    `json:"username,omitempty"`
+	Icon              string    `json:"icon,omitempty"`
+	IsBot             bool      `json:"is_bot,omitempty"`
+	BotName           string    `json:"bot_name,omitempty"`
 }
 
 // validRoomKind returns true for any kind the CHECK constraint accepts.
@@ -258,11 +267,20 @@ func (s *Server) updateChatRoomMemberRole(ctx context.Context, roomID int64, use
 
 // listChatRoomMembers — all members of a room, oldest joined first.
 func (s *Server) listChatRoomMembers(ctx context.Context, roomID int64) ([]ChatRoomMember, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT room_id, user_id, role, joined_at, last_read_message_id
-		 FROM chat_room_members WHERE room_id=$1 ORDER BY joined_at ASC`,
-		roomID,
-	)
+	// LEFT JOIN bot_users so non-bot members produce NULL bot_name;
+	// users JOIN is inner because chat_room_members.user_id has FK to
+	// users(id) ON DELETE CASCADE — a member without a user row would
+	// be a broken state.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.room_id, m.user_id, m.role, m.joined_at, m.last_read_message_id,
+		       u.username, COALESCE(u.icon_url, ''),
+		       b.name IS NOT NULL AS is_bot,
+		       COALESCE(b.name, '') AS bot_name
+		  FROM chat_room_members m
+		  JOIN users u ON u.id = m.user_id
+		  LEFT JOIN bot_users b ON b.bot_user_id = m.user_id
+		 WHERE m.room_id = $1
+		 ORDER BY m.joined_at ASC`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +289,8 @@ func (s *Server) listChatRoomMembers(ctx context.Context, roomID int64) ([]ChatR
 	for rows.Next() {
 		var m ChatRoomMember
 		var lastRead sql.NullInt64
-		if err := rows.Scan(&m.RoomID, &m.UserID, &m.Role, &m.JoinedAt, &lastRead); err != nil {
+		if err := rows.Scan(&m.RoomID, &m.UserID, &m.Role, &m.JoinedAt, &lastRead,
+			&m.Username, &m.Icon, &m.IsBot, &m.BotName); err != nil {
 			return nil, err
 		}
 		if lastRead.Valid {
