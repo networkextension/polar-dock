@@ -374,8 +374,12 @@ func (s *Server) listLLMProxyCalls(workspaceID string, tokenID int64, limit int)
 		var c LLMProxyCall
 		var llmConfigID sql.NullInt64
 		var costUSD sql.NullFloat64
-		if err := rows.Scan(&c.ID, &c.TokenID, &c.WorkspaceID, &c.ModelRequested, &c.ModelResolved, &llmConfigID, &c.PromptTokens, &c.CompletionTokens, &c.TotalTokens, &c.LatencyMS, &c.StatusCode, &c.ErrorText, &costUSD, &c.CreatedAt); err != nil {
+		var tokenID sql.NullInt64
+		if err := rows.Scan(&c.ID, &tokenID, &c.WorkspaceID, &c.ModelRequested, &c.ModelResolved, &llmConfigID, &c.PromptTokens, &c.CompletionTokens, &c.TotalTokens, &c.LatencyMS, &c.StatusCode, &c.ErrorText, &costUSD, &c.CreatedAt); err != nil {
 			return nil, err
+		}
+		if tokenID.Valid {
+			c.TokenID = tokenID.Int64
 		}
 		if llmConfigID.Valid {
 			v := llmConfigID.Int64
@@ -442,6 +446,58 @@ func (s *Server) aggregateLLMProxyCalls(workspaceID string, tokenID int64, days 
 	return out, rows.Err()
 }
 
+// recordAgentLLMCall writes a llm_proxy_calls row for non-proxy LLM
+// calls (in-app chat / extract / summary). The proxy chat handler has
+// its own recording path; this one is for everything that goes through
+// aiAgent.requestChatCompletion + similar.
+//
+// Pricing follows estimateLLMProxyCallCostWithConfig unless
+// costOverride is non-nil. costOverride is used to force cost_usd=0
+// for system-bot DMs — usage is still tracked, the platform absorbs
+// the cost. Pass nil to let pricing rules apply.
+//
+// Best-effort: errors are returned but callers typically log and move
+// on (recording shouldn't block the chat reply path).
+func (s *Server) recordAgentLLMCall(
+	workspaceID string,
+	llmConfigID int64,
+	modelRequested, modelResolved string,
+	promptTokens, completionTokens, totalTokens int,
+	latencyMS int,
+	statusCode int,
+	errorText string,
+	costOverride *float64,
+) error {
+	if strings.TrimSpace(workspaceID) == "" || llmConfigID <= 0 {
+		return nil // nothing to attribute; skip silently
+	}
+	var costPtr *float64
+	if costOverride != nil {
+		v := *costOverride
+		costPtr = &v
+	} else if cost, ok := s.estimateLLMProxyCallCostWithConfig(llmConfigID, modelResolved, promptTokens, completionTokens); ok {
+		v := cost
+		costPtr = &v
+	}
+	cfgID := llmConfigID
+	call := &LLMProxyCall{
+		TokenID:          0, // 0 = agent-path; non-zero only for proxy tokens
+		WorkspaceID:      workspaceID,
+		ModelRequested:   modelRequested,
+		ModelResolved:    modelResolved,
+		LLMConfigID:      &cfgID,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      totalTokens,
+		LatencyMS:        latencyMS,
+		StatusCode:       statusCode,
+		ErrorText:        errorText,
+		CostUSD:          costPtr,
+		CreatedAt:        time.Now().UTC(),
+	}
+	return s.insertLLMProxyCall(call)
+}
+
 func (s *Server) insertLLMProxyCall(call *LLMProxyCall) error {
 	if call == nil {
 		return fmt.Errorf("nil call")
@@ -454,11 +510,17 @@ func (s *Server) insertLLMProxyCall(call *LLMProxyCall) error {
 	if call.CostUSD != nil {
 		costUSD = sql.NullFloat64{Float64: *call.CostUSD, Valid: true}
 	}
+	// TokenID == 0 means agent-path call (no proxy token); store NULL
+	// to bypass the llm_proxy_tokens FK. Non-zero is a real proxy token.
+	var tokenID sql.NullInt64
+	if call.TokenID > 0 {
+		tokenID = sql.NullInt64{Int64: call.TokenID, Valid: true}
+	}
 	return s.db.QueryRow(
 		`INSERT INTO llm_proxy_calls (token_id, workspace_id, model_requested, model_resolved, llm_config_id, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, error_text, cost_usd, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 RETURNING id`,
-		call.TokenID, call.WorkspaceID, call.ModelRequested, call.ModelResolved, llmConfigID,
+		tokenID, call.WorkspaceID, call.ModelRequested, call.ModelResolved, llmConfigID,
 		call.PromptTokens, call.CompletionTokens, call.TotalTokens,
 		call.LatencyMS, call.StatusCode, call.ErrorText, costUSD, call.CreatedAt,
 	).Scan(&call.ID)

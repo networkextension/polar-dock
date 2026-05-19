@@ -492,10 +492,19 @@ async function onUploadReceipt(file: File): Promise<void> {
   uploadReceiptBtn.textContent = "⏳ 抽取中...";
   try {
     const { data } = await uploadExpenseImage(file);
-    const tip = data.extract_error
-      ? `已落草稿（抽取失败：${data.extract_error.slice(0, 80)}），请到「待确认」手填确认。`
-      : `已落草稿（金额 ¥${data.expense.amount.toFixed(2)}，置信度 ${data.expense.confidence}），到「待确认」核对。`;
-    alert(tip);
+    if (data.extract_error_kind === "quota_exhausted") {
+      // Targeted prompt + deep link to billing page. Confirm() doubles
+      // as a "go now or later" branch; pressing OK opens the page.
+      const goToBilling = confirm(
+        `本月 LLM 截图额度用完了。\n\n${data.extract_error?.slice(0, 200) ?? ""}\n\n` +
+          `点确定到「LLM 计费」上调本月预算或充值；点取消先把这条草稿手填。`,
+      );
+      if (goToBilling) window.open("/llm-billing.html", "_blank");
+    } else if (data.extract_error) {
+      alert(`已落草稿（抽取失败：${data.extract_error.slice(0, 80)}），请到「待确认」手填确认。`);
+    } else {
+      alert(`已落草稿（金额 ¥${data.expense.amount.toFixed(2)}，置信度 ${data.expense.confidence}），到「待确认」核对。`);
+    }
     await refreshDraftBadge();
     switchTab("drafts");
   } catch (err) {

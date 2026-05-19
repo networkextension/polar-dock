@@ -397,6 +397,16 @@ func (s *Server) handleExpenseFromImage(c *gin.Context) {
 	resp := gin.H{"expense": e}
 	if extErr != nil {
 		resp["extract_error"] = extErr.Error()
+		// Classify so the UI can swap the generic alert for a
+		// targeted "go top up at /llm-billing.html" banner. Keywords
+		// match the strings produced by checkChatBillingGate
+		// (llm_billing_store.go:418-441) and the 4b/4c proxy gates.
+		msg := extErr.Error()
+		if strings.Contains(msg, "本月该 LLM") || strings.Contains(msg, "额度已用完") ||
+			strings.Contains(msg, "余额已耗尽") || strings.Contains(msg, "充值余额") ||
+			strings.Contains(msg, "team_quota_exceeded") || strings.Contains(msg, "insufficient_credit") {
+			resp["extract_error_kind"] = "quota_exhausted"
+		}
 	}
 	c.JSON(http.StatusCreated, resp)
 }

@@ -439,3 +439,26 @@ func (s *Server) checkChatBillingGate(workspaceID string, llmConfigID int64) (bo
 	}
 	return false, ""
 }
+
+// ensureLLMConfigTeamQuota: if (workspace, config) has no quota row,
+// create one at the platform default budget. Idempotent — no-op when
+// a row already exists (preserves the admin's manual budget edits).
+// Used by the expense extract flow so a workspace's first AI call
+// auto-applies; mirrors handleLLMConfigApply's auto-approve behavior
+// without the application audit trail (silent first-touch).
+func (s *Server) ensureLLMConfigTeamQuota(workspaceID string, llmConfigID int64) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" || llmConfigID <= 0 {
+		return nil
+	}
+	if q, err := s.getLLMConfigTeamQuota(llmConfigID, workspaceID); err == nil && q != nil {
+		return nil // already present; respect existing budget
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO llm_config_team_quotas (llm_config_id, workspace_id, monthly_budget_usd)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (llm_config_id, workspace_id) DO NOTHING`,
+		llmConfigID, workspaceID, llmTeamDefaultMonthlyBudget(),
+	)
+	return err
+}

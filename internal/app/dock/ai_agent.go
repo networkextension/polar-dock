@@ -89,6 +89,12 @@ type aiRuntimeConfig struct {
 	// for paths that don't have a workspace context — system agent
 	// probes, etc.).
 	WorkspaceID string
+	// IsSystemBot is set when the responder is the platform system
+	// AI agent (responderUserID=systemUserID, llm_config marked
+	// is_system=TRUE). recordAgentLLMCall uses it to force cost_usd=0
+	// — usage rows still appear in the ledger so operators see per-team
+	// system-bot activity, but the platform absorbs the bill.
+	IsSystemBot bool
 	// Endpoint is a caller-supplied tag describing the *feature* that
 	// initiated this LLM call — e.g. "thread_summary",
 	// "task_retrospect", "chat", "post_assist". It surfaces as a label
@@ -876,13 +882,40 @@ func (a *aiAgent) requestChatCompletion(runtimeConfig aiRuntimeConfig, payload a
 	provider := detectAIProvider(runtimeConfig.BaseURL)
 	start := time.Now()
 	resp, err := a.requestChatCompletionInner(runtimeConfig, payload)
-	prompt, completion := 0, 0
+	prompt, completion, total := 0, 0, 0
 	if resp != nil && resp.Usage != nil {
 		prompt = resp.Usage.PromptTokens
 		completion = resp.Usage.CompletionTokens
+		total = resp.Usage.TotalTokens
 	}
+	elapsed := time.Since(start)
 	if a.server != nil {
-		a.server.metricsRegistry.recordLLMCall(string(provider), runtimeConfig.Model, runtimeConfig.Endpoint, time.Since(start), err, prompt, completion)
+		a.server.metricsRegistry.recordLLMCall(string(provider), runtimeConfig.Model, runtimeConfig.Endpoint, elapsed, err, prompt, completion)
+		// Agent-path cost ledger. Only record when we have full
+		// attribution (workspace + llm_config). Best-effort: errors
+		// from the recorder are swallowed — chat reply path must not
+		// fail because of a ledger write hiccup.
+		if runtimeConfig.WorkspaceID != "" && runtimeConfig.LLMConfigID > 0 {
+			statusCode := http.StatusOK
+			errText := ""
+			if err != nil {
+				statusCode = http.StatusInternalServerError
+				errText = err.Error()
+			}
+			var costOverride *float64
+			if runtimeConfig.IsSystemBot {
+				zero := 0.0
+				costOverride = &zero
+			}
+			if recErr := a.server.recordAgentLLMCall(
+				runtimeConfig.WorkspaceID, runtimeConfig.LLMConfigID,
+				payload.Model, runtimeConfig.Model,
+				prompt, completion, total, int(elapsed.Milliseconds()),
+				statusCode, errText, costOverride,
+			); recErr != nil {
+				log.Printf("agent llm ledger: record failed (workspace=%s cfg=%d): %v", runtimeConfig.WorkspaceID, runtimeConfig.LLMConfigID, recErr)
+			}
+		}
 	}
 	return resp, err
 }
@@ -1236,6 +1269,7 @@ func (a *aiAgent) runtimeConfig(threadID int64, llmThreadID *int64, responderUse
 			Streaming:     item.Streaming,
 			LLMConfigID:   item.ID,
 			LLMConfigName: item.Name,
+			IsSystemBot:   true,
 		}, nil
 	}
 

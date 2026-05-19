@@ -91,6 +91,14 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "is_system 与 shared 互斥（系统助理是平台内部，不进客户市场）"})
 		return
 	}
+	// Only platform admins may claim the singleton system slot. Per-
+	// team owners can still create their own non-system configs.
+	if req.IsSystem {
+		if role, _ := c.Get("role"); role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "仅管理员可设置系统助理（is_system）"})
+			return
+		}
+	}
 	now := time.Now()
 	streaming := true
 	if req.Streaming != nil {
@@ -181,6 +189,15 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 	if req.IsSystem != nil && *req.IsSystem && req.Shared {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "is_system 与 shared 互斥（系统助理是平台内部，不进客户市场）"})
 		return
+	}
+	// Toggling is_system (either direction) is admin-only. Customer
+	// owners can edit name/baseURL/model on their own non-system rows
+	// but cannot promote/demote the platform singleton.
+	if req.IsSystem != nil {
+		if role, _ := c.Get("role"); role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "仅管理员可设置系统助理（is_system）"})
+			return
+		}
 	}
 	now := time.Now()
 	item, err := s.updateLLMConfig(

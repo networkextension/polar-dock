@@ -59,6 +59,16 @@ func (s *Server) extractExpenseFromImageMultimodal(ctx context.Context, workspac
 		return nil, fmt.Errorf("multimodal llm config %d has no api_key set", cfgID)
 	}
 
+	// Marketplace flow: the workspace's first extract auto-creates a
+	// quota row at the platform default budget. Subsequent calls are
+	// gated by checkChatBillingGate against that budget. Idempotent —
+	// existing budgets are preserved.
+	if err := s.ensureLLMConfigTeamQuota(workspaceID, cfg.ID); err != nil {
+		// Non-fatal: log and continue; checkChatBillingGate below will
+		// run with whatever state exists. Worst case: no gate trips.
+		log.Printf("expense extract: ensureLLMConfigTeamQuota workspace=%s cfg=%d: %v", workspaceID, cfg.ID, err)
+	}
+
 	// B5 budget gate — same shape as ai_agent.handleTask's gate. Refuse
 	// extraction when the workspace has either exhausted its monthly
 	// budget or drained its prepaid balance for this config.
@@ -129,10 +139,16 @@ func (s *Server) extractExpenseFromImageMultimodal(ctx context.Context, workspac
 	if err != nil {
 		return nil, fmt.Errorf("multimodal read: %w", err)
 	}
+	elapsed := time.Since(start)
 	log.Printf("expense extract: multimodal cfg=%d model=%s status=%d elapsed=%s body_len=%d",
-		cfg.ID, cfg.Model, resp.StatusCode, time.Since(start), len(respBody))
+		cfg.ID, cfg.Model, resp.StatusCode, elapsed, len(respBody))
 
 	if resp.StatusCode >= 400 {
+		// Record the failure so the team's audit shows the attempt
+		// (zero tokens / zero cost since the call never produced output).
+		_ = s.recordAgentLLMCall(workspaceID, cfg.ID, cfg.Model, cfg.Model,
+			0, 0, 0, int(elapsed.Milliseconds()), resp.StatusCode,
+			truncateForLog(string(respBody), 200), nil)
 		return nil, fmt.Errorf("multimodal status %d: %s", resp.StatusCode, truncateForLog(string(respBody), 300))
 	}
 
@@ -143,6 +159,20 @@ func (s *Server) extractExpenseFromImageMultimodal(ctx context.Context, workspac
 	if len(apiResp.Choices) == 0 {
 		return nil, errors.New("multimodal: empty choices")
 	}
+
+	// Record the successful call into the agent-path cost ledger so the
+	// team's monthly spend updates and the B5 gate fires next time.
+	prompt, completion, total := 0, 0, 0
+	if apiResp.Usage != nil {
+		prompt = apiResp.Usage.PromptTokens
+		completion = apiResp.Usage.CompletionTokens
+		total = apiResp.Usage.TotalTokens
+	}
+	if recErr := s.recordAgentLLMCall(workspaceID, cfg.ID, cfg.Model, cfg.Model,
+		prompt, completion, total, int(elapsed.Milliseconds()), http.StatusOK, "", nil); recErr != nil {
+		log.Printf("expense extract: ledger record failed workspace=%s cfg=%d: %v", workspaceID, cfg.ID, recErr)
+	}
+
 	out := strings.TrimSpace(apiResp.Choices[0].Message.Content)
 	draft, err := parseExpenseDraftJSON(out)
 	if err != nil {
@@ -197,4 +227,11 @@ type openAIMultimodalResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	// Usage block is OpenAI-compat and what every vision model emits.
+	// We thread it into recordAgentLLMCall so cost_usd is populated.
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 }
