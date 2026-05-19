@@ -13,6 +13,7 @@ import (
 type chatEvent struct {
 	Type       string       `json:"type"`
 	ChatID     int64        `json:"chat_id,omitempty"`
+	RoomID     int64        `json:"room_id,omitempty"` // qunliao P0c — set on room events; mutually exclusive with ChatID
 	Message    *ChatMessage `json:"message,omitempty"`
 	MessageID  int64        `json:"message_id,omitempty"`
 	UserID     string       `json:"user_id,omitempty"`
