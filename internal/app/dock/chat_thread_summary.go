@@ -189,13 +189,21 @@ func (s *Server) generateThreadSummary(threadID int64) (*ChatThreadSummary, erro
 	if s.aiAgent == nil {
 		return nil, errors.New("ai agent not initialized")
 	}
-	apiKey := strings.TrimSpace(s.aiAgent.apiKey)
-	baseURL := strings.TrimSpace(s.aiAgent.baseURL)
-	model := strings.TrimSpace(s.aiAgent.model)
+	// Platform system LLM = the row marked is_system=TRUE. When unset,
+	// design says skip rather than fail; caller surfaces an empty
+	// summary with a "未配置" note.
+	sysCfg, sysKey, err := s.getSystemLLMConfig()
+	if err != nil {
+		return nil, err
+	}
+	if sysCfg == nil || strings.TrimSpace(sysKey) == "" {
+		return nil, nil
+	}
+	apiKey := strings.TrimSpace(sysKey)
+	baseURL := strings.TrimSpace(sysCfg.BaseURL)
+	model := strings.TrimSpace(sysCfg.Model)
+	proxyURL := strings.TrimSpace(sysCfg.ProxyURL)
 	if apiKey == "" || baseURL == "" || model == "" {
-		// Platform AI_AGENT_* not configured — design says skip
-		// rather than fail. Caller (handler) can surface an empty
-		// summary with a "未配置" note.
 		return nil, nil
 	}
 
@@ -253,11 +261,14 @@ func (s *Server) generateThreadSummary(threadID int64) (*ChatThreadSummary, erro
 	systemPrompt := s.renderPrompt(promptSlugThreadSummary, threadSummaryPromptData{PlatformName: siteName}, "")
 
 	runtimeConfig := aiRuntimeConfig{
-		APIKey:       apiKey,
-		BaseURL:      baseURL,
-		Model:        model,
-		SystemPrompt: systemPrompt,
-		Endpoint:     "thread_summary",
+		APIKey:        apiKey,
+		BaseURL:       baseURL,
+		Model:         model,
+		ProxyURL:      proxyURL,
+		SystemPrompt:  systemPrompt,
+		Endpoint:      "thread_summary",
+		LLMConfigID:   sysCfg.ID,
+		LLMConfigName: sysCfg.Name,
 	}
 	payload := aiChatCompletionRequest{
 		Model: model,
@@ -280,10 +291,11 @@ func (s *Server) generateThreadSummary(threadID int64) (*ChatThreadSummary, erro
 	}
 
 	now := time.Now()
+	cfgIDPtr := &sysCfg.ID
 	if err := s.upsertChatThreadSummary(
 		threadID, summary, &latestID, len(messages),
-		nil, // platform-level config has no llm_configs.id
-		"AI Agent (platform)", model,
+		cfgIDPtr,
+		sysCfg.Name, model,
 		now,
 	); err != nil {
 		return nil, err

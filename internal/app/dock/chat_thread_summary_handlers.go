@@ -120,10 +120,10 @@ func (s *Server) handleChatThreadSummaryRefresh(c *gin.Context) {
 		return
 	}
 	if summary == nil {
-		// Platform AI_AGENT_* not configured. Return 503 with a
-		// clear message so the UI can show "AI 助理未配置".
+		// Platform system LLM not configured. Return 503 so the UI
+		// can show "AI 助理未配置" and point the admin at Bot Mgmt.
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "AI 助理未配置 — 联系管理员设置 AI_AGENT_API_KEY / AI_AGENT_BASE_URL / AI_AGENT_MODEL",
+			"error": "AI 助理未配置 — 请管理员在 Bot Management 启用一条 is_system 标记的 LLM 配置",
 		})
 		return
 	}

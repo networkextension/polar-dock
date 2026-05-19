@@ -117,20 +117,24 @@ func (s *Server) handleBioRefine(c *gin.Context) {
 // Returns the runtime config + a human-readable LLM name to
 // surface in the response (4-touchpoint transparency rule).
 func (s *Server) resolveSystemAgentLLM(workspaceID string) (aiRuntimeConfig, string, error) {
-	if s.aiAgent != nil {
-		apiKey := strings.TrimSpace(s.aiAgent.apiKey)
-		baseURL := strings.TrimSpace(s.aiAgent.baseURL)
-		model := strings.TrimSpace(s.aiAgent.model)
-		if apiKey != "" && baseURL != "" && model != "" {
-			return aiRuntimeConfig{
-				APIKey:  apiKey,
-				BaseURL: baseURL,
-				Model:   model,
-			}, "AI Agent (platform)", nil
-		}
+	// First: platform-wide system LLM (the row marked is_system=TRUE).
+	// Replaces the old AI_AGENT_* env path. Hot-swappable via Bot
+	// Management — no restart needed.
+	if sysCfg, sysKey, err := s.getSystemLLMConfig(); err == nil && sysCfg != nil && strings.TrimSpace(sysKey) != "" {
+		return aiRuntimeConfig{
+			APIKey:        strings.TrimSpace(sysKey),
+			BaseURL:       strings.TrimSpace(sysCfg.BaseURL),
+			Model:         strings.TrimSpace(sysCfg.Model),
+			SystemPrompt:  strings.TrimSpace(sysCfg.SystemPrompt),
+			ProxyURL:      strings.TrimSpace(sysCfg.ProxyURL),
+			Streaming:     sysCfg.Streaming,
+			LLMConfigID:   sysCfg.ID,
+			LLMConfigName: sysCfg.Name,
+		}, sysCfg.Name, nil
 	}
+	// Fallback: workspace's default LLM, when no platform system row exists.
 	if strings.TrimSpace(workspaceID) == "" {
-		return aiRuntimeConfig{}, "", errors.New("AI 助理未配置 — 请管理员设置 AI_AGENT_API_KEY / AI_AGENT_BASE_URL / AI_AGENT_MODEL，或在工作区设置默认 LLM")
+		return aiRuntimeConfig{}, "", errors.New("AI 助理未配置 — 请管理员在 Bot Management 启用一条 is_system 标记的 LLM 配置，或在工作区设置默认 LLM")
 	}
 	fallbackID, err := s.getWorkspaceDefaultLLMConfigID(workspaceID)
 	if err != nil {

@@ -365,6 +365,11 @@
                         <span data-i18n="dashboard.llmConfigSharedLabel">Share this LLM Config with other users</span>
                       </label>
 
+                      <label class="form-checkbox" for="llmConfigIsSystemInput" title="平台单例：勾上之后这条 config 就是站内 system 助理（chat thread summary / task sharpen / system bot user）使用的模型。同一时间只能有一条。与「分享」互斥。">
+                        <input id="llmConfigIsSystemInput" type="checkbox" />
+                        <span>🛠 系统助理（is_system）— 互斥 shared、平台单例</span>
+                      </label>
+
                       <div class="site-settings-actions inline-actions">
                         <button id="llmConfigResetBtn" class="btn-chip" type="button" data-i18n="dashboard.llmConfigClear">Clear</button>
                         <button id="llmConfigTestBtn" class="btn-chip" type="button" data-i18n="dashboard.llmConfigTest">Test config</button>

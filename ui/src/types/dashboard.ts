@@ -139,6 +139,10 @@ export type LLMConfigPayload = {
   proxy_url?: string;
   system_prompt: string;
   shared?: boolean;
+  // is_system: marks the row that powers the platform-wide system AI
+  // agent (responderUserID=system). Singleton; mutually exclusive with
+  // `shared`. Replaces the legacy AI_AGENT_* env vars.
+  is_system?: boolean;
   // Optional discriminator + extras blob. Defaults to "text" / "{}" on the
   // backend; only video-kind presets (Seedance et al.) need to set these.
   provider_kind?: string;
@@ -151,6 +155,7 @@ export type LLMConfig = {
   share_id: string;
   shared: boolean;
   is_platform?: boolean;
+  is_system?: boolean;
   name: string;
   base_url: string;
   model: string;
