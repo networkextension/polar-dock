@@ -51,13 +51,11 @@ func main() {
 		PasskeyRPID:         envOrDefault("PASSKEY_RP_ID", dock.DefaultPasskeyRPID),
 		PasskeyOrigin:       envOrDefault("PASSKEY_ORIGIN", dock.DefaultPasskeyOrigin),
 		PasskeyRPName:       envOrDefault("PASSKEY_RP_NAME", dock.DefaultPasskeyRPName),
-		PublicBaseURL:       envOrDefault("PUBLIC_BASE_URL", envOrDefault("PASSKEY_ORIGIN", dock.DefaultPasskeyOrigin)),
-		AIAgentAPIKey:       os.Getenv("AI_AGENT_API_KEY"),
-		AIAgentBaseURL:      envOrDefault("AI_AGENT_BASE_URL", "https://api.openai.com/v1/chat/completions"),
-		AIAgentModel:        envOrDefault("AI_AGENT_MODEL", "gpt-4.1-mini"),
-		AIAgentSystemPrompt: envOrDefault("AI_AGENT_SYSTEM_PROMPT", "你是站内 system 助理。请结合项目运行目录中的文档和用户提问，给出简洁、准确、可执行的中文回答。如果资料不足，请明确说明。"),
-		AIAgentStreaming:    envBoolDefault("AI_AGENT_STREAMING", true),
-		ApplePushTopic:      os.Getenv("APPLE_PUSH_TOPIC"),
+		PublicBaseURL: envOrDefault("PUBLIC_BASE_URL", envOrDefault("PASSKEY_ORIGIN", dock.DefaultPasskeyOrigin)),
+		// AI_AGENT_* env vars removed — the system AI agent now lives in
+		// the llm_configs row marked is_system=TRUE. Configure via Bot
+		// Management; no restart needed when swapping model / prompt.
+		ApplePushTopic: os.Getenv("APPLE_PUSH_TOPIC"),
 		ApplePushTopicDev:   os.Getenv("APPLE_PUSH_TOPIC_DEV"),
 		ApplePushTopicProd:  os.Getenv("APPLE_PUSH_TOPIC_PROD"),
 		ApplePushKeyID:      os.Getenv("APPLE_PUSH_KEY_ID"),

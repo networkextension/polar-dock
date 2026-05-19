@@ -67,6 +67,7 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 		APIKey       string `json:"api_key"`
 		SystemPrompt string `json:"system_prompt"`
 		Shared       bool   `json:"shared"`
+		IsSystem     bool   `json:"is_system"`
 		Streaming    *bool  `json:"streaming,omitempty"`
 		ProviderKind string `json:"provider_kind"`
 		Extras       string `json:"extras"`
@@ -81,6 +82,13 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 	model := strings.TrimSpace(req.Model)
 	if name == "" || baseURL == "" || model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "名称、Base URL 和 Model 不能为空"})
+		return
+	}
+	// is_system is the platform-wide system AI agent row; semantically
+	// it's internal infra, not a marketplace offering. DB has a CHECK
+	// constraint too — this is the friendly 400.
+	if req.IsSystem && req.Shared {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "is_system 与 shared 互斥（系统助理是平台内部，不进客户市场）"})
 		return
 	}
 	now := time.Now()
@@ -100,9 +108,16 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 		strings.TrimSpace(req.ProxyURL),
 		req.Shared,
 		streaming,
+		req.IsSystem,
 		now,
 	)
 	if err != nil {
+		// Partial-unique-index violation = someone else already holds
+		// the singleton is_system slot. Translate to a clear 409.
+		if strings.Contains(strings.ToLower(err.Error()), "uniq_llm_configs_one_system") {
+			c.JSON(http.StatusConflict, gin.H{"error": "已存在系统级 LLM 配置（每平台仅一个）— 先关掉现有的再创建"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
 	}
@@ -138,6 +153,10 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 		APIKey       string `json:"api_key"`
 		SystemPrompt string `json:"system_prompt"`
 		Shared       bool   `json:"shared"`
+		// IsSystem is *bool so absence (nil) means "don't touch" — same
+		// reasoning as Streaming below. UI omits this on dashboard's
+		// edit forms; we don't want to silently turn off is_system.
+		IsSystem *bool `json:"is_system,omitempty"`
 		// Streaming is *bool so absence (nil) means "don't touch" — the
 		// dashboard UI form historically omitted this field on save,
 		// which silently flipped streaming to false on every edit. With
@@ -159,6 +178,10 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "名称、Base URL 和 Model 不能为空"})
 		return
 	}
+	if req.IsSystem != nil && *req.IsSystem && req.Shared {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "is_system 与 shared 互斥（系统助理是平台内部，不进客户市场）"})
+		return
+	}
 	now := time.Now()
 	item, err := s.updateLLMConfig(
 		workspaceID, id,
@@ -170,10 +193,15 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 		strings.TrimSpace(req.ProxyURL),
 		req.Shared,
 		req.Streaming,
+		req.IsSystem,
 		req.UpdateAPIKey,
 		now,
 	)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "uniq_llm_configs_one_system") {
+			c.JSON(http.StatusConflict, gin.H{"error": "已存在系统级 LLM 配置（每平台仅一个）— 先关掉现有的再启用"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
 	}

@@ -270,7 +270,13 @@ type LLMConfig struct {
 	// machine). Non-empty = override per-config. Useful when one
 	// provider needs a proxy (e.g. xAI from CN) but another is
 	// reachable directly (local Ollama).
-	ProxyURL  string    `json:"proxy_url,omitempty"`
+	ProxyURL string `json:"proxy_url,omitempty"`
+	// IsSystem: the single platform-wide system AI agent row. Picked by
+	// runtimeConfig() when responderUserID==systemUserID and by
+	// resolveSystemAgentLLM / generateThreadSummary. Singleton + mutually
+	// exclusive with Shared (schema-enforced). Replaces the AI_AGENT_*
+	// env vars.
+	IsSystem  bool      `json:"is_system,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -1200,6 +1206,35 @@ CREATE INDEX IF NOT EXISTS idx_llm_configs_platform
 -- (HTTP_PROXY / HTTPS_PROXY env). Non-empty overrides per config.
 ALTER TABLE llm_configs
 	ADD COLUMN IF NOT EXISTS proxy_url TEXT NOT NULL DEFAULT '';
+
+-- is_system: marks the single row that powers the platform-wide
+-- "system" AI agent (responderUserID=system; used by chat thread
+-- summaries, task sharpen, post assist, the system chat user). Singleton
+-- enforced by partial unique index. Mutually exclusive with shared
+-- (system is internal infra, not for the customer marketplace) — CHECK
+-- constraint applied as NOT VALID + VALIDATE to avoid a blocking scan
+-- on the bigger deploys. Replaces the old AI_AGENT_* env-var path
+-- (dropped in this PR); admins flip the flag via Bot Management → no
+-- restart needed to change model or system_prompt.
+ALTER TABLE llm_configs
+	ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_llm_configs_one_system
+	ON llm_configs ((TRUE)) WHERE is_system = TRUE;
+CREATE INDEX IF NOT EXISTS idx_llm_configs_system
+	ON llm_configs(is_system) WHERE is_system = TRUE;
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'llm_configs_system_not_shared'
+	) THEN
+		ALTER TABLE llm_configs
+			ADD CONSTRAINT llm_configs_system_not_shared
+			CHECK (NOT (is_system AND shared)) NOT VALID;
+		ALTER TABLE llm_configs VALIDATE CONSTRAINT llm_configs_system_not_shared;
+	END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS packtunnel_profiles (
 	id TEXT PRIMARY KEY,
@@ -3381,7 +3416,7 @@ func (s *Server) getUserByUsername(username string) (*User, error) {
 
 func (s *Server) listLLMConfigs(workspaceID string) ([]LLMConfig, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), is_system, created_at, updated_at
 		   FROM llm_configs
 		  WHERE workspace_id = $1
 		  ORDER BY updated_at DESC, id DESC`,
@@ -3395,7 +3430,7 @@ func (s *Server) listLLMConfigs(workspaceID string) ([]LLMConfig, error) {
 	items := make([]LLMConfig, 0)
 	for rows.Next() {
 		var item LLMConfig
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.IsSystem, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -3504,14 +3539,14 @@ func (s *Server) getAvailableLLMConfigWithAPIKey(workspaceID string, id int64) (
 	return &item, apiKey, nil
 }
 
-func (s *Server) createLLMConfig(workspaceID, ownerUserID, name, baseURL, model, apiKey, systemPrompt, shareID, proxyURL string, shared, streaming bool, now time.Time) (*LLMConfig, error) {
+func (s *Server) createLLMConfig(workspaceID, ownerUserID, name, baseURL, model, apiKey, systemPrompt, shareID, proxyURL string, shared, streaming, isSystem bool, now time.Time) (*LLMConfig, error) {
 	var item LLMConfig
 	err := s.db.QueryRow(
-		`INSERT INTO llm_configs (owner_user_id, workspace_id, share_id, shared, name, base_url, model, api_key, system_prompt, streaming, proxy_url, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-		 RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at`,
-		ownerUserID, workspaceID, shareID, shared, name, baseURL, model, apiKey, systemPrompt, streaming, proxyURL, now,
-	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
+		`INSERT INTO llm_configs (owner_user_id, workspace_id, share_id, shared, name, base_url, model, api_key, system_prompt, streaming, proxy_url, is_system, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)
+		 RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), is_system, created_at, updated_at`,
+		ownerUserID, workspaceID, shareID, shared, name, baseURL, model, apiKey, systemPrompt, streaming, proxyURL, isSystem, now,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.IsSystem, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -3523,10 +3558,14 @@ func (s *Server) createLLMConfig(workspaceID, ownerUserID, name, baseURL, model,
 // SQL side can COALESCE($8, streaming) — caller passes nil when the
 // inbound request body omitted the field (typical for the dashboard
 // UI's edit flow which historically didn't include the checkbox).
-func (s *Server) updateLLMConfig(workspaceID string, id int64, name, baseURL, model, apiKey, systemPrompt, proxyURL string, shared bool, streaming *bool, replaceAPIKey bool, now time.Time) (*LLMConfig, error) {
+func (s *Server) updateLLMConfig(workspaceID string, id int64, name, baseURL, model, apiKey, systemPrompt, proxyURL string, shared bool, streaming *bool, isSystem *bool, replaceAPIKey bool, now time.Time) (*LLMConfig, error) {
 	streamingArg := sql.NullBool{}
 	if streaming != nil {
 		streamingArg = sql.NullBool{Bool: *streaming, Valid: true}
+	}
+	isSystemArg := sql.NullBool{}
+	if isSystem != nil {
+		isSystemArg = sql.NullBool{Bool: *isSystem, Valid: true}
 	}
 	query := `UPDATE llm_configs
 	             SET name = $3,
@@ -3536,16 +3575,17 @@ func (s *Server) updateLLMConfig(workspaceID string, id int64, name, baseURL, mo
 	                 shared = $7,
 	                 streaming = COALESCE($8, streaming),
 	                 proxy_url = $9,
-	                 updated_at = $10`
-	args := []any{id, workspaceID, name, baseURL, model, systemPrompt, shared, streamingArg, proxyURL, now}
+	                 is_system = COALESCE($10, is_system),
+	                 updated_at = $11`
+	args := []any{id, workspaceID, name, baseURL, model, systemPrompt, shared, streamingArg, proxyURL, isSystemArg, now}
 	if replaceAPIKey {
-		query += `, api_key = $11`
+		query += `, api_key = $12`
 		args = append(args, apiKey)
 	}
 	query += ` WHERE id = $1 AND workspace_id = $2
-	           RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), created_at, updated_at`
+	           RETURNING id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), is_system, created_at, updated_at`
 	var item LLMConfig
-	err := s.db.QueryRow(query, args...).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.CreatedAt, &item.UpdatedAt)
+	err := s.db.QueryRow(query, args...).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.IsSystem, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -4298,6 +4338,33 @@ func (s *Server) getWorkspaceDefaultLLMConfigID(workspaceID string) (int64, erro
 		return 0, err
 	}
 	return fallbackID, nil
+}
+
+// getSystemLLMConfig returns the single platform-wide LLM config row
+// marked is_system=TRUE, plus its api_key. Used to power the system AI
+// agent (responderUserID=systemUserID) — replaces the legacy AI_AGENT_*
+// env vars. Singleton: schema partial-unique-index allows at most one
+// such row.
+//
+// Returns (nil, "", nil) when no row exists. Callers either fall back
+// to workspace defaults (resolveSystemAgentLLM) or skip the AI feature
+// with a friendly error.
+func (s *Server) getSystemLLMConfig() (*LLMConfig, string, error) {
+	var item LLMConfig
+	var apiKey string
+	err := s.db.QueryRow(
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, api_key, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), is_system, created_at, updated_at
+		   FROM llm_configs
+		  WHERE is_system = TRUE
+		  LIMIT 1`,
+	).Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &apiKey, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.IsSystem, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, "", nil
+		}
+		return nil, "", err
+	}
+	return &item, apiKey, nil
 }
 
 // ensureAutoRegisteredResearchBot upserts a classic-kind bot row

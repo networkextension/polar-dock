@@ -50,9 +50,13 @@ func (s *Server) handleSharedLLMConfigList(c *gin.Context) {
 	}
 
 	rows, err := s.db.Query(
+		// is_system rows are platform internal infra (system AI agent)
+		// — even when also is_platform=TRUE for the workspace-fallback
+		// query, they must NOT leak into the customer marketplace.
 		`SELECT id, COALESCE(workspace_id, ''), name, model, is_platform, price_per_million_input_usd, price_per_million_output_usd
 		   FROM llm_configs
 		  WHERE (shared = TRUE OR is_platform = TRUE OR workspace_id = $1)
+		    AND is_system = FALSE
 		    AND (provider_kind = 'text' OR provider_kind = '' OR provider_kind IS NULL)
 		  ORDER BY (workspace_id = $1) DESC, is_platform DESC, name ASC`,
 		workspaceID,

@@ -47,13 +47,11 @@ type Config struct {
 	GeoLiteDBPath       string
 	PasskeyRPID         string
 	PasskeyOrigin       string
-	PasskeyRPName       string
-	AIAgentAPIKey       string
-	AIAgentBaseURL      string
-	AIAgentModel        string
-	AIAgentSystemPrompt string
-	AIAgentStreaming    bool
-	ApplePushTopic      string
+	PasskeyRPName string
+	// AIAgent* env vars were removed: the system AI agent is now
+	// configured via the llm_configs row marked is_system=TRUE.
+	// See store.go::getSystemLLMConfig.
+	ApplePushTopic string
 	ApplePushTopicDev   string
 	ApplePushTopicProd  string
 	ApplePushKeyID      string

@@ -25,12 +25,11 @@ const (
 )
 
 type aiAgent struct {
-	server       *Server
-	apiKey       string
-	baseURL      string
-	model        string
-	systemPrompt string
-	streaming    bool
+	server *Server
+	// System AI agent (responderUserID=systemUserID) is configured via
+	// the llm_configs row marked is_system=TRUE (see store.go::getSystemLLMConfig).
+	// The old AI_AGENT_API_KEY/BASE_URL/MODEL/SYSTEM_PROMPT/STREAMING env
+	// path was dropped in favor of hot-swappable DB config.
 	tasks        chan aiAgentTask
 	stopCh       chan struct{}
 	stopOnce     sync.Once
@@ -288,16 +287,12 @@ func newAIAgent(server *Server, cfg Config) *aiAgent {
 	if server == nil {
 		return nil
 	}
+	_ = cfg // legacy AI_AGENT_* fields removed; system LLM is DB-driven
 	return &aiAgent{
-		server:       server,
-		apiKey:       strings.TrimSpace(cfg.AIAgentAPIKey),
-		baseURL:      strings.TrimSpace(cfg.AIAgentBaseURL),
-		model:        strings.TrimSpace(cfg.AIAgentModel),
-		systemPrompt: strings.TrimSpace(cfg.AIAgentSystemPrompt),
-		streaming:    cfg.AIAgentStreaming,
-		tasks:        make(chan aiAgentTask, 64),
-		stopCh:       make(chan struct{}),
-		streams:      make(map[int64]context.CancelFunc),
+		server:  server,
+		tasks:   make(chan aiAgentTask, 64),
+		stopCh:  make(chan struct{}),
+		streams: make(map[int64]context.CancelFunc),
 		httpClient: &http.Client{
 			// 300s wall-clock timeout. Was 180s — too tight for
 			// reasoning models (grok-4-fast / o1-class) on long
@@ -806,7 +801,7 @@ func (a *aiAgent) generateReply(task aiAgentTask, runtimeConfig aiRuntimeConfig)
 
 	if strings.TrimSpace(runtimeConfig.APIKey) == "" || strings.TrimSpace(runtimeConfig.BaseURL) == "" || strings.TrimSpace(runtimeConfig.Model) == "" {
 		if task.ResponderUserID == systemUserID {
-			return "AI 助理尚未配置完成，请联系管理员设置 `AI_AGENT_API_KEY`、`AI_AGENT_BASE_URL` 和 `AI_AGENT_MODEL`。", nil
+			return "AI 助理尚未配置完成，请管理员在 Bot Management 启用一条 `is_system` 标记的 LLM 配置。", nil
 		}
 		return "这个 Bot 的模型配置还没准备好，请先补全 API Key、Base URL 和 Model。", nil
 	}
@@ -1222,12 +1217,25 @@ func (a *aiAgent) requestAnthropicMessages(runtimeConfig aiRuntimeConfig, payloa
 
 func (a *aiAgent) runtimeConfig(threadID int64, llmThreadID *int64, responderUserID string) (aiRuntimeConfig, error) {
 	if responderUserID == systemUserID {
+		// System user pulls from the singleton llm_configs row marked
+		// is_system=TRUE (no longer from AI_AGENT_* env). Admin toggles
+		// via Bot Management — no restart needed.
+		item, apiKey, err := a.server.getSystemLLMConfig()
+		if err != nil {
+			return aiRuntimeConfig{}, err
+		}
+		if item == nil || strings.TrimSpace(apiKey) == "" {
+			return aiRuntimeConfig{}, errors.New("system LLM 未配置：请管理员在 Bot Management 启用一条 is_system 标记的 LLM 配置")
+		}
 		return aiRuntimeConfig{
-			APIKey:       strings.TrimSpace(a.apiKey),
-			BaseURL:      strings.TrimSpace(a.baseURL),
-			Model:        strings.TrimSpace(a.model),
-			SystemPrompt: strings.TrimSpace(a.systemPrompt),
-			Streaming:    a.streaming,
+			APIKey:        strings.TrimSpace(apiKey),
+			BaseURL:       strings.TrimSpace(item.BaseURL),
+			Model:         strings.TrimSpace(item.Model),
+			SystemPrompt:  strings.TrimSpace(item.SystemPrompt),
+			ProxyURL:      strings.TrimSpace(item.ProxyURL),
+			Streaming:     item.Streaming,
+			LLMConfigID:   item.ID,
+			LLMConfigName: item.Name,
 		}, nil
 	}
 

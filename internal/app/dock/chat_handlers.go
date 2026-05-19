@@ -972,10 +972,17 @@ func (s *Server) handleSystemAgentStatus(c *gin.Context) {
 		})
 		return
 	}
+	// ready: probe the singleton is_system llm_config row. Replaces the
+	// old env-only check (aiAgent.apiKey/model).
+	ready := false
+	if sysCfg, sysKey, err := s.getSystemLLMConfig(); err == nil && sysCfg != nil &&
+		strings.TrimSpace(sysKey) != "" && strings.TrimSpace(sysCfg.Model) != "" {
+		ready = true
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"user_id":  systemUserID,
 		"username": systemUsername,
-		"ready":    strings.TrimSpace(s.aiAgent.apiKey) != "" && strings.TrimSpace(s.aiAgent.model) != "",
+		"ready":    ready,
 		"message":  fmt.Sprintf("system 助理可通过 user_id=%s 发起私聊", systemUserID),
 	})
 }
