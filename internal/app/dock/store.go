@@ -3114,6 +3114,24 @@ CREATE INDEX IF NOT EXISTS idx_expenses_workspace_consume
     ON expenses(workspace_id, consume_time DESC);
 CREATE INDEX IF NOT EXISTS idx_expenses_workspace_status
     ON expenses(workspace_id, status, created_at DESC);
+
+-- L2 migration: relax raw_image_id from a FK to plain TEXT path.
+-- L1 declared expenses.raw_image_id REFERENCES attachments(id), but
+-- expense images use a dedicated content-addressed store at
+-- data/uploads/expense-images/<sha>.<ext> rather than the generic
+-- attachments table (which has a stricter doc-only allow-list and
+-- different lifecycle). Drop the FK; raw_image_id now stores the
+-- workspace-relative path string.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'expenses_raw_image_id_fkey'
+    ) THEN
+        ALTER TABLE expenses DROP CONSTRAINT expenses_raw_image_id_fkey;
+    END IF;
+END
+$$;
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
