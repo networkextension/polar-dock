@@ -141,10 +141,22 @@ export interface ExpenseFromImageResponse {
 export async function uploadExpenseImage(file: File): Promise<{ data: ExpenseFromImageResponse }> {
   const fd = new FormData();
   fd.append("file", file);
-  return requestJson<ExpenseFromImageResponse>("/api/expenses/from-image", {
-    method: "POST",
-    body: fd,
-  });
+  const result = await requestJson<ExpenseFromImageResponse | { error?: string }>(
+    "/api/expenses/from-image",
+    { method: "POST", body: fd },
+  );
+  // requestJson doesn't throw on non-2xx — body is parsed as-is. For
+  // upload, surface auth/validation errors as a real Error so callers
+  // don't blow up with "Cannot read properties of undefined (amount)".
+  if (!result.response.ok) {
+    const errBody = result.data as { error?: string };
+    const reason = errBody?.error || result.response.statusText || String(result.response.status);
+    if (result.response.status === 401) {
+      throw new Error("登录已过期，请刷新页面重新登录");
+    }
+    throw new Error(reason);
+  }
+  return { data: result.data as ExpenseFromImageResponse };
 }
 
 export function expenseImageURL(id: number): string {
