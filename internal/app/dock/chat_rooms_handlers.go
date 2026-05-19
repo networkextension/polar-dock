@@ -6,7 +6,9 @@ package dock
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -248,6 +250,116 @@ func (s *Server) handleChatRoomMemberRemove(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ---- messages ----
+
+func (s *Server) handleChatRoomMessageList(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	userIDAny, _ := c.Get("user_id")
+	userID, _ := userIDAny.(string)
+	id, ok := parseInt64Param(c, "id")
+	if !ok {
+		return
+	}
+	if !s.requireRoomMember(c, id, workspaceID, userID) {
+		return
+	}
+	limit := 50
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	var beforeID *int64
+	if v := c.Query("before_id"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			beforeID = &n
+		}
+	}
+	msgs, err := s.listRoomMessages(c.Request.Context(), id, beforeID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"messages": msgs})
+}
+
+func (s *Server) handleChatRoomMessageSend(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	userIDAny, _ := c.Get("user_id")
+	userID, _ := userIDAny.(string)
+	id, ok := parseInt64Param(c, "id")
+	if !ok {
+		return
+	}
+	if !s.requireRoomMember(c, id, workspaceID, userID) {
+		return
+	}
+	var req struct {
+		Content     string `json:"content" binding:"required"`
+		MessageType string `json:"message_type"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入"})
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "content required"})
+		return
+	}
+	if req.MessageType == "" {
+		req.MessageType = "text"
+	}
+	now := time.Now().UTC()
+	msgID, err := s.insertRoomMessage(c.Request.Context(), id, userID, req.MessageType, req.Content, now)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	// WS broadcast comes in P0c when the wsHub gains roomViewers. For
+	// now the client polls /api/rooms/:id/messages (or already saw the
+	// 201 reply payload).
+	c.JSON(http.StatusCreated, gin.H{
+		"message": gin.H{
+			"id":           msgID,
+			"room_id":      id,
+			"sender_id":    userID,
+			"message_type": req.MessageType,
+			"content":      req.Content,
+			"created_at":   now,
+		},
+	})
+}
+
+// requireRoomMember gates message read/write to actual room members.
+// Workspace admin override deferred to P0c. Writes 403/404 itself.
+func (s *Server) requireRoomMember(c *gin.Context, roomID int64, workspaceID, userID string) bool {
+	room, err := s.getChatRoom(c.Request.Context(), roomID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return false
+	}
+	if room == nil || room.WorkspaceID != workspaceID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "房间不存在"})
+		return false
+	}
+	caller, err := s.getChatRoomMember(c.Request.Context(), roomID, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return false
+	}
+	if caller == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "你不在这个房间"})
+		return false
+	}
+	return true
 }
 
 // requireRoomOwner checks (room belongs to workspace) AND (caller is

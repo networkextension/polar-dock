@@ -283,9 +283,117 @@ func (s *Server) listChatRoomMembers(ctx context.Context, roomID int64) ([]ChatR
 	return out, rows.Err()
 }
 
+// insertRoomMessage writes one message scoped to a room (NOT a thread).
+// Mirrors the chat_messages insert pattern used by createChatMessage*
+// but leaves thread_id NULL — the schema relaxed that column to nullable
+// in P0b so room-only rows don't need a sentinel. Returns the new id.
+func (s *Server) insertRoomMessage(ctx context.Context, roomID int64, senderID, messageType, content string, createdAt time.Time) (int64, error) {
+	if roomID <= 0 {
+		return 0, errors.New("roomID required")
+	}
+	if strings.TrimSpace(senderID) == "" {
+		return 0, errors.New("senderID required")
+	}
+	if messageType == "" {
+		messageType = "text"
+	}
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO chat_messages (room_id, sender_id, message_type, failed, content, created_at)
+		 VALUES ($1, $2, $3, FALSE, $4, $5)
+		 RETURNING id`,
+		roomID, senderID, messageType, content, createdAt,
+	).Scan(&id)
+	return id, err
+}
+
+// listRoomMessages returns up to `limit` most-recent messages in a room,
+// optionally older than beforeID for backwards pagination. Joined to
+// users for sender_username/icon. Mirrors listRecentChatMessages.
+func (s *Server) listRoomMessages(ctx context.Context, roomID int64, beforeID *int64, limit int) ([]ChatMessage, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `SELECT m.id, m.room_id, m.llm_thread_id, m.sender_id, u.username, u.icon_url,
+	             m.message_type, m.failed, m.content,
+	             m.markdown_entry_id, m.markdown_title, m.latency_ms,
+	             m.streaming, m.seq, m.updated_at, m.created_at,
+	             m.deleted_at, m.deleted_by, m.llm_config_id,
+	             COALESCE(m.llm_config_name, ''), COALESCE(m.llm_model, '')
+	      FROM chat_messages m
+	      JOIN users u ON u.id = m.sender_id
+	     WHERE m.room_id = $1`
+	args := []any{roomID}
+	if beforeID != nil && *beforeID > 0 {
+		q += ` AND m.id < $2 ORDER BY m.id DESC LIMIT $3`
+		args = append(args, *beforeID, limit)
+	} else {
+		q += ` ORDER BY m.id DESC LIMIT $2`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ChatMessage{}
+	for rows.Next() {
+		var msg ChatMessage
+		var roomIDOut sql.NullInt64
+		var llmThreadID sql.NullInt64
+		var markdownEntryID sql.NullInt64
+		var latencyMs sql.NullInt64
+		var updatedAt sql.NullTime
+		var deletedAt sql.NullTime
+		var deletedBy sql.NullString
+		var llmConfigID sql.NullInt64
+		if err := rows.Scan(
+			&msg.ID, &roomIDOut, &llmThreadID,
+			&msg.SenderID, &msg.SenderUsername, &msg.SenderIcon,
+			&msg.MessageType, &msg.Failed, &msg.Content,
+			&markdownEntryID, &msg.MarkdownTitle, &latencyMs,
+			&msg.Streaming, &msg.Seq, &updatedAt, &msg.CreatedAt,
+			&deletedAt, &deletedBy, &llmConfigID,
+			&msg.LLMConfigName, &msg.LLMModel,
+		); err != nil {
+			return nil, err
+		}
+		if roomIDOut.Valid {
+			v := roomIDOut.Int64
+			msg.RoomID = &v
+		}
+		if llmThreadID.Valid {
+			msg.LLMThreadID = &llmThreadID.Int64
+		}
+		if markdownEntryID.Valid {
+			msg.MarkdownEntryID = &markdownEntryID.Int64
+		}
+		if latencyMs.Valid {
+			msg.LatencyMs = &latencyMs.Int64
+		}
+		if updatedAt.Valid {
+			msg.UpdatedAt = &updatedAt.Time
+		}
+		if deletedAt.Valid {
+			msg.DeletedAt = &deletedAt.Time
+			msg.Deleted = true
+			msg.Content = ""
+		}
+		if deletedBy.Valid {
+			msg.DeletedBy = deletedBy.String
+		}
+		if llmConfigID.Valid {
+			v := llmConfigID.Int64
+			msg.LLMConfigID = &v
+		}
+		out = append(out, msg)
+	}
+	return out, rows.Err()
+}
+
 // getChatRoomMember returns the membership row, or nil if absent. Used
 // by handlers to gate "is this user actually in this room" before
-// admitting them into the WS broadcast set (P0b).
+// admitting them into the WS broadcast set (P0c).
 func (s *Server) getChatRoomMember(ctx context.Context, roomID int64, userID string) (*ChatRoomMember, error) {
 	m := &ChatRoomMember{}
 	var lastRead sql.NullInt64
