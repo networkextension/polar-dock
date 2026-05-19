@@ -92,10 +92,17 @@ func (s *Server) fanoutOneBotReply(workspaceID string, roomID, triggerMsgID int6
 	}
 	chatMsgs := buildRoomChatHistory(msgs, bot.BotUserID, bot.SystemPrompt)
 
+	// Qunliao β: per-bot model_override lets one llm_configs row power
+	// multiple bots running different model variants (kimi k2.5 vs k1.5).
+	// Empty override = use llm_configs.model verbatim.
+	modelToUse := cfg.Model
+	if strings.TrimSpace(bot.ModelOverride) != "" {
+		modelToUse = strings.TrimSpace(bot.ModelOverride)
+	}
 	runtimeCfg := aiRuntimeConfig{
 		APIKey:        apiKey,
 		BaseURL:       cfg.BaseURL,
-		Model:         cfg.Model,
+		Model:         modelToUse,
 		SystemPrompt:  bot.SystemPrompt,
 		Streaming:     false,
 		ProxyURL:      cfg.ProxyURL,
@@ -108,7 +115,7 @@ func (s *Server) fanoutOneBotReply(workspaceID string, roomID, triggerMsgID int6
 
 	start := time.Now()
 	resp, err := s.aiAgent.requestChatCompletion(runtimeCfg, aiChatCompletionRequest{
-		Model:     cfg.Model,
+		Model:     modelToUse,
 		Messages:  chatMsgs,
 		MaxTokens: roomFanoutMaxTokens,
 	})
@@ -129,7 +136,7 @@ func (s *Server) fanoutOneBotReply(workspaceID string, roomID, triggerMsgID int6
 		errText = truncateForLog(err.Error(), 200)
 	}
 	if recErr := s.recordAgentLLMCall(
-		workspaceID, cfg.ID, cfg.Model, cfg.Model,
+		workspaceID, cfg.ID, modelToUse, modelToUse,
 		prompt, completion, total, latencyMS, status, errText, nil,
 	); recErr != nil {
 		log.Printf("room mention: ledger record failed workspace=%s bot=%q: %v", workspaceID, bot.Name, recErr)
@@ -150,15 +157,36 @@ func (s *Server) fanoutOneBotReply(workspaceID string, roomID, triggerMsgID int6
 		// post a phantom row.
 		return
 	}
-	s.insertAndBroadcastBotReply(ctx, roomID, bot.BotUserID, reply)
+	// Snapshot LLM telemetry onto the reply row so the UI metadata
+	// pill can show model / latency / tokens / cost without another
+	// round-trip. Cost is estimated from token usage + config pricing.
+	cost, _ := s.estimateLLMProxyCallCostWithConfig(cfg.ID, modelToUse, prompt, completion)
+	s.insertAndBroadcastBotReplyWithMetrics(ctx, roomID, bot.BotUserID, reply, roomMessageMetrics{
+		LLMConfigID:      cfg.ID,
+		LLMConfigName:    cfg.Name,
+		LLMModel:         modelToUse,
+		LatencyMS:        latencyMS,
+		PromptTokens:     prompt,
+		CompletionTokens: completion,
+		CostUSD:          cost,
+	})
 }
 
 // insertAndBroadcastBotReply persists a bot's text reply to the room
 // and fires the WS event so all members see it in realtime. Mirrors
 // what handleChatRoomMessageSend does for user-originated posts.
 func (s *Server) insertAndBroadcastBotReply(ctx context.Context, roomID int64, botUserID, body string) {
+	s.insertAndBroadcastBotReplyWithMetrics(ctx, roomID, botUserID, body, roomMessageMetrics{})
+}
+
+// insertAndBroadcastBotReplyWithMetrics is the LLM-aware variant —
+// snapshots model + latency + token + cost onto the row so the rooms
+// UI can render the metadata pill on this single message. Used by the
+// successful-reply path of P1 fanout + P3 idle loop. Quota / network
+// placeholders go through insertAndBroadcastBotReply (zero metrics).
+func (s *Server) insertAndBroadcastBotReplyWithMetrics(ctx context.Context, roomID int64, botUserID, body string, m roomMessageMetrics) {
 	now := time.Now().UTC()
-	msgID, err := s.insertRoomMessage(ctx, roomID, botUserID, "text", body, now)
+	msgID, err := s.insertRoomMessageWithMetrics(ctx, roomID, botUserID, "text", body, now, m)
 	if err != nil {
 		log.Printf("room mention: insert reply failed room=%d bot=%s: %v", roomID, botUserID, err)
 		return

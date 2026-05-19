@@ -89,7 +89,15 @@
       <div class="lp-main">
         <div class="lp-topbar">
           <span class="lp-topbar-title">群聊 · AI 同事工作区</span>
-          <div class="lp-topbar-end" style="display:flex; gap:6px;">
+          <div class="lp-topbar-end" style="display:flex; gap:8px; align-items:center;">
+            <!-- qunliao β: toggle the per-message metadata pill
+                 (model · latency · tokens · cost). Default OFF
+                 so casual viewers see clean chat; power users / ops
+                 flip it on. Preference persists via localStorage. -->
+            <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:var(--text-muted,#888); cursor:pointer;">
+              <input id="metadataToggle" type="checkbox" style="margin:0;" />
+              📊 元数据
+            </label>
             <button id="newRoomBtn" class="btn-inline btn-primary" type="button">+ 新建房间</button>
           </div>
         </div>

@@ -151,10 +151,15 @@ func (s *Server) idleLoopDecideOne(parentCtx context.Context, l ChatRoomAgentLoo
 			`如果 action 为 "post"，content 必填，1-3 句话，符合你的角色。否则 content 留空。`,
 	})
 
+	// Qunliao β: respect per-bot model_override.
+	modelToUse := cfg.Model
+	if strings.TrimSpace(bot.ModelOverride) != "" {
+		modelToUse = strings.TrimSpace(bot.ModelOverride)
+	}
 	runtimeCfg := aiRuntimeConfig{
 		APIKey:        apiKey,
 		BaseURL:       cfg.BaseURL,
-		Model:         cfg.Model,
+		Model:         modelToUse,
 		SystemPrompt:  systemPrompt,
 		Streaming:     false,
 		ProxyURL:      cfg.ProxyURL,
@@ -166,7 +171,7 @@ func (s *Server) idleLoopDecideOne(parentCtx context.Context, l ChatRoomAgentLoo
 
 	start := time.Now()
 	resp, err := s.aiAgent.requestChatCompletion(runtimeCfg, aiChatCompletionRequest{
-		Model:     cfg.Model,
+		Model:     modelToUse,
 		Messages:  chatMsgs,
 		MaxTokens: idleLoopMaxTokens,
 	})
@@ -186,7 +191,7 @@ func (s *Server) idleLoopDecideOne(parentCtx context.Context, l ChatRoomAgentLoo
 		errText = truncateForLog(err.Error(), 200)
 	}
 	if recErr := s.recordAgentLLMCall(
-		room.WorkspaceID, cfg.ID, cfg.Model, cfg.Model,
+		room.WorkspaceID, cfg.ID, modelToUse, modelToUse,
 		prompt, completion, total, latencyMS, status, errText, nil,
 	); recErr != nil {
 		log.Printf("room idle: ledger record failed room=%d bot=%q: %v", l.RoomID, bot.Name, recErr)
@@ -213,7 +218,17 @@ func (s *Server) idleLoopDecideOne(parentCtx context.Context, l ChatRoomAgentLoo
 		log.Printf("room idle: bot %q said post but content empty; skipping", bot.Name)
 		return
 	}
-	s.insertAndBroadcastBotReply(ctx, l.RoomID, bot.BotUserID, content)
+	// Snapshot LLM telemetry onto the row so the metadata pill renders.
+	cost, _ := s.estimateLLMProxyCallCostWithConfig(cfg.ID, modelToUse, prompt, completion)
+	s.insertAndBroadcastBotReplyWithMetrics(ctx, l.RoomID, bot.BotUserID, content, roomMessageMetrics{
+		LLMConfigID:      cfg.ID,
+		LLMConfigName:    cfg.Name,
+		LLMModel:         modelToUse,
+		LatencyMS:        latencyMS,
+		PromptTokens:     prompt,
+		CompletionTokens: completion,
+		CostUSD:          cost,
+	})
 	// Re-mark with posted=true so last_posted_at + counter advance.
 	if err := s.markChatRoomAgentLoopDecided(ctx, l.RoomID, l.BotUserID, time.Now().UTC(), true); err != nil {
 		log.Printf("room idle: mark decided (post) failed room=%d bot=%s: %v", l.RoomID, l.BotUserID, err)

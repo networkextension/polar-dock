@@ -53,6 +53,7 @@ const botKindClassicRadio = byId<HTMLInputElement>("botKindClassic");
 const botKindPassthroughRadio = byId<HTMLInputElement>("botKindPassthrough");
 const botUserDescriptionInput = byId<HTMLTextAreaElement>("botUserDescriptionInput");
 const botUserSystemPromptInput = byId<HTMLTextAreaElement>("botUserSystemPromptInput");
+const botUserModelOverrideInput = byId<HTMLInputElement>("botUserModelOverrideInput");
 const botUserResetBtn = byId<HTMLButtonElement>("botUserResetBtn");
 const botUserSubmitBtn = byId<HTMLButtonElement>("botUserSubmitBtn");
 const botUserStatus = byId<HTMLElement>("botUserStatus");
@@ -531,6 +532,7 @@ botUserForm.addEventListener("submit", async (event) => {
     llm_config_id: kind === "classic" ? Number(botUserConfigSelect.value || 0) : 0,
     bot_kind: kind,
     preferred_tool: kind === "passthrough" ? botUserPreferredToolSelect.value : "",
+    model_override: botUserModelOverrideInput.value.trim(),
     host_skill_id: hostSkillID,
   };
   if (!payload.name) {
@@ -585,6 +587,7 @@ botUserList.addEventListener("click", async (event) => {
     botUserNameInput.value = bot.name;
     botUserDescriptionInput.value = bot.description || "";
     botUserSystemPromptInput.value = bot.system_prompt || "";
+    botUserModelOverrideInput.value = bot.model_override || "";
     botUserConfigSelect.value = String(bot.llm_config_id || "");
     if (bot.bot_kind === "passthrough") {
       botKindPassthroughRadio.checked = true;

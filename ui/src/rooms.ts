@@ -38,6 +38,7 @@ const newRoomBtn = byId<HTMLButtonElement>("newRoomBtn");
 
 const activeRoomTitleEl = byId<HTMLElement>("activeRoomTitle");
 const wsStatusDotEl = byId<HTMLElement>("wsStatusDot");
+const metadataToggle = byId<HTMLInputElement>("metadataToggle");
 const messageScrollEl = byId<HTMLElement>("messageScroll");
 const messageListEl = byId<HTMLElement>("messageList");
 const sendForm = byId<HTMLFormElement>("sendForm");
@@ -134,19 +135,68 @@ async function loadMessages(roomId: number): Promise<void> {
 }
 
 function renderMessages(): void {
+  const showMeta = showMetadataPref();
   messageListEl.innerHTML = activeMessages
     .map((m) => {
       const who = escapeHTML(m.sender_username || m.sender_id || "?");
       const when = new Date(m.created_at).toLocaleString();
       const body = escapeHTML(m.content || "");
+      const metaPill = showMeta ? renderMetadataPill(m) : "";
       return `<div style="padding:6px 8px; border-bottom:1px solid var(--border,#eee);">` +
         `<div style="font-size:11px; color:var(--meta,#888);">${who} · ${when}</div>` +
-        `<div style="margin-top:2px; white-space:pre-wrap;">${body}</div></div>`;
+        `<div style="margin-top:2px; white-space:pre-wrap;">${body}</div>` +
+        metaPill +
+        `</div>`;
     })
     .join("");
   // Scroll to bottom.
   messageScrollEl.scrollTop = messageScrollEl.scrollHeight;
 }
+
+// renderMetadataPill returns a small chip with the LLM call telemetry
+// snapshot saved on the message row. Empty string for non-bot messages
+// (no LLM call → all metric fields nil/0). Cost formats in ¥ at 8x
+// of recorded USD (rough placeholder; replace when admin sets fx rate).
+function renderMetadataPill(m: RoomMessage): string {
+  const parts: string[] = [];
+  if (m.llm_model) parts.push(escapeHTML(m.llm_model));
+  else if (m.llm_config_name) parts.push(escapeHTML(m.llm_config_name));
+  if (m.latency_ms && m.latency_ms > 0) parts.push(`${(m.latency_ms / 1000).toFixed(1)}s`);
+  const totalToks = (m.prompt_tokens || 0) + (m.completion_tokens || 0);
+  if (totalToks > 0) parts.push(`${totalToks}t`);
+  if (typeof m.cost_usd === "number" && m.cost_usd > 0) {
+    parts.push(`$${m.cost_usd.toFixed(4)}`);
+  }
+  if (parts.length === 0) return "";
+  return `<div style="margin-top:4px; font-size:10px; color:var(--text-muted,#888); font-family:monospace;">` +
+    parts.join(" · ") + `</div>`;
+}
+
+// ── metadata-pill preference (localStorage-backed, default OFF) ──
+
+const METADATA_PREF_KEY = "qunliao.showLLMMetadata";
+
+function showMetadataPref(): boolean {
+  try {
+    return localStorage.getItem(METADATA_PREF_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setShowMetadataPref(v: boolean): void {
+  try {
+    localStorage.setItem(METADATA_PREF_KEY, v ? "1" : "0");
+  } catch {
+    /* private mode etc */
+  }
+}
+
+metadataToggle.checked = showMetadataPref();
+metadataToggle.addEventListener("change", () => {
+  setShowMetadataPref(metadataToggle.checked);
+  renderMessages();
+});
 
 function upsertMessage(m: RoomMessage): boolean {
   if (m.room_id !== activeRoomId) return false;
