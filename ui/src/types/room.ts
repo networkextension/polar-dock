@@ -68,3 +68,19 @@ export interface RoomMessageSendResponse {
 export interface RoomCreateResponse {
   room: Room;
 }
+
+// qunliao P3 — per-(room, bot) "speak up on your own" config.
+export interface AgentLoop {
+  room_id: number;
+  bot_user_id: string;
+  enabled: boolean;
+  interval_secs: number;       // 60-3600
+  max_per_hour: number;        // 1-30
+  last_decided_at?: string;
+  last_posted_at?: string;
+  decisions_this_hour: number;
+  hour_window_start?: string;
+}
+export interface AgentLoopListResponse {
+  loops: AgentLoop[];
+}

@@ -375,6 +375,119 @@ func (s *Server) requireRoomMember(c *gin.Context, roomID int64, workspaceID, us
 	return true
 }
 
+// ---- agent loops (P3) ----
+
+func (s *Server) handleChatRoomAgentLoopList(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, ok := parseInt64Param(c, "id")
+	if !ok {
+		return
+	}
+	if !s.requireRoomOwner(c, id, workspaceID) {
+		return
+	}
+	loops, err := s.listChatRoomAgentLoops(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"loops": loops})
+}
+
+func (s *Server) handleChatRoomAgentLoopUpsert(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, ok := parseInt64Param(c, "id")
+	if !ok {
+		return
+	}
+	if !s.requireRoomOwner(c, id, workspaceID) {
+		return
+	}
+	botUserID := strings.TrimSpace(c.Param("botUserId"))
+	if botUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bot_user_id required"})
+		return
+	}
+	// Verify the bot is actually a member of the room before letting
+	// the owner attach a loop to it.
+	if member, err := s.getChatRoomMember(c.Request.Context(), id, botUserID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	} else if member == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该 bot 还不在这个房间，先加成员再开启自主性"})
+		return
+	}
+	var req struct {
+		Enabled      bool `json:"enabled"`
+		IntervalSecs int  `json:"interval_secs"`
+		MaxPerHour   int  `json:"max_per_hour"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入"})
+		return
+	}
+	if req.IntervalSecs <= 0 {
+		req.IntervalSecs = 900
+	}
+	if req.MaxPerHour <= 0 {
+		req.MaxPerHour = 4
+	}
+	if req.IntervalSecs < 60 || req.IntervalSecs > 3600 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "interval_secs 必须在 60-3600 之间"})
+		return
+	}
+	if req.MaxPerHour < 1 || req.MaxPerHour > 30 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "max_per_hour 必须在 1-30 之间"})
+		return
+	}
+	if err := s.upsertChatRoomAgentLoop(c.Request.Context(), ChatRoomAgentLoop{
+		RoomID:       id,
+		BotUserID:    botUserID,
+		Enabled:      req.Enabled,
+		IntervalSecs: req.IntervalSecs,
+		MaxPerHour:   req.MaxPerHour,
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) handleChatRoomAgentLoopDelete(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, ok := parseInt64Param(c, "id")
+	if !ok {
+		return
+	}
+	if !s.requireRoomOwner(c, id, workspaceID) {
+		return
+	}
+	botUserID := strings.TrimSpace(c.Param("botUserId"))
+	if botUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bot_user_id required"})
+		return
+	}
+	removed, err := s.deleteChatRoomAgentLoop(c.Request.Context(), id, botUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if !removed {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未配置该 bot 的自主性"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // requireRoomOwner checks (room belongs to workspace) AND (caller is
 // owner role on that room). Workspace admins are NOT auto-promoted —
 // adding admin-override hooks comes in P0c when the room ops UI lands.

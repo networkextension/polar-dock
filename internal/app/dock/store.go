@@ -3250,6 +3250,28 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_room_id_created_at
 -- room-routed inserts will write NULL here.
 ALTER TABLE chat_messages
     ALTER COLUMN thread_id DROP NOT NULL;
+
+-- Qunliao P3 — per-(room, bot) idle loop config + state. Default
+-- DISABLED to avoid surprise spend. interval_secs is the cadence at
+-- which the background ticker considers asking the bot to post;
+-- max_per_hour is the hard cap (independent of billing). The dock
+-- background goroutine reads this every 30s and runs a "should I post?"
+-- decision LLM call per due row. See chat_rooms_idle_loop.go.
+CREATE TABLE IF NOT EXISTS chat_room_agent_loops (
+    room_id              BIGINT  NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
+    bot_user_id          TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    enabled              BOOLEAN NOT NULL DEFAULT FALSE,
+    interval_secs        INTEGER NOT NULL DEFAULT 900 CHECK (interval_secs BETWEEN 60 AND 3600),
+    max_per_hour         INTEGER NOT NULL DEFAULT 4   CHECK (max_per_hour BETWEEN 1 AND 30),
+    last_decided_at      TIMESTAMPTZ,
+    last_posted_at       TIMESTAMPTZ,
+    decisions_this_hour  INTEGER NOT NULL DEFAULT 0,
+    hour_window_start    TIMESTAMPTZ,
+    PRIMARY KEY (room_id, bot_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_room_agent_loops_due
+    ON chat_room_agent_loops(last_decided_at)
+    WHERE enabled = TRUE;
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

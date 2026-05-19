@@ -2,6 +2,8 @@
 
 import { request, requestJson } from "./http.js";
 import type {
+  AgentLoop,
+  AgentLoopListResponse,
   Room,
   RoomCreateResponse,
   RoomGetResponse,
@@ -71,4 +73,25 @@ export async function sendRoomMessage(id: number, content: string, messageType =
   });
 }
 
-export type { Room, RoomKind, RoomRole };
+// qunliao P3 — agent idle-loop config endpoints (owner-only on backend).
+
+export async function fetchAgentLoops(id: number) {
+  return requestJson<AgentLoopListResponse>(`/api/rooms/${id}/agent-loops`);
+}
+
+export async function saveAgentLoop(
+  id: number,
+  botUserId: string,
+  body: { enabled: boolean; interval_secs: number; max_per_hour: number },
+) {
+  return requestJson<{ ok: boolean }>(`/api/rooms/${id}/agent-loops/${encodeURIComponent(botUserId)}`, {
+    method: "PUT",
+    body,
+  });
+}
+
+export async function deleteAgentLoop(id: number, botUserId: string) {
+  return request(`/api/rooms/${id}/agent-loops/${encodeURIComponent(botUserId)}`, { method: "DELETE" });
+}
+
+export type { AgentLoop, Room, RoomKind, RoomRole };

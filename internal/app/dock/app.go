@@ -302,6 +302,11 @@ func NewServer(cfg Config) (*Server, error) {
 	go server.wsHub.run()
 	go server.runChatEventSubscriber(server.backgroundCtx)
 	go server.runPushDeliveryWorker(server.backgroundCtx)
+	// Qunliao P3 — autonomous bot idle loop. Driver ticks every 30s,
+	// fans per-(room, bot) decisions out into ephemeral goroutines.
+	// Default-off per row, billing-gated, hourly capped — see
+	// chat_rooms_idle_loop.go.
+	go server.runRoomAgentIdleLoop(server.backgroundCtx)
 
 	if err := server.ensureSystemUser(); err != nil {
 		_ = db.Close()
@@ -935,6 +940,10 @@ func (s *Server) registerRoutes() {
 		api.DELETE("/rooms/:id/members/:userId", s.AuthMiddleware(), s.handleChatRoomMemberRemove)
 		api.GET("/rooms/:id/messages", s.AuthMiddleware(), s.handleChatRoomMessageList)
 		api.POST("/rooms/:id/messages", s.AuthMiddleware(), s.handleChatRoomMessageSend)
+		// P3 idle loop — per-(room, bot) "speak up on your own" config.
+		api.GET("/rooms/:id/agent-loops", s.AuthMiddleware(), s.handleChatRoomAgentLoopList)
+		api.PUT("/rooms/:id/agent-loops/:botUserId", s.AuthMiddleware(), s.handleChatRoomAgentLoopUpsert)
+		api.DELETE("/rooms/:id/agent-loops/:botUserId", s.AuthMiddleware(), s.handleChatRoomAgentLoopDelete)
 
 		api.GET("/chats", s.AuthMiddleware(), s.handleChatList)
 		api.POST("/chats/start", s.AuthMiddleware(), s.handleChatStart)
