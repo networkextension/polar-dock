@@ -2256,6 +2256,22 @@ ALTER TABLE packtunnel_profiles   ADD COLUMN IF NOT EXISTS workspace_id TEXT REF
 ALTER TABLE packtunnel_rule_files ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
 ALTER TABLE video_projects        ADD COLUMN IF NOT EXISTS workspace_id TEXT REFERENCES teams(id);
 CREATE INDEX IF NOT EXISTS idx_bot_users_workspace             ON bot_users(workspace_id, updated_at DESC);
+
+-- Qunliao P1 prereq: bot names are unique within a workspace.
+-- @mention dispatch in chat_rooms relies on a deterministic
+-- name → bot lookup. Existing duplicate rows on .57 were merged via
+-- the dedup script in PR description before this migration runs.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uniq_bot_users_workspace_name'
+    ) THEN
+        ALTER TABLE bot_users
+            ADD CONSTRAINT uniq_bot_users_workspace_name
+            UNIQUE (workspace_id, name);
+    END IF;
+END
+$$;
 CREATE INDEX IF NOT EXISTS idx_packtunnel_profiles_workspace   ON packtunnel_profiles(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_packtunnel_rule_files_workspace ON packtunnel_rule_files(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_video_projects_workspace        ON video_projects(workspace_id, updated_at DESC);
