@@ -240,24 +240,13 @@ func (s *Server) idleLoopDecideOne(parentCtx context.Context, l ChatRoomAgentLoo
 	}
 }
 
-// buildIdleSystemPrompt wraps the bot's own system_prompt with role +
-// room context. Kept compact — the LLM already saw the chat history,
-// this just sets behavior for autonomy mode.
+// buildIdleSystemPrompt is the idle-loop-specific wrapper: shared
+// room-context preamble + autonomy-mode tail.
 func buildIdleSystemPrompt(bot *BotUser, room *ChatRoom) string {
-	parts := []string{}
-	if strings.TrimSpace(bot.SystemPrompt) != "" {
-		parts = append(parts, bot.SystemPrompt)
-	}
-	roomCtx := fmt.Sprintf("当前房间：%s", room.Name)
-	if strings.TrimSpace(room.Topic) != "" {
-		roomCtx += "；话题：" + room.Topic
-	}
-	parts = append(parts, roomCtx)
-	parts = append(parts,
-		`你叫 "`+bot.Name+`"。这是一次"自主决定是否要发言"的轮询，不是用户在 @ 你。`+
-			`如果没有什么值得补充的，请选择保持沉默（action:"nothing"）。`+
-			`不要重复别人已经说过的、不要客套寒暄。只在确实有价值时才发言。`)
-	return strings.Join(parts, "\n\n")
+	idleTail := `你叫 "` + bot.Name + `"。这是一次"自主决定是否要发言"的轮询，不是用户在 @ 你。` +
+		`如果没有什么值得补充的，请选择保持沉默（action:"nothing"）。` +
+		`不要重复别人已经说过的、不要客套寒暄。只在确实有价值时才发言。`
+	return buildRoomBotSystemPrompt(bot, room, idleTail)
 }
 
 // parseIdleDecision pulls {action, content} out of the LLM reply.

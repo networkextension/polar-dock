@@ -11,12 +11,14 @@ import {
   createRoom,
   deleteAgentLoop,
   fetchAgentLoops,
+  fetchRoom,
   fetchRoomMembers,
   fetchRoomMessages,
   fetchRooms,
   removeRoomMember,
   saveAgentLoop,
   sendRoomMessage,
+  updateRoom,
 } from "./api/rooms.js";
 import type { AgentLoop } from "./types/room.js";
 import { logout } from "./api/session.js";
@@ -37,6 +39,9 @@ const roomRefreshBtn = byId<HTMLButtonElement>("roomRefreshBtn");
 const newRoomBtn = byId<HTMLButtonElement>("newRoomBtn");
 
 const activeRoomTitleEl = byId<HTMLElement>("activeRoomTitle");
+const topicBarEl = byId<HTMLElement>("topicBar");
+const topicTextEl = byId<HTMLElement>("topicText");
+const topicEditBtn = byId<HTMLButtonElement>("topicEditBtn");
 const wsStatusDotEl = byId<HTMLElement>("wsStatusDot");
 const metadataToggle = byId<HTMLInputElement>("metadataToggle");
 const messageScrollEl = byId<HTMLElement>("messageScroll");
@@ -118,8 +123,42 @@ async function switchRoom(roomId: number): Promise<void> {
   sendBtn.disabled = false;
   addMemberBtn.disabled = false;
   renderRoomList();
+  // Authoritative room + caller's membership (gives us the topic +
+  // whether to show the ✎ owner-edit affordance). Fall through on err
+  // — message + member loads can still proceed.
+  void refreshTopicBar(roomId);
   await Promise.all([loadMessages(roomId), loadMembers(roomId)]);
 }
+
+async function refreshTopicBar(roomId: number): Promise<void> {
+  try {
+    const { data } = await fetchRoom(roomId);
+    const topic = (data.room?.topic || "").trim();
+    const isOwner = data.member?.role === "owner";
+    topicBarEl.hidden = !topic && !isOwner;
+    topicTextEl.textContent = topic || "（未设话题；bot 不受约束）";
+    topicTextEl.style.fontStyle = topic ? "normal" : "italic";
+    topicEditBtn.hidden = !isOwner;
+  } catch {
+    topicBarEl.hidden = true;
+  }
+}
+
+topicEditBtn.addEventListener("click", async () => {
+  if (!activeRoomId) return;
+  const current = topicTextEl.textContent || "";
+  const next = prompt(
+    "房间话题（会自动加进 bot 的 system prompt 防止跑题）：",
+    current.startsWith("（") ? "" : current,
+  );
+  if (next === null) return; // cancelled
+  try {
+    await updateRoom(activeRoomId, { topic: next.trim() });
+    await refreshTopicBar(activeRoomId);
+  } catch (err) {
+    alert(`保存失败：${(err as Error).message}`);
+  }
+});
 
 // ---- messages ----
 async function loadMessages(roomId: number): Promise<void> {

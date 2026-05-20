@@ -89,7 +89,19 @@ func (s *Server) fanoutOneBotReply(workspaceID string, roomID, triggerMsgID int6
 		log.Printf("room mention: load history failed room=%d bot=%q: %v", roomID, bot.Name, err)
 		return
 	}
-	chatMsgs := buildRoomChatHistory(msgs, bot.BotUserID, bot.SystemPrompt)
+	// Qunliao: room.topic governs bot replies — drift-prevention rule
+	// is appended to the bot's own system_prompt by buildRoomBotSystemPrompt.
+	// Without it bots only know their persona, not what room they're in,
+	// and a @mention drifts off-topic easily.
+	room, rErr := s.getChatRoom(ctx, roomID)
+	if rErr != nil || room == nil {
+		// Shouldn't happen — findBotInRoom already confirmed membership.
+		// Fall back to bare persona so the bot still answers.
+		log.Printf("room mention: getChatRoom failed room=%d: %v", roomID, rErr)
+		room = &ChatRoom{ID: roomID}
+	}
+	systemPrompt := buildRoomBotSystemPrompt(bot, room, "")
+	chatMsgs := buildRoomChatHistory(msgs, bot.BotUserID, systemPrompt)
 
 	// Qunliao β: per-bot model_override lets one llm_configs row power
 	// multiple bots running different model variants (kimi k2.5 vs k1.5).
@@ -102,7 +114,7 @@ func (s *Server) fanoutOneBotReply(workspaceID string, roomID, triggerMsgID int6
 		APIKey:        apiKey,
 		BaseURL:       cfg.BaseURL,
 		Model:         modelToUse,
-		SystemPrompt:  bot.SystemPrompt,
+		SystemPrompt:  systemPrompt,
 		Streaming:     false,
 		ProxyURL:      cfg.ProxyURL,
 		LLMConfigID:   cfg.ID,
@@ -197,6 +209,37 @@ func (s *Server) insertAndBroadcastBotReplyWithMetrics(ctx context.Context, room
 		MessageID: msgID,
 		SenderID:  botUserID,
 	})
+}
+
+// buildRoomBotSystemPrompt assembles the system prompt fed to a bot
+// replying inside a room: bot.SystemPrompt (persona), room identity
+// (name + topic) so the bot knows where it is, a drift-prevention
+// rule when the topic is set, and an optional mode-specific tail
+// (e.g. the idle-loop's JSON-decision instructions).
+//
+// Empty topic → drift rule is skipped (no point telling the bot to
+// "stay on-topic" when there is no topic). The first goal is to fix
+// "bot replies anything to anything because it has no idea what
+// room this is" — which #261/P1 didn't address.
+func buildRoomBotSystemPrompt(bot *BotUser, room *ChatRoom, modeTail string) string {
+	parts := []string{}
+	if strings.TrimSpace(bot.SystemPrompt) != "" {
+		parts = append(parts, bot.SystemPrompt)
+	}
+	if room != nil && strings.TrimSpace(room.Name) != "" {
+		ctx := "你正在「" + strings.TrimSpace(room.Name) + "」群里发言。"
+		parts = append(parts, ctx)
+	}
+	if room != nil && strings.TrimSpace(room.Topic) != "" {
+		// Hard topic-anchor rule. Keep terse — long rule blocks dilute.
+		parts = append(parts,
+			"本房间话题：「"+strings.TrimSpace(room.Topic)+"」。"+
+				"请围绕该话题回答；遇到明显跑题的消息，请礼貌引回话题或直接说\"超出本房间话题范围\"。")
+	}
+	if strings.TrimSpace(modeTail) != "" {
+		parts = append(parts, modeTail)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // buildRoomChatHistory turns the room's recent messages (newest-first
