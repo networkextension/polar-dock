@@ -127,6 +127,15 @@
               <span style="flex:1;"></span>
               <span id="wsStatusDot" class="lp-mode-badge" title="WS">●</span>
             </div>
+            <!-- Topic row: visible to all members, editable by owner. The
+                 topic is injected into the bot system prompt server-side
+                 (chat_rooms_agent.go: buildRoomBotSystemPrompt) so bots
+                 stay on-topic. Empty = no anchor passed to bots. -->
+            <div id="topicBar" style="padding:4px 12px; border-bottom:1px solid var(--border,#eee); font-size:12px; color:var(--text-muted,#888); display:flex; align-items:center; gap:6px;" hidden>
+              <span>🎯</span>
+              <span id="topicText" style="flex:1;"></span>
+              <button id="topicEditBtn" class="btn-inline btn-secondary" type="button" title="改话题" style="padding:0 6px; font-size:11px;" hidden>✎</button>
+            </div>
             <div id="messageScroll" class="lp-preview-body" style="flex:1; overflow-y:auto; padding-bottom: 8px;">
               <div id="messageList"></div>
             </div>
@@ -168,8 +177,9 @@
             <input id="newRoomName" class="input" type="text" placeholder="例如：产品讨论组" />
           </div>
           <div class="settings-section-card" style="margin-bottom: 12px;">
-            <label class="settings-section-title" for="newRoomTopic">话题</label>
-            <input id="newRoomTopic" class="input" type="text" placeholder="（可选）" />
+            <label class="settings-section-title" for="newRoomTopic">话题（约束 bot 不要跑题）</label>
+            <input id="newRoomTopic" class="input" type="text" placeholder="如：iOS 15 适配讨论 / Q3 OKR 拆解 / 周末 BBQ 选地点" />
+            <div style="font-size:11px; color:var(--text-muted,#888); margin-top:4px;">话题会自动加进 bot 的 system prompt — 明显跑题的消息 bot 会礼貌引回话题或拒答。留空 = 不约束。</div>
           </div>
           <div id="newRoomError" class="status-text" style="color: var(--danger, #c00);"></div>
         </div>
