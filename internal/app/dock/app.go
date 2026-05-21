@@ -664,6 +664,17 @@ func (s *Server) registerRoutes() {
 	// of the API surface.
 	s.router.GET("/metrics", s.handleMetrics)
 
+	// Phase 1-A — internal API surface (HMAC-gated, plugin-only). All
+	// routes hang off /internal/v1/ and require an X-Polar-Plugin-Sig
+	// header signed with the plugin's stored key hash. Production
+	// deployments MUST block /internal/ at the outermost nginx (the
+	// HMAC is the second wall, not the only one). Currently only the
+	// smoke ping endpoint lives here; 1-B adds the documented 9.
+	internal := s.router.Group("/internal/v1", s.hmacPluginAuth())
+	{
+		internal.GET("/ping", s.handleInternalPing)
+	}
+
 	// iOS distribution OTA endpoints (no auth — gated by a short-lived,
 	// random install token bound to a single version). The manifest.plist
 	// must be served with content-type application/xml; see iosdist_handlers.go.
@@ -762,6 +773,16 @@ func (s *Server) registerRoutes() {
 		// chat handler immediately enforces the new floor.
 		api.POST("/admin/llm-config-team-quotas/recharge", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigTeamRecharge)
 		api.GET("/admin/llm-config-team-quotas/recharges", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigTeamRechargeList)
+		// Phase 1-A — plugin registry. Each row authenticates a plugin
+		// service that calls /internal/v1/*. Plaintext shown once at
+		// create + rotate; only the hash persists. See
+		// doc/arch/internal-api-v1.md + doc/arch/decision.md.
+		api.GET("/admin/plugin-modules", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleList)
+		api.POST("/admin/plugin-modules", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleCreate)
+		api.PATCH("/admin/plugin-modules/:name/enable", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleEnable)
+		api.PATCH("/admin/plugin-modules/:name/disable", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleDisable)
+		api.POST("/admin/plugin-modules/:name/rotate-key", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleRotateKey)
+		api.DELETE("/admin/plugin-modules/:name", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleDelete)
 		// LLM proxy — admin-gated token CRUD. The plaintext is shown
 		// once at create-time and never returnable again.
 		api.GET("/llm-proxy/dashboard-stats", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyDashboardStats)

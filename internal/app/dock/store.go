@@ -3302,6 +3302,26 @@ ALTER TABLE chat_messages
     ADD COLUMN IF NOT EXISTS completion_tokens INTEGER;
 ALTER TABLE chat_messages
     ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(12,6);
+
+-- Phase 1-A — Plugin module registry. Each row represents one external
+-- plugin service (wg-svc, iosdist-svc, third-party) that hits
+-- /internal/v1/* endpoints. plugin_key_hash is sha256 of the HMAC
+-- secret the plugin signs requests with. Plaintext is shown to the
+-- admin ONCE at creation and never recoverable from this table.
+-- See doc/arch/internal-api-v1.md for the signing protocol.
+CREATE TABLE IF NOT EXISTS plugin_modules (
+    name            TEXT PRIMARY KEY,
+    display_name    TEXT NOT NULL,
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    endpoint        TEXT NOT NULL DEFAULT '',
+    last_heartbeat  TIMESTAMPTZ,
+    version         TEXT NOT NULL DEFAULT '',
+    plugin_key_hash TEXT NOT NULL,
+    config          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_plugin_modules_enabled
+    ON plugin_modules(enabled) WHERE enabled = TRUE;
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
