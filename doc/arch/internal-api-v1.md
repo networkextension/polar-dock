@@ -42,10 +42,21 @@ Examples:
 ### Signature
 
 ```
-hmac_sha256_hex(PLUGIN_INTERNAL_KEY, canonical_string)
+hmac_sha256_hex(PLUGIN_HMAC_KEY, canonical_string)
 ```
 
-The key is the raw secret bytes (32+) provisioned for the plugin in Dock's `plugin_modules.plugin_key_hash`. The plaintext key is shown **once** at plugin creation; Dock only stores the SHA-256 hash.
+**Important — `PLUGIN_HMAC_KEY` is *not* the plaintext token.** It is the lowercase SHA-256 hex digest of the plaintext.
+
+Why: Dock never persists the plaintext (only `sha256(plaintext)` in `plugin_modules.plugin_key_hash`), so both sides must derive the HMAC key the same way. The plaintext is shown **once** at plugin creation; the plugin operator computes the hash locally and stores *that* as the HMAC key. The plaintext can then be discarded.
+
+```go
+// Plugin-side (one-time setup, run after admin shows plaintext):
+import "crypto/sha256"; "encoding/hex"
+sum := sha256.Sum256([]byte(plaintextFromAdmin))
+hmacKey := hex.EncodeToString(sum[:])  // 64 hex chars — store in plugin secrets
+```
+
+Dock-side, the middleware uses `plugin_modules.plugin_key_hash` directly as the HMAC key — no extra derivation. The two key derivations meet at the same 64-hex string. See `internal/app/dock/internal_api_middleware.go::computePluginSig`.
 
 ### Replay protection
 
@@ -255,7 +266,12 @@ import (
 type Client struct {
     DockBase string        // "http://dock:8080"
     Name     string        // plugin name as registered
-    Key      []byte        // 32+ byte secret
+    // Key is the *HMAC key*, NOT the plaintext token Dock printed at
+    // registration. Derive once with:
+    //     sum := sha256.Sum256([]byte(plaintextFromAdmin))
+    //     key := []byte(hex.EncodeToString(sum[:]))  // 64-byte hex
+    // and store that — discard the plaintext. See "Signature" above.
+    Key      []byte
     HTTP     *http.Client
 }
 

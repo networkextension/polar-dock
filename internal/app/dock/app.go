@@ -668,11 +668,23 @@ func (s *Server) registerRoutes() {
 	// routes hang off /internal/v1/ and require an X-Polar-Plugin-Sig
 	// header signed with the plugin's stored key hash. Production
 	// deployments MUST block /internal/ at the outermost nginx (the
-	// HMAC is the second wall, not the only one). Currently only the
-	// smoke ping endpoint lives here; 1-B adds the documented 9.
+	// HMAC is the second wall, not the only one).
 	internal := s.router.Group("/internal/v1", s.hmacPluginAuth())
 	{
+		// Smoke route — keep around as ops-time health check.
 		internal.GET("/ping", s.handleInternalPing)
+
+		// Phase 1-B — documented v1 contract. See
+		// doc/arch/internal-api-v1.md for shapes + error codes.
+		internal.GET("/auth/verify", s.handleInternalAuthVerify)
+		internal.GET("/users/:id", s.handleInternalUserGet)
+		internal.GET("/users/:id/workspace", s.handleInternalUserWorkspace)
+		internal.GET("/teams/:id", s.handleInternalTeamGet)
+		internal.GET("/teams/:id/members/:user", s.handleInternalTeamMember)
+		internal.GET("/llm-configs/:id", s.handleInternalLLMConfigGet)
+		internal.POST("/llm/chat-completion", s.handleInternalLLMChatCompletion)
+		internal.POST("/notify", s.handleInternalNotify)
+		internal.POST("/plugin-registry/heartbeat", s.handleInternalHeartbeat)
 	}
 
 	// iOS distribution OTA endpoints (no auth — gated by a short-lived,
