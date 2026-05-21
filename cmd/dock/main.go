@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"gin-auth-app/internal/app/dock"
 )
@@ -110,6 +111,12 @@ func main() {
 
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
+
+		// Phase 1-D-2 cutover: when POLAR_WG_REMOTE=true, dock skips
+		// wg-mac route registration entirely. Nginx is then expected
+		// to route /v1/{register,peers,…} + /api/admin/wg-* to
+		// wg-svc (cmd/wg-svc binary). See doc/arch/wg-svc-extraction.md.
+		WGRemote: strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_WG_REMOTE")), "true"),
 	}
 
 	server, err := dock.NewServer(cfg)
