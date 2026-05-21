@@ -80,31 +80,17 @@ echo
 
 echo "--- truncating target + loading ---"
 {
-    # Disable FKs for the load — we restore them implicitly by loading
-    # in dependency order, but TRUNCATE CASCADE is the simplest sane
-    # idempotent reset.
+    # TRUNCATE CASCADE gives us a clean idempotent reset. The dump
+    # carries its own setval() calls for every sequence (pg_dump
+    # default behavior), so we don't need to re-sync sequences
+    # afterwards. Earlier versions of this script did and tripped
+    # over pg_dump's `SET search_path = ''` — left to its own dump,
+    # everything resolves through pg_catalog.
     echo "BEGIN;"
     for t in "${TABLES[@]}"; do
         echo "TRUNCATE $t RESTART IDENTITY CASCADE;"
     done
     cat "$DUMP"
-    # Re-sync sequences so the next INSERT in polar_wg picks up where
-    # ideamesh left off. setval to MAX(id)+1, or 1 if table is empty.
-    for t in "${TABLES[@]}"; do
-        cat <<SEQSQL
-DO \$\$
-DECLARE
-    seq_name TEXT;
-    max_id BIGINT;
-BEGIN
-    SELECT pg_get_serial_sequence('$t', 'id') INTO seq_name;
-    IF seq_name IS NOT NULL THEN
-        EXECUTE 'SELECT COALESCE(MAX(id), 0) FROM $t' INTO max_id;
-        PERFORM setval(seq_name, GREATEST(max_id, 1), max_id > 0);
-    END IF;
-END\$\$;
-SEQSQL
-    done
     echo "COMMIT;"
 } | "$PSQL" "$DST_DSN" -v ON_ERROR_STOP=1
 
