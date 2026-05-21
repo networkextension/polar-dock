@@ -83,24 +83,85 @@ If `/healthz` returns `db_ok:false` → wg-svc can reach polar_wg but a query fa
 
 If wg-svc exits at startup with `dock /ping rejected: HTTP 401` → the HMAC key derivation is off. Most likely the operator pasted the wrong column — `PLUGIN_TOKEN` is the *plaintext* shown once at provisioning, not the row's `plugin_key_hash`. Re-rotate via `/admin-plugins.html` → "Rotate key".
 
-## Phase 1-D checklist (do not start yet)
+## Phase 1-D-1 — shipped
 
-- [ ] PR: move `wg_*.go` from `internal/app/dock/` → `internal/plugins/wg/`
-- [ ] Refactor each handler off `*Server`, onto `*Plugin`
-- [ ] Replace `s.getUserByID` calls with `p.Dock.UserGet`
-- [ ] Replace admin middleware with `p.Dock.AuthVerify` + role check
-- [ ] PR: nginx config — add wg-svc upstream + location blocks
-- [ ] PR: dock `POLAR_WG_REMOTE` flag; when true, dock returns 404 from its wg routes
-- [ ] Deploy + bake one release (≥7d) with traffic on wg-svc, dock idle on wg
-- [ ] PR: delete `internal/app/dock/wg_*.go`
-- [ ] One-shot SQL: backup + `DROP TABLE wg_heartbeats, wg_devices, wg_bundles, wg_tokens, wg_sites, wg_hubs;` in `ideamesh`
+Handlers moved into `internal/plugins/wg/` (PR #282). Dock unchanged; both processes register the same routes, but only dock receives traffic (nginx hasn't moved yet).
 
-## Rollback (Phase 1-D)
+## Phase 1-D-2 — cutover (this PR)
+
+| Change | Where |
+|---|---|
+| Skip wg route registration when `POLAR_WG_REMOTE=true` | `internal/app/dock/app.go` |
+| Wire `POLAR_WG_REMOTE` env from main → Config.WGRemote | `cmd/dock/main.go` |
+| Nginx location snippet for `/v1/*` + `/api/admin/wg-*` → `:8090` | `scripts/nginx/wg-svc-snippet.conf` |
+| launchd plist + wrapper + env-sample + setup script | `scripts/launchd/polar.wg-svc.plist`, `polar-wg-svc-launch.sh`, `wg-svc.env.sample`, `setup-wg-svc.sh` |
+
+### Cutover runbook (apply on .57 after merge)
+
+```bash
+# 0. Pre-flight: confirm wg-svc Phase 1-D-1 is healthy.
+ssh -p 5722 local@127.0.0.1 'curl -s http://127.0.0.1:8090/healthz'
+# expect: {"db_ok":true,...}
+
+# 1. Install wg-svc launchd plist (idempotent). First run bootstraps
+#    the env file from sample; subsequent runs leave it alone.
+ssh -p 5722 local@127.0.0.1 'cd ~/github/Polar- && bash scripts/launchd/setup-wg-svc.sh'
+
+# 2. Drop the nginx snippet + include from the vhost.
+ssh -p 5722 local@127.0.0.1 'sudo install -m 0644 \
+    ~/github/Polar-/scripts/nginx/wg-svc-snippet.conf \
+    /opt/homebrew/etc/nginx/snippets/wg-svc.conf'
+# Add `include /opt/homebrew/etc/nginx/snippets/wg-svc.conf;` to the
+# vhost above the general /api + /v1 blocks. Then:
+ssh -p 5722 local@127.0.0.1 'sudo nginx -t && sudo brew services restart nginx'
+
+# 3. Flip dock — add POLAR_WG_REMOTE=true to ~/polar-dock.env, kickstart.
+ssh -p 5722 local@127.0.0.1 'echo "POLAR_WG_REMOTE=true" >> ~/polar-dock.env && \
+    launchctl kickstart -k gui/$(id -u)/polar.dock'
+
+# 4. Smoke. /v1/peers + /api/admin/wg-hubs should now hit wg-svc through
+#    nginx; dock should 404 those paths if you bypass nginx.
+ssh -p 5722 local@127.0.0.1 'bash -s' <<'EOF'
+echo "--- via nginx (should hit wg-svc) ---"
+curl -s -o /dev/null -w "HTTP %{http_code}\n" -k https://localhost:8443/v1/peers
+echo "--- via dock direct (should 404 — flag works) ---"
+curl -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:8080/v1/peers
+echo "--- wg-svc direct ---"
+curl -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:8090/v1/peers
+EOF
+```
+
+### Cutover DoD
+
+- ✓ wg-svc launchd plist loaded, survives `launchctl unload polar.wg-svc && launchctl load polar.wg-svc`
+- ✓ wg-svc auto-starts on box reboot
+- ✓ `/v1/*` via nginx returns wg-svc responses
+- ✓ `/api/admin/wg-hubs` via nginx returns wg-svc responses (admin UI still works)
+- ✓ `/v1/peers` direct to `:8080` returns dock 404 (flag honored)
+- ✓ Dock's plugin GC + everything-else still works
+- ✓ One existing wg device successfully heartbeats through the new path
+
+### Headscale temporary degradation
+
+Phase 1-D-1's wg-svc `/api/admin/wg-tokens` does **not** issue a Tailscale auth key alongside the wg-mac token (the embedded Headscale process stays in dock). After cutover the UI will mint wg-mac tokens but `tailscale_authkey` is missing from the response — operators who need a Headscale PreAuthKey can:
+
+- Mint manually via `headscale preauthkeys create` (CLI on dock host), or
+- Wait for Phase 1-D-3 which restores it via `/internal/v1/headscale/mint-authkey`.
+
+This is acceptable for a one-release bake window.
+
+## Rollback
 
 If wg-svc misbehaves after cutover:
 
-1. `launchctl unload` wg-svc + revert nginx to remove the wg-svc upstream (one `nginx -s reload`).
-2. dock still has all the wg handlers and still has its own copy of the wg_* tables (we keep them until step 8 of the Phase 1-D checklist). Set `POLAR_WG_REMOTE=false`, kickstart dock. Traffic is back on dock's in-tree path within ~5s.
-3. polar_wg may have rows ahead of ideamesh (anything wg-svc wrote in the meantime). Document any divergence; either replay manually or accept the data loss for the cutover window.
+1. Remove the `include /opt/homebrew/etc/nginx/snippets/wg-svc.conf;` from the vhost, `sudo nginx -s reload`.
+2. Remove `POLAR_WG_REMOTE=true` from `~/polar-dock.env`, `launchctl kickstart -k gui/$(id -u)/polar.dock`.
+3. Traffic is back on dock's in-tree path within ~5s. dock's `ideamesh.wg_*` tables are still authoritative — polar_wg may have rows ahead but those can be re-imported manually (or accepted as lost) since the cutover window is short.
 
-This rollback path stays open for one full release. After step 8, the dock-side wg code is gone and rollback requires reverting that PR.
+The Phase 1-D-1 wg code in dock stays intact through this whole window. Only after one full release without rollback does Phase 1-D-3 delete it.
+
+## Phase 1-D-3 — final cleanup (do not start until bake passes)
+
+- [ ] PR: delete `internal/app/dock/wg_*.go` + remove `WGRemote` flag (dock never serves wg again)
+- [ ] PR: add `/internal/v1/headscale/mint-authkey` to dock + wire wg-svc's token-create back to it (restore Tailscale key)
+- [ ] One-shot SQL: backup + `DROP TABLE wg_heartbeats, wg_devices, wg_bundles, wg_tokens, wg_sites, wg_hubs;` in `ideamesh`

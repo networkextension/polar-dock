@@ -121,6 +121,10 @@ type Server struct {
 	metricsRegistry *metrics
 	metricsToken    string
 
+	// wgRemote — when true, the wg routes are NOT registered. See
+	// Config.WGRemote.
+	wgRemote bool
+
 	// LLM proxy in-memory rate limiter. Per-token sliding window;
 	// see llm_proxy_rate_limit.go.
 	llmProxyRateLimiter *llmProxyRateLimiter
@@ -423,6 +427,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.metricsRegistry = newMetrics()
 	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
+	server.wgRemote = cfg.WGRemote
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
 	server.llmProxyProber.start()
@@ -705,20 +710,26 @@ func (s *Server) registerRoutes() {
 	// validates the join token in-handler, /v1/peers + heartbeat +
 	// leave + token/refresh validate the bearer device-token also
 	// in-handler. /v1/install + /v1/bundle are intentionally public.
-	v1 := s.router.Group("/v1")
-	{
-		v1.POST("/register", s.handleWGRegister)
-		v1.GET("/peers", s.handleWGPeers)
-		v1.GET("/hub/peers", s.handleWGHubPeers)
-		v1.GET("/dns/:hub_slug", s.handleWGDNSZone)
-		v1.GET("/dns", s.handleWGDNSZone)
-		v1.POST("/heartbeat", s.handleWGHeartbeat)
-		v1.POST("/leave", s.handleWGLeave)
-		v1.POST("/token/refresh", s.handleWGTokenRefresh)
-		v1.GET("/install", s.handleWGInstallScript)
-		v1.GET("/install/:version", s.handleWGInstallScript)
-		v1.GET("/bundle", s.handleWGBundleLatest)
-		v1.GET("/bundle/:version", s.handleWGBundleDownload)
+	//
+	// Phase 1-D-2: skipped entirely when POLAR_WG_REMOTE=true. Nginx
+	// is then expected to route these paths to wg-svc (cmd/wg-svc).
+	// See doc/arch/wg-svc-extraction.md.
+	if !s.wgRemote {
+		v1 := s.router.Group("/v1")
+		{
+			v1.POST("/register", s.handleWGRegister)
+			v1.GET("/peers", s.handleWGPeers)
+			v1.GET("/hub/peers", s.handleWGHubPeers)
+			v1.GET("/dns/:hub_slug", s.handleWGDNSZone)
+			v1.GET("/dns", s.handleWGDNSZone)
+			v1.POST("/heartbeat", s.handleWGHeartbeat)
+			v1.POST("/leave", s.handleWGLeave)
+			v1.POST("/token/refresh", s.handleWGTokenRefresh)
+			v1.GET("/install", s.handleWGInstallScript)
+			v1.GET("/install/:version", s.handleWGInstallScript)
+			v1.GET("/bundle", s.handleWGBundleLatest)
+			v1.GET("/bundle/:version", s.handleWGBundleDownload)
+		}
 	}
 
 	api := s.router.Group("/api")
@@ -819,7 +830,12 @@ func (s *Server) registerRoutes() {
 		// llm_proxy_tokens table — no cookie/session auth.
 		api.POST("/proxy/v1/chat/completions", s.handleLLMProxyChatCompletions)
 		// wg-mac Phase 2 admin (see doc/JOIN_PROTOCOL.md). Public /v1/*
-		// counterparts are wired at the root router below.
+		// counterparts are wired at the root router above.
+		//
+		// Phase 1-D-2: skipped when POLAR_WG_REMOTE=true so nginx can
+		// route these to wg-svc without ambiguity. Same flag gates the
+		// /v1/* block above.
+		if !s.wgRemote {
 		api.GET("/admin/wg-hubs", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubList)
 		api.PUT("/admin/wg-hubs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubUpdate)
 		api.DELETE("/admin/wg-hubs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubDelete)
@@ -834,6 +850,7 @@ func (s *Server) registerRoutes() {
 		api.POST("/admin/wg-bundles/upload", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleUpload)
 		api.PUT("/admin/wg-bundles/:id/latest", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleSetLatest)
 		api.DELETE("/admin/wg-bundles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleDelete)
+		} // end wgRemote gate
 		// Public system-info endpoint — intentionally no auth so
 		// deploy tooling can probe a fresh box. See sysinfo.go for
 		// what's exposed vs not.
