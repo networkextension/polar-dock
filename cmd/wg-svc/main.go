@@ -10,6 +10,8 @@
 //	POLAR_PLUGIN_TOKEN    polar_plugin_…     (plaintext from /admin-plugins.html)
 //	POLAR_WG_LISTEN       127.0.0.1:8090     (HTTP listen addr)
 //	POLAR_WG_VERSION      git-sha or "0.0.1" (cosmetic; appears in /admin-plugins.html)
+//	POLAR_WG_DATA_DIR     /Users/local/wg-svc-data   (bundle blobs live in $POLAR_WG_DATA_DIR/wg-bundles)
+//	POLAR_WG_METRICS_TOKEN bearer token for /metrics; unset = endpoint 404
 //
 // The plaintext PLUGIN_TOKEN is stored ONLY in the plugin's env (chmod
 // 600 .env file recommended). Dock never sees it after creation —
@@ -40,6 +42,8 @@ func main() {
 		PluginToken:  os.Getenv("POLAR_PLUGIN_TOKEN"),
 		Listen:       envOrDefault("POLAR_WG_LISTEN", "127.0.0.1:8090"),
 		BuildVersion: envOrDefault("POLAR_WG_VERSION", "0.0.1"),
+		UploadDir:    envOrDefault("POLAR_WG_DATA_DIR", "/Users/local/wg-svc-data"),
+		MetricsToken: os.Getenv("POLAR_WG_METRICS_TOKEN"),
 	}
 	if strings.TrimSpace(cfg.PluginToken) == "" {
 		log.Fatal("POLAR_PLUGIN_TOKEN unset — get plaintext from /admin-plugins.html (one-time print at row creation)")
