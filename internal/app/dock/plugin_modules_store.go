@@ -198,6 +198,29 @@ func (s *Server) rotatePluginModuleKey(name string) (string, bool, error) {
 	return plaintext, true, nil
 }
 
+// updatePluginHeartbeat refreshes last_heartbeat (and optionally
+// version + endpoint) on the row. Called by Phase 1-B's
+// /internal/v1/plugin-registry/heartbeat handler. Empty version /
+// endpoint don't clobber existing values — only refresh what the
+// plugin sent.
+func (s *Server) updatePluginHeartbeat(name, version, endpoint string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("name required")
+	}
+	now := time.Now().UTC()
+	// COALESCE NULLIF lets us preserve current value when the plugin
+	// sent an empty string for version / endpoint.
+	_, err := s.db.Exec(`
+		UPDATE plugin_modules
+		   SET last_heartbeat = $2,
+		       version  = CASE WHEN $3 = '' THEN version  ELSE $3 END,
+		       endpoint = CASE WHEN $4 = '' THEN endpoint ELSE $4 END
+		 WHERE name = $1`,
+		name, now, strings.TrimSpace(version), strings.TrimSpace(endpoint))
+	return err
+}
+
 // deletePluginModule hard-deletes the row. Prefer disable; delete is
 // here for cleanup of typos and decommissioned plugins.
 func (s *Server) deletePluginModule(name string) (bool, error) {
