@@ -114,7 +114,6 @@ type Server struct {
 	metricsToken    string
 
 	// Plugin cutover flags — see Config.<X>Remote.
-	projectsRemote bool
 	hostsRemote    bool
 
 	// LLM proxy in-memory rate limiter. Per-token sliding window;
@@ -408,7 +407,6 @@ func NewServer(cfg Config) (*Server, error) {
 	server.metricsRegistry = newMetrics()
 	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
-	server.projectsRemote = cfg.ProjectsRemote
 	server.hostsRemote = cfg.HostsRemote
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
@@ -913,31 +911,19 @@ func (s *Server) registerRoutes() {
 		api.PATCH("/console/layouts/:layoutId", s.AuthMiddleware(), s.handleConsoleLayoutUpdate)
 		api.DELETE("/console/layouts/:layoutId", s.AuthMiddleware(), s.handleConsoleLayoutDelete)
 		} // end hostsRemote gate
-		// projects (workspace-scoped product container with AI
-		// requirement decomposition + plan generation). Full block
-		// skipped when POLAR_PROJECTS_REMOTE=true; nginx routes
-		// /api/projects/* to polar-projects-svc. CAVEAT: the plugin
-		// repo (polar-projects) omitted /research/dispatch + /research/
-		// runs + /research/runs/:run_id/{start,result} from RegisterRoutes
-		// — those become 404 at cutover until plugin adds them.
-		if !s.projectsRemote {
-		api.GET("/projects", s.AuthMiddleware(), s.handleProjectList)
-		api.POST("/projects", s.AuthMiddleware(), s.handleProjectCreate)
-		api.GET("/projects/:id", s.AuthMiddleware(), s.handleProjectDetail)
-		api.PUT("/projects/:id", s.AuthMiddleware(), s.handleProjectUpdate)
-		api.DELETE("/projects/:id", s.AuthMiddleware(), s.handleProjectDelete)
-		api.POST("/projects/:id/decompose", s.AuthMiddleware(), s.handleProjectDecompose)
-		api.PUT("/projects/:id/features/:feature_id", s.AuthMiddleware(), s.handleProjectFeatureUpdate)
-		api.DELETE("/projects/:id/features/:feature_id", s.AuthMiddleware(), s.handleProjectFeatureDelete)
-		api.POST("/projects/:id/plan", s.AuthMiddleware(), s.handleProjectGeneratePlan)
-		api.PUT("/projects/:id/tasks/:task_id", s.AuthMiddleware(), s.handleProjectTaskUpdate)
-		api.POST("/projects/:id/tasks/:task_id/pickup", s.AuthMiddleware(), s.handleProjectTaskPickup)
+		// projects CRUD + decompose + plan + task lifecycle moved to
+		// github.com/networkextension/polar-projects. The following routes
+		// stay in dock because their handlers depend on dock-only services
+		// (system-agent LLM resolution + agent_hub for research dispatch).
+		// Sharpen/retrospect handlers live in system_agent_handlers.go +
+		// task_retrospect.go; research handlers in research_handlers.go.
+		api.POST("/projects/:id/tasks/:task_id/sharpen", s.AuthMiddleware(), s.handleProjectTaskSharpen)
+		api.GET("/projects/:id/tasks/:task_id/retrospect", s.AuthMiddleware(), s.handleProjectTaskRetrospectGet)
+		api.POST("/projects/:id/tasks/:task_id/retrospect", s.AuthMiddleware(), s.handleProjectTaskRetrospectGenerate)
 		api.POST("/projects/:id/tasks/:task_id/research/dispatch", s.AuthMiddleware(), s.handleResearchDispatch)
 		api.GET("/projects/:id/research/runs", s.AuthMiddleware(), s.handleResearchRunsList)
 		api.POST("/projects/research/runs/:run_id/start", s.PolarAgentAuthMiddleware(), s.handleResearchRunStart)
 		api.POST("/projects/research/runs/:run_id/result", s.PolarAgentAuthMiddleware(), s.handleResearchRunResult)
-		api.POST("/projects/:id/tasks/bulk-status", s.AuthMiddleware(), s.handleProjectTaskBulkStatus)
-		} // end projectsRemote gate
 		// teams (collaboration workspaces). T2 = CRUD + read-only members
 		// list. T3 = invitations. T5 = RequireTeamRole middleware
 		// chained on team-scoped routes (replaces inline role checks).
