@@ -15,7 +15,7 @@ package main
 //
 // SECURITY: bound to 127.0.0.1 only. There's no auth — anyone who can
 // dial the local socket can spawn shells / VNC relays / etc. Dev mode
-// only. See doc/agent-test-harness.md for the threat model.
+// only. See doc/agent/agent-test-harness.md for the threat model.
 
 import (
 	"bufio"

@@ -12,7 +12,7 @@ import (
 )
 
 // Knowledge-base store layer (P-library-0a). See
-// doc/jtag-skill-design.md §3.5.
+// doc/agent/jtag-debug-skill-design.md §3.5.
 //
 // All three tables are GLOBAL (not workspace-scoped) — the design's
 // "network effect across operators" is the point. Writes are gated

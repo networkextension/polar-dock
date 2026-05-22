@@ -2,7 +2,7 @@ package skills
 
 // `library` adapter — wraps dock's /api/library/... REST so the LLM
 // can query the knowledge base mid-debug-loop (per
-// doc/jtag-debug-skill-design.md §3.5 / phase P-library-0b).
+// doc/agent/jtag-debug-skill-design.md §3.5 / phase P-library-0b).
 //
 // 9 read-only tools. The most-used during debug:
 //

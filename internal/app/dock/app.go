@@ -731,7 +731,7 @@ func (s *Server) registerRoutes() {
 	// Public discovery / "App 广场" — lists all apps that opted in to is_public.
 	s.router.GET("/iosdist/plaza", s.handleIOSPublicPlaza)
 
-	// wg-mac join control plane (see doc/JOIN_PROTOCOL.md). All /v1/*
+	// wg-mac join control plane (see github.com/networkextension/polar-wg doc/JOIN_PROTOCOL.md). All /v1/*
 	// routes are unauthenticated at the gin layer; /v1/register
 	// validates the join token in-handler, /v1/peers + heartbeat +
 	// leave + token/refresh validate the bearer device-token also
@@ -846,7 +846,7 @@ func (s *Server) registerRoutes() {
 		// deploy tooling can probe a fresh box. See sysinfo.go for
 		// what's exposed vs not.
 		api.GET("/system/info", s.handleSystemInfo)
-		// Knowledge-base (P-library-0a) — see doc/jtag-skill-design.md
+		// Knowledge-base (P-library-0a) — see doc/agent/jtag-debug-skill-design.md
 		// §3.5. Global tables; writes admin-only, reads any-logged-in.
 		// Full block skipped when POLAR_LIBRARY_REMOTE=true; nginx then
 		// routes /api/library/* to polar-library-svc. rev_agent_handlers
@@ -1071,7 +1071,7 @@ func (s *Server) registerRoutes() {
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
 		api.POST("/agent/bots/:bot_id/dispatch", s.AuthMiddleware(), s.handleAgentDispatch)
 		// hosts (workspace-scoped named machines reachable via
-		// polar-agent; see doc/host-module-design.md). Phase 0
+		// polar-agent; see github.com/networkextension/polar-hosts doc/host-module-design.md). Phase 0
 		// landed CRUD + enrollment; skill enable/start lands in P1+.
 		// Full block skipped when POLAR_HOSTS_REMOTE=true; nginx routes
 		// /api/hosts/*, /api/host-skills, /api/console/layouts to

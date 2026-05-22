@@ -8,7 +8,7 @@
 - `refresh_token`（30 天，`HttpOnly; Secure; SameSite=Strict; Path=/api/token`）—— 仅在 `POST /api/token/refresh` 消费
 
 第三方客户端也可以把 access token 放进 `Authorization: Bearer <tok>`。
-设计细节见 [doc/auth-refresh.md](./auth-refresh.md)。
+设计细节见 [doc/auth/auth-refresh.md](../auth/auth-refresh.md)。
 
 ## 通用请求头
 
@@ -638,7 +638,7 @@
 
 说明：
 
-- 更完整的 Profile 设计说明见 `doc/profile.md`
+- 更完整的 Profile 设计说明见 `doc/social/profile.md`
 - Profile 页面地址：
   - `/profile.html`
   - `/profile.html?user_id=<targetUserId>`
@@ -1549,7 +1549,7 @@ curl -X POST http://localhost:3000/api/posts \
 说明：
 
 - 零工任务复用帖子系统，任务帖通过 `post_type = "task"` 区分。
-- 更完整的设计说明见 `doc/tasks.md`。
+- 更完整的设计说明见 `doc/_attic/tasks.md`。
 
 ### 发布任务帖
 

@@ -1,7 +1,7 @@
 // Package skills defines the contract for polar-agent's
 // dynamically-enabled capabilities (coder, shell, proxy, wireguard,
-// kdp, …). See doc/host-module-design.md for the design
-// rationale; doc/host-module-dev.md for the phase plan.
+// kdp, …). See github.com/networkextension/polar-hosts doc/host-module-design.md for the design
+// rationale; github.com/networkextension/polar-hosts doc/host-module-dev.md for the phase plan.
 //
 // Phase 0 (this file) ships only the Skill interface + an in-memory
 // Registry. No real skill implementations register here yet. The

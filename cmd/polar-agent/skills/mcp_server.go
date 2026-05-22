@@ -1,8 +1,8 @@
 package skills
 
 // MCP-server skill (Host module P3, P0a slice — protocol scaffold +
-// built-in echo tool). See doc/mcp-skill-design.md (the "why") and
-// doc/mcp-skill-dev.md (the phase plan).
+// built-in echo tool). See doc/agent/mcp-skill-design.md (the "why") and
+// doc/agent/mcp-skill-dev.md (the phase plan).
 //
 // Wire shape: byte-stream skill, same as shell — operator-side stdin
 // is line-delimited JSON-RPC 2.0 (per MCP spec); EventStdout emits

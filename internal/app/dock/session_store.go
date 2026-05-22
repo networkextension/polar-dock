@@ -15,7 +15,7 @@ import (
 // independent so an access token cannot mint refreshes and vice
 // versa. A family_id links every access/refresh a single login
 // chain issues, allowing replay-driven family revocation. The design
-// is spec'd in doc/auth-refresh.md.
+// is spec'd in doc/auth/auth-refresh.md.
 
 func (s *Server) accessKey(token string) string {
 	prefix := DefaultRedisPrefix

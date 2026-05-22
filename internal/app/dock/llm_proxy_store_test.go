@@ -7,7 +7,7 @@ import (
 
 // Pure-logic tests for llm_proxy_store helpers. End-to-end DB
 // + HTTP integration is covered by the manual smoke described in
-// the P0 PR (see doc/llm-proxy-design.md §8).
+// the P0 PR (see doc/llm/llm-proxy-design.md §8).
 
 func TestNewLLMProxyTokenPlaintext(t *testing.T) {
 	seen := map[string]bool{}
