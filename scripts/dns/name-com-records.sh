@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# Create / update DNS A records via name.com API v4.
+#
+# Used to bootstrap the per-plugin subdomains under 4950.store. Default
+# behavior: create one A record per plugin subdomain (project / expense /
+# latch / hosts / iosdist / library / video / packtunnel / wg) pointing
+# at the .57 public IP. Idempotent — skips records that already exist
+# with the right value; updates if the value differs.
+#
+# Auth via env (never on the command line, never logged):
+#   NAMECOM_USER   name.com account login (the username you SSH into
+#                  the panel with, NOT an email).
+#   NAMECOM_TOKEN  API token from https://www.name.com/account/settings/api
+#
+# Usage:
+#   NAMECOM_USER=... NAMECOM_TOKEN=... ./name-com-records.sh
+#       Bulk-create 9 plugin subdomains -> $TARGET_IP.
+#
+#   NAMECOM_USER=... NAMECOM_TOKEN=... ./name-com-records.sh --wildcard
+#       Instead of 9 records, create one '*' record (wildcard A record).
+#
+#   NAMECOM_USER=... NAMECOM_TOKEN=... ./name-com-records.sh --dry-run
+#       Print what would change without calling the mutating endpoints.
+#
+#   NAMECOM_USER=... NAMECOM_TOKEN=... ./name-com-records.sh --list
+#       Read-only: dump existing A/CNAME records for the domain.
+#
+# Override the domain / IP via env:
+#   DOMAIN=4950.store TARGET_IP=58.37.118.182 ./name-com-records.sh
+
+set -euo pipefail
+
+DOMAIN="${DOMAIN:-4950.store}"
+TARGET_IP="${TARGET_IP:-58.37.118.182}"
+TTL="${TTL:-300}"
+API="https://api.name.com/v4/domains/${DOMAIN}/records"
+
+SUBDOMAINS=(project expense latch hosts iosdist library video packtunnel wg)
+
+MODE="bulk"
+DRY_RUN=0
+for arg in "$@"; do
+    case "$arg" in
+        --wildcard) MODE="wildcard" ;;
+        --dry-run)  DRY_RUN=1 ;;
+        --list)     MODE="list" ;;
+        -h|--help)
+            sed -n '2,30p' "$0"
+            exit 0
+            ;;
+        *)
+            echo "unknown arg: $arg" >&2
+            exit 64
+            ;;
+    esac
+done
+
+: "${NAMECOM_USER:?NAMECOM_USER not set — your name.com account login}"
+: "${NAMECOM_TOKEN:?NAMECOM_TOKEN not set — see https://www.name.com/account/settings/api}"
+
+curl_api() {
+    # Quiet, fail-on-http-error, basic auth via env (-u "$U:$T" stays out
+    # of the process list because curl reads creds via the -u flag value
+    # which it does NOT echo). Token + user are NOT included in the
+    # generated request log printed by --verbose.
+    curl -fsS -u "${NAMECOM_USER}:${NAMECOM_TOKEN}" \
+         -H "Content-Type: application/json" \
+         "$@"
+}
+
+list_records() {
+    # name.com paginates with ?perPage=N and nextPage. 1000 is plenty
+    # for a personal domain.
+    curl_api "${API}?perPage=1000"
+}
+
+# JSON parsing: prefer jq when present (cleaner); fall back to python3
+# which ships with macOS by default. python3 is plenty for this volume.
+parse_record() {
+    # stdin: full /records JSON
+    # args: host_to_match  type_to_match (e.g. "expense" "A" or "*" "A")
+    # output: tab-separated <id>\t<answer>  for each match. Empty if none.
+    local host="$1" rtype="$2"
+    if command -v jq >/dev/null 2>&1; then
+        jq -r --arg host "$host" --arg type "$rtype" \
+            '.records[]? | select((.host // "") == $host) | select(.type == $type) | "\(.id)\t\(.answer)"'
+    else
+        python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+host = sys.argv[1]
+rtype = sys.argv[2]
+for r in data.get('records', []):
+    if r.get('host', '') == host and r.get('type') == rtype:
+        print(f\"{r['id']}\t{r['answer']}\")
+" "$host" "$rtype"
+    fi
+}
+
+create_record() {
+    local host="$1" rtype="$2" answer="$3"
+    local label="${host:+${host}.}${DOMAIN}"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo "[dry-run] create ${rtype} ${label} -> ${answer}"
+        return 0
+    fi
+    local body
+    body=$(printf '{"host":"%s","type":"%s","answer":"%s","ttl":%d}' "$host" "$rtype" "$answer" "$TTL")
+    curl_api -X POST -d "$body" "$API" >/dev/null
+    echo "created ${rtype} ${label} -> ${answer}"
+}
+
+update_record() {
+    local id="$1" host="$2" rtype="$3" answer="$4"
+    local label="${host:+${host}.}${DOMAIN}"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo "[dry-run] update ${rtype} ${label} (id=${id}) -> ${answer}"
+        return 0
+    fi
+    local body
+    body=$(printf '{"host":"%s","type":"%s","answer":"%s","ttl":%d}' "$host" "$rtype" "$answer" "$TTL")
+    curl_api -X PUT -d "$body" "${API}/${id}" >/dev/null
+    echo "updated ${rtype} ${label} (id=${id}) -> ${answer}"
+}
+
+ensure_record() {
+    local host="$1" answer="$2"
+    local label="${host:+${host}.}${DOMAIN}"
+    local existing
+    existing=$(echo "$ALL_RECORDS" | parse_record "$host" "A")
+    if [ -z "$existing" ]; then
+        create_record "$host" "A" "$answer"
+        return 0
+    fi
+    local id current
+    id=$(echo "$existing" | awk -F '\t' '{print $1; exit}')
+    current=$(echo "$existing" | awk -F '\t' '{print $2; exit}')
+    if [ "$current" = "$answer" ]; then
+        echo "ok       A ${label} already -> ${answer}"
+    else
+        update_record "$id" "$host" "A" "$answer"
+    fi
+}
+
+# Single fetch of the record set, reused across ensure_record calls so we
+# don't burn the API budget with N read calls.
+ALL_RECORDS=$(list_records)
+
+case "$MODE" in
+    list)
+        echo "${ALL_RECORDS}" | (
+            if command -v jq >/dev/null 2>&1; then
+                jq -r '.records[]? | "\(.type)\t\(.host // "@")\t\(.answer)\t(ttl=\(.ttl))"'
+            else
+                python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for r in d.get('records', []):
+    print(f\"{r.get('type','?')}\t{r.get('host') or '@'}\t{r.get('answer','')}\t(ttl={r.get('ttl','?')})\")
+"
+            fi
+        )
+        ;;
+    wildcard)
+        ensure_record "*" "$TARGET_IP"
+        ;;
+    bulk)
+        for sub in "${SUBDOMAINS[@]}"; do
+            ensure_record "$sub" "$TARGET_IP"
+        done
+        ;;
+esac
