@@ -145,18 +145,6 @@ type Config struct {
 	// doc/grafana-integration.md.
 	MetricsToken string
 
-	// WGRemote — when true, dock does NOT register the wg-mac control
-	// plane routes (/v1/{register,peers,hub/peers,heartbeat,leave,
-	// token/refresh,install,bundle,dns} + /api/admin/wg-*). Operators
-	// flip this on after nginx is reconfigured to route those paths
-	// to wg-svc. Belt-and-braces — nginx routing is the actual cutover;
-	// this flag stops dock from accidentally serving stale data if
-	// nginx is bypassed (e.g. someone curls 127.0.0.1:8080 directly).
-	//
-	// Default false → dock keeps owning wg routes (Phase 1-D-1 shape).
-	// Set true → wg-svc owns them (Phase 1-D-2 cutover).
-	WGRemote bool
-
 	// ExpenseRemote — when true, dock skips registering expense routes
 	// (/api/expense-categories, /api/expenses, /api/expenses/from-image,
 	// /api/expenses/:id/image). Flip on after nginx is reconfigured to

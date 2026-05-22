@@ -121,10 +121,6 @@ type Server struct {
 	metricsRegistry *metrics
 	metricsToken    string
 
-	// wgRemote — when true, the wg routes are NOT registered. See
-	// Config.WGRemote.
-	wgRemote bool
-
 	// expenseRemote — when true, expense routes are skipped. See
 	// Config.ExpenseRemote.
 	expenseRemote bool
@@ -443,7 +439,6 @@ func NewServer(cfg Config) (*Server, error) {
 	server.metricsRegistry = newMetrics()
 	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
-	server.wgRemote = cfg.WGRemote
 	server.expenseRemote = cfg.ExpenseRemote
 	server.latchRemote = cfg.LatchRemote
 	server.packtunnelRemote = cfg.PacktunnelRemote
@@ -456,9 +451,8 @@ func NewServer(cfg Config) (*Server, error) {
 	server.llmProxyProber = newLLMProxyProber(server)
 	server.llmProxyProber.start()
 	server.llmProxyQuota = newLLMProxyQuotaTracker(server)
-	server.startWGStaleDeviceGC(server.backgroundCtx)
+	// wg background workers moved to github.com/networkextension/polar-wg
 	server.startIOSDistStatusSync(server.backgroundCtx)
-	server.startHeadscaleProxy()
 
 	server.router = gin.Default()
 	// Increase max upload size for video files (default gin limit is 32 MiB)
@@ -743,26 +737,9 @@ func (s *Server) registerRoutes() {
 	// leave + token/refresh validate the bearer device-token also
 	// in-handler. /v1/install + /v1/bundle are intentionally public.
 	//
-	// Phase 1-D-2: skipped entirely when POLAR_WG_REMOTE=true. Nginx
-	// is then expected to route these paths to wg-svc (cmd/wg-svc).
-	// See doc/arch/wg-svc-extraction.md.
-	if !s.wgRemote {
-		v1 := s.router.Group("/v1")
-		{
-			v1.POST("/register", s.handleWGRegister)
-			v1.GET("/peers", s.handleWGPeers)
-			v1.GET("/hub/peers", s.handleWGHubPeers)
-			v1.GET("/dns/:hub_slug", s.handleWGDNSZone)
-			v1.GET("/dns", s.handleWGDNSZone)
-			v1.POST("/heartbeat", s.handleWGHeartbeat)
-			v1.POST("/leave", s.handleWGLeave)
-			v1.POST("/token/refresh", s.handleWGTokenRefresh)
-			v1.GET("/install", s.handleWGInstallScript)
-			v1.GET("/install/:version", s.handleWGInstallScript)
-			v1.GET("/bundle", s.handleWGBundleLatest)
-			v1.GET("/bundle/:version", s.handleWGBundleDownload)
-		}
-	}
+	// wg routes (/v1/{register,peers,hub/peers,dns,heartbeat,leave,
+	// token/refresh,install,bundle}) live in github.com/networkextension/polar-wg.
+	// nginx on the deploy box routes /v1/* to that service directly.
 
 	api := s.router.Group("/api")
 	{
@@ -861,28 +838,10 @@ func (s *Server) registerRoutes() {
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.
 		api.POST("/proxy/v1/chat/completions", s.handleLLMProxyChatCompletions)
-		// wg-mac Phase 2 admin (see doc/JOIN_PROTOCOL.md). Public /v1/*
-		// counterparts are wired at the root router above.
-		//
-		// Phase 1-D-2: skipped when POLAR_WG_REMOTE=true so nginx can
-		// route these to wg-svc without ambiguity. Same flag gates the
-		// /v1/* block above.
-		if !s.wgRemote {
-		api.GET("/admin/wg-hubs", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubList)
-		api.PUT("/admin/wg-hubs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubUpdate)
-		api.DELETE("/admin/wg-hubs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubDelete)
-		api.POST("/admin/wg-hubs/:id/reset-bind", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGHubResetBind)
-		api.GET("/admin/wg-tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGTokenList)
-		api.POST("/admin/wg-tokens", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGTokenCreate)
-		api.DELETE("/admin/wg-tokens/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGTokenRevoke)
-		api.GET("/admin/wg-devices", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGDeviceList)
-		api.DELETE("/admin/wg-devices/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGDeviceRemove)
-		api.GET("/admin/wg-sites", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGSiteList)
-		api.GET("/admin/wg-bundles", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleList)
-		api.POST("/admin/wg-bundles/upload", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleUpload)
-		api.PUT("/admin/wg-bundles/:id/latest", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleSetLatest)
-		api.DELETE("/admin/wg-bundles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWGBundleDelete)
-		} // end wgRemote gate
+		// wg-mac admin endpoints (/api/admin/wg-{hubs,tokens,devices,
+		// sites,bundles}) moved to github.com/networkextension/polar-wg.
+		// nginx on the deploy box routes /api/admin/wg-* to wg-svc.
+
 		// Public system-info endpoint — intentionally no auth so
 		// deploy tooling can probe a fresh box. See sysinfo.go for
 		// what's exposed vs not.

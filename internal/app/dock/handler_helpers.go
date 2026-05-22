@@ -2,10 +2,28 @@ package dock
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// envIntDefault reads an int env var with a fallback. Originally lived
+// in wg_gc.go; relocated here when wg extracted to polar-wg.
+// Callers: expense_ocr, expense_extract_multimodal, iosdist_status_sync,
+// llm_billing_store, store.
+func envIntDefault(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
 
 func sanitizeFilename(input string) string {
 	if input == "" {
