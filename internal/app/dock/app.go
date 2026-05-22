@@ -133,6 +133,14 @@ type Server struct {
 	// Config.LatchRemote.
 	latchRemote bool
 
+	// Plugin cutover flags — see Config.<X>Remote.
+	packtunnelRemote bool
+	libraryRemote    bool
+	projectsRemote   bool
+	videoRemote      bool
+	hostsRemote      bool
+	iosdistRemote    bool
+
 	// LLM proxy in-memory rate limiter. Per-token sliding window;
 	// see llm_proxy_rate_limit.go.
 	llmProxyRateLimiter *llmProxyRateLimiter
@@ -438,6 +446,12 @@ func NewServer(cfg Config) (*Server, error) {
 	server.wgRemote = cfg.WGRemote
 	server.expenseRemote = cfg.ExpenseRemote
 	server.latchRemote = cfg.LatchRemote
+	server.packtunnelRemote = cfg.PacktunnelRemote
+	server.libraryRemote = cfg.LibraryRemote
+	server.projectsRemote = cfg.ProjectsRemote
+	server.videoRemote = cfg.VideoRemote
+	server.hostsRemote = cfg.HostsRemote
+	server.iosdistRemote = cfg.IOSDistRemote
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
 	server.llmProxyProber.start()
@@ -875,6 +889,10 @@ func (s *Server) registerRoutes() {
 		api.GET("/system/info", s.handleSystemInfo)
 		// Knowledge-base (P-library-0a) — see doc/jtag-skill-design.md
 		// §3.5. Global tables; writes admin-only, reads any-logged-in.
+		// Full block skipped when POLAR_LIBRARY_REMOTE=true; nginx then
+		// routes /api/library/* to polar-library-svc. rev_agent_handlers
+		// stays in dock (depends on PolarAgentAuthMiddleware).
+		if !s.libraryRemote {
 		api.GET("/library/devices", s.AuthMiddleware(), s.handleRevDeviceList)
 		api.GET("/library/devices/recent", s.AuthMiddleware(), s.handleRevDeviceRecent)
 		api.GET("/library/devices/:id", s.AuthMiddleware(), s.handleRevDeviceGet)
@@ -895,6 +913,10 @@ func (s *Server) registerRoutes() {
 		api.GET("/library/functions/:id", s.AuthMiddleware(), s.handleRevFunctionGet)
 		api.POST("/library/functions", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFunctionCreate)
 		api.DELETE("/library/functions/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFunctionDelete)
+		} // end libraryRemote gate
+		// packtunnel routes — skipped when POLAR_PACKTUNNEL_REMOTE=true;
+		// nginx routes /api/packtunnel/* + /api/proxy-configs* to polar-packtunnel-svc.
+		if !s.packtunnelRemote {
 		api.GET("/packtunnel/profiles", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileList)
 		api.GET("/packtunnel/profiles/active", s.AuthMiddleware(), s.handlePackTunnelActiveProfileGet)
 		api.GET("/packtunnel/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileGet)
@@ -913,6 +935,7 @@ func (s *Server) registerRoutes() {
 		api.PUT("/proxy-configs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileUpdate)
 		api.DELETE("/proxy-configs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileDelete)
 		api.POST("/proxy-configs/:id/activate", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileActivate)
+		} // end packtunnelRemote gate
 		// Latch — full block skipped when POLAR_LATCH_REMOTE=true; nginx
 		// then routes /api/latch/* to polar-latch-svc (see scripts/nginx
 		// in github.com/networkextension/polar-latch).
@@ -1039,7 +1062,9 @@ func (s *Server) registerRoutes() {
 		api.GET("/chats/:id/messages/:messageId/markdown", s.AuthMiddleware(), s.handleChatSharedMarkdown)
 		api.DELETE("/chats/:id/messages/:messageId", s.AuthMiddleware(), s.handleChatDelete)
 		// Video studio. Project + shot + asset CRUD, provider submit/retry,
-		// and final render. All endpoints require auth and verify ownership.
+		// and final render. Full block skipped when POLAR_VIDEO_REMOTE=true;
+		// nginx routes /api/video-* to polar-video-svc.
+		if !s.videoRemote {
 		api.GET("/video-llm-configs", s.AuthMiddleware(), s.handleVideoLLMConfigList)
 		api.GET("/video-projects", s.AuthMiddleware(), s.handleVideoProjectList)
 		api.POST("/video-projects", s.AuthMiddleware(), s.handleVideoProjectCreate)
@@ -1060,6 +1085,7 @@ func (s *Server) registerRoutes() {
 		api.POST("/video-projects/:id/render", s.AuthMiddleware(), s.handleVideoProjectRender)
 		api.GET("/video-projects/:id/download", s.AuthMiddleware(), s.handleVideoProjectDownload)
 		api.GET("/video-projects/:id/shots.zip", s.AuthMiddleware(), s.handleVideoProjectShotsZip)
+		} // end videoRemote gate
 		api.GET("/system-agent", s.AuthMiddleware(), s.handleSystemAgentStatus)
 		// polar-agent local CLI: long-lived bearer tokens + debug
 		// dispatch endpoint that proves the WS round-trip without
@@ -1088,6 +1114,11 @@ func (s *Server) registerRoutes() {
 		// hosts (workspace-scoped named machines reachable via
 		// polar-agent; see doc/host-module-design.md). Phase 0
 		// landed CRUD + enrollment; skill enable/start lands in P1+.
+		// Full block skipped when POLAR_HOSTS_REMOTE=true; nginx routes
+		// /api/hosts/*, /api/host-skills, /api/console/layouts to
+		// polar-hosts-svc. /ws/host/* (router-level, line 671/674) is
+		// NOT gated — WS still bridges through dock's agent_hub.
+		if !s.hostsRemote {
 		api.POST("/hosts/enroll", s.AuthMiddleware(), s.handleHostEnroll)
 		api.POST("/hosts/register", s.handleHostRegister) // bearer = enroll token, no session
 		// P1e: loopback-only co-located bootstrap. Opt-in via
@@ -1122,8 +1153,15 @@ func (s *Server) registerRoutes() {
 		api.POST("/console/layouts", s.AuthMiddleware(), s.handleConsoleLayoutCreate)
 		api.PATCH("/console/layouts/:layoutId", s.AuthMiddleware(), s.handleConsoleLayoutUpdate)
 		api.DELETE("/console/layouts/:layoutId", s.AuthMiddleware(), s.handleConsoleLayoutDelete)
+		} // end hostsRemote gate
 		// projects (workspace-scoped product container with AI
-		// requirement decomposition + plan generation).
+		// requirement decomposition + plan generation). Full block
+		// skipped when POLAR_PROJECTS_REMOTE=true; nginx routes
+		// /api/projects/* to polar-projects-svc. CAVEAT: the plugin
+		// repo (polar-projects) omitted /research/dispatch + /research/
+		// runs + /research/runs/:run_id/{start,result} from RegisterRoutes
+		// — those become 404 at cutover until plugin adds them.
+		if !s.projectsRemote {
 		api.GET("/projects", s.AuthMiddleware(), s.handleProjectList)
 		api.POST("/projects", s.AuthMiddleware(), s.handleProjectCreate)
 		api.GET("/projects/:id", s.AuthMiddleware(), s.handleProjectDetail)
@@ -1140,6 +1178,7 @@ func (s *Server) registerRoutes() {
 		api.POST("/projects/research/runs/:run_id/start", s.PolarAgentAuthMiddleware(), s.handleResearchRunStart)
 		api.POST("/projects/research/runs/:run_id/result", s.PolarAgentAuthMiddleware(), s.handleResearchRunResult)
 		api.POST("/projects/:id/tasks/bulk-status", s.AuthMiddleware(), s.handleProjectTaskBulkStatus)
+		} // end projectsRemote gate
 		// teams (collaboration workspaces). T2 = CRUD + read-only members
 		// list. T3 = invitations. T5 = RequireTeamRole middleware
 		// chained on team-scoped routes (replaces inline role checks).
@@ -1170,7 +1209,18 @@ func (s *Server) registerRoutes() {
 		api.GET("/users/me/invitations", s.AuthMiddleware(), s.handleInvitationInbox)
 		api.GET("/users/me/invitations/count", s.AuthMiddleware(), s.handleInvitationInboxCount)
 		// iOS distribution module (M1 — owner-scoped CRUD + IPA upload + OTA token).
-		// Signing pipeline lands in M2, see DEV_PLAN.md.
+		// Signing pipeline lands in M2, see DEV_PLAN.md. Main block skipped
+		// when POLAR_IOSDIST_REMOTE=true; nginx routes /api/iosdist/apps,
+		// /api/iosdist/certificates, /api/iosdist/profiles, /api/iosdist/sign-tasks,
+		// /api/iosdist/asc/* to polar-iosdist-svc. NOT gated by this flag:
+		// - /api/iosdist/agent/* + /api/iosdist/asc/{bundle-ids,apps} (lines
+		//   784-788) — iosdist_agent_handlers stays in dock (depends on
+		//   PolarAgentAuthMiddleware)
+		// - /iosdist/install/:token, /iosdist/manifest/:token, /iosdist/share/*,
+		//   /iosdist/plaza (lines 716-724, router-level) — public OTA install
+		//   pages. CAVEAT: these depend on iosdist_crypto.go which moved to
+		//   plugin; will need separate analysis before iosdist cutover.
+		if !s.iosdistRemote {
 		api.GET("/iosdist/apps", s.AuthMiddleware(), s.handleIOSAppList)
 		api.POST("/iosdist/apps", s.AuthMiddleware(), s.handleIOSAppCreate)
 		api.GET("/iosdist/apps/:id", s.AuthMiddleware(), s.handleIOSAppDetail)
@@ -1205,6 +1255,7 @@ func (s *Server) registerRoutes() {
 		// default 900s); POST forces an immediate refresh.
 		api.GET("/iosdist/apps/:id/status", s.AuthMiddleware(), s.handleIOSAppStatusGet)
 		api.POST("/iosdist/apps/:id/status/sync", s.AuthMiddleware(), s.handleIOSAppStatusSync)
+		} // end iosdistRemote gate
 
 		// expense (家庭账本) — full block skipped when POLAR_EXPENSE_REMOTE=true;
 		// nginx then routes /api/expense* to polar-expense-svc (see

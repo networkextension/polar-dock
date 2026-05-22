@@ -123,6 +123,17 @@ func main() {
 		// plugin service (see github.com/networkextension/polar-{expense,latch}).
 		ExpenseRemote: strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_EXPENSE_REMOTE")), "true"),
 		LatchRemote:   strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_LATCH_REMOTE")), "true"),
+
+		// Bulk cutover flags for the rest of the extracted plugins. Same
+		// pattern: env unset / "" / not-"true" → flag false → dock owns
+		// the routes. Flip "true" + reload dock + install nginx snippet
+		// from the corresponding polar-<svc> repo to cut over.
+		PacktunnelRemote: strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_PACKTUNNEL_REMOTE")), "true"),
+		LibraryRemote:    strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_LIBRARY_REMOTE")), "true"),
+		ProjectsRemote:   strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_PROJECTS_REMOTE")), "true"),
+		VideoRemote:      strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_VIDEO_REMOTE")), "true"),
+		HostsRemote:      strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_HOSTS_REMOTE")), "true"),
+		IOSDistRemote:    strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_IOSDIST_REMOTE")), "true"),
 	}
 
 	server, err := dock.NewServer(cfg)
