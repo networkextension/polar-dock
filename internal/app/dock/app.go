@@ -875,15 +875,10 @@ func (s *Server) registerRoutes() {
 		// continue to use dock's agent_hub.
 		//
 		// projects CRUD + decompose + plan + task lifecycle moved to
-		// github.com/networkextension/polar-projects. The three routes
-		// below stay in dock because their handlers depend on dock-only
-		// services (system-agent LLM resolution + agent_hub for research
-		// dispatch). Sharpen/retrospect handlers live in
-		// system_agent_handlers.go + task_retrospect.go; research handlers
-		// in research_handlers.go.
-		api.POST("/projects/:id/tasks/:task_id/sharpen", s.AuthMiddleware(), s.handleProjectTaskSharpen)
-		api.GET("/projects/:id/tasks/:task_id/retrospect", s.AuthMiddleware(), s.handleProjectTaskRetrospectGet)
-		api.POST("/projects/:id/tasks/:task_id/retrospect", s.AuthMiddleware(), s.handleProjectTaskRetrospectGenerate)
+		// github.com/networkextension/polar-projects. Sharpen + retrospect
+		// stay in dock (registered above near the chat block) because
+		// their handlers need system_agent LLM resolution. The 4 research
+		// routes below stay because they bridge through agent_hub.
 		api.POST("/projects/:id/tasks/:task_id/research/dispatch", s.AuthMiddleware(), s.handleResearchDispatch)
 		api.GET("/projects/:id/research/runs", s.AuthMiddleware(), s.handleResearchRunsList)
 		api.POST("/projects/research/runs/:run_id/start", s.PolarAgentAuthMiddleware(), s.handleResearchRunStart)
