@@ -3,8 +3,29 @@
 Snapshot of where the Polar- split-out lives on `.57` today + the path
 forward per plugin. Companion to [decision.md](decision.md),
 [internal-api-v1.md](internal-api-v1.md),
-[database-ownership.md](database-ownership.md), and
-[wg-svc-extraction.md](wg-svc-extraction.md).
+[database-ownership.md](database-ownership.md),
+[open-platform.md](open-platform.md),
+[auth-and-tokens.md](auth-and-tokens.md),
+and [wg-svc-extraction.md](wg-svc-extraction.md).
+
+## Plugin source-of-truth: separate private repos (extracted 2026-05-22)
+
+All plugin code lives in standalone private GitHub repos under `networkextension/`:
+
+| Plugin | Repo | Status |
+|---|---|---|
+| (SDK) | https://github.com/networkextension/polar-sdk | v0.1.0 tagged |
+| wg | https://github.com/networkextension/polar-wg | build green |
+| packtunnel | https://github.com/networkextension/polar-packtunnel | build green |
+| library | https://github.com/networkextension/polar-library | build green + tests |
+| projects | https://github.com/networkextension/polar-projects | build green, 12 stubs |
+| video | https://github.com/networkextension/polar-video | build green, 4 stubs |
+| hosts | https://github.com/networkextension/polar-hosts | build green + tests, 18 stubs |
+| iosdist | https://github.com/networkextension/polar-iosdist | build green, 5 stubs |
+
+Each plugin repo has its own `cmd/<svc>-svc/`, `scripts/{launchd,nginx,migrate}/`, `ui/`, and depends on `github.com/networkextension/polar-sdk v0.1.0`.
+
+This Polar dock repo (`networkextension/Polar`) is the **identity + LLM proxy + collaboration core** — no business-plugin code here anymore.
 
 ## What's deployed
 
