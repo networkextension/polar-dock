@@ -160,18 +160,15 @@ type Config struct {
 	LatchRemote bool
 
 	// PacktunnelRemote, LibraryRemote, ProjectsRemote, VideoRemote,
-	// HostsRemote, IOSDistRemote — same cutover-flag pattern. When true
-	// dock skips the corresponding plugin's main contiguous route block;
-	// nginx routes to the plugin svc instead. See open-platform.md +
+	// HostsRemote — same cutover-flag pattern. When true dock skips
+	// the corresponding plugin's main contiguous route block; nginx
+	// routes to the plugin svc instead. See open-platform.md +
 	// plugin-deployment-state.md for the per-plugin range owned by each
 	// flag — flags do NOT gate routes that intentionally stay in dock
-	// (agent_handlers for iosdist, sharpen/retrospect/research for
-	// projects, /ws/host/* for hosts, /iosdist/install + share for
-	// iosdist public install pages).
+	// (sharpen/retrospect/research for projects, /ws/host/* for hosts).
 	PacktunnelRemote bool
 	LibraryRemote    bool
 	ProjectsRemote   bool
 	VideoRemote      bool
 	HostsRemote      bool
-	IOSDistRemote    bool
 }

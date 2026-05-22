@@ -127,7 +127,6 @@ func main() {
 		ProjectsRemote:   strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_PROJECTS_REMOTE")), "true"),
 		VideoRemote:      strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_VIDEO_REMOTE")), "true"),
 		HostsRemote:      strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_HOSTS_REMOTE")), "true"),
-		IOSDistRemote:    strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_IOSDIST_REMOTE")), "true"),
 	}
 
 	server, err := dock.NewServer(cfg)
