@@ -58,26 +58,38 @@ in `plugin_modules`, heartbeating to dock — but **nginx does not
 route traffic to them yet**. They serve only `/healthz` + `/metrics`;
 real `/api/<plugin>/*` requests still hit dock.
 
-## Per-plugin status
+## Per-plugin status (2026-05-23, post H1+H7+H8+H9)
 
-| svc | port | plugin_modules row | nginx routed? | dock-side handlers? | polar_<svc> DB |
+All 9 plugins now run as standalone services on .57, routed through
+the consolidated `polar-plugins.conf` nginx snippet. Each plugin owns
+its `polar_<svc>` Postgres database — no more dual-write back to
+ideamesh. Cutover flags (`POLAR_<X>_REMOTE`) have been removed from
+dock; the route deletions in the H-series cleanup PRs are the only
+thing pointing /api/<svc> at the right place.
+
+| svc | port | plugin_modules | nginx route | dock-side handlers | cleanup PR |
 |---|---|---|---|---|---|
-| wg | 8090 | ✓ phase1d2 | **✓ cutover** (PR #283) | removed via flag (`POLAR_WG_REMOTE=true`) | 9 rows, source-of-truth |
-| iosdist | 8091 | ✓ phase2-skel | ✗ (skeleton, will 404) | still serving, source-of-truth | 24 rows, stale snapshot |
-| video | 8092 | ✓ phase2-skel | ✗ | still serving, source-of-truth | 17 rows, stale snapshot |
-| packtunnel | 8093 | ✓ phase2-skel | ✗ | still serving, source-of-truth | 2 rows, stale snapshot |
-| library | 8094 | ✓ phase2-skel | ✗ | still serving, source-of-truth | 0 rows (source empty) |
-| hosts | 8095 | ✓ phase2-skel | ✗ | still serving, source-of-truth | 86 rows, stale snapshot |
-| projects | 8096 | ✓ phase2-skel | ✗ | still serving, source-of-truth | 182 rows, stale snapshot |
+| wg | 8090 | ✓ | ✓ live | removed | PR #281 H1 |
+| iosdist | 8091 | ✓ | ✓ live (agent carve-out stays in dock) | removed except `/api/iosdist/agent/*` | PR #304 H7 |
+| video | 8092 | ✓ | ✓ live | removed | PR #305 H2-H8 bulk |
+| packtunnel | 8093 | ✓ | ✓ live | removed | PR #305 |
+| library | 8094 | ✓ | ✓ live (`/api/agent/library/*` stays in dock) | removed except agent path | PR #305 |
+| hosts | 8095 | ✓ | ✓ live (`/ws/host/*` + sharpen-like stays in dock) | removed except WS + supervisors + creds store | PR #308 H9 |
+| projects | 8096 | ✓ | ✓ live (sharpen/retrospect/research stay in dock) | removed except 7 system-agent + research routes | PR #307 H8 |
+| expense | 8097 | ✓ | ✓ live | n/a (was extracted before any dock-side existed in main) | — |
+| latch | 8098 | ✓ | ✓ live | n/a | — |
 
-"stale snapshot" = polar_<svc> got a one-time `--apply` copy of
-ideamesh data; dock keeps writing to ideamesh until the plugin's
-cutover happens. Re-run `scripts/migrate/<svc>-data.sh --apply` just
-before the per-plugin cutover to refresh.
+Carve-outs that remain in dock (and have explicit regex blocks in
+`polar-plugins.conf` so nginx routes them to :8080):
+- `/api/iosdist/agent/*` — PolarAgentAuthMiddleware path
+- `/api/projects/[^/]+/tasks/[^/]+/(sharpen|retrospect|research)`
+- `/api/projects/[^/]+/research/runs`
+- `/api/projects/research/runs/*`
+- `/ws/host/:id/{shell,vnc}/:run_id` (router-level, no /api prefix)
 
 ## launchd state
 
-All 7 plugin services run under launchd (`~/Library/LaunchAgents/polar.<svc>-svc.plist`).
+All 9 plugin services run under launchd (`~/Library/LaunchAgents/polar.<svc>-svc.plist`).
 RunAtLoad + KeepAlive (SuccessfulExit:false) + ThrottleInterval:10s
 mirror `polar.dock.plist`. Stop / start:
 
