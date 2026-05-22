@@ -22,10 +22,14 @@ All plugin code lives in standalone private GitHub repos under `networkextension
 | video | https://github.com/networkextension/polar-video | build green, 4 stubs |
 | hosts | https://github.com/networkextension/polar-hosts | build green + tests, 18 stubs |
 | iosdist | https://github.com/networkextension/polar-iosdist | build green, 5 stubs |
+| expense | https://github.com/networkextension/polar-expense | build green, 6 stubs; multimodal LLM via SDK; OCR-then-LLM sync path stubbed |
+| latch | https://github.com/networkextension/polar-latch | build green, 0 stubs (self-contained, no LLM coupling) |
 
 Each plugin repo has its own `cmd/<svc>-svc/`, `scripts/{launchd,nginx,migrate}/`, `ui/`, and depends on `github.com/networkextension/polar-sdk v0.1.0`.
 
 This Polar dock repo (`networkextension/Polar`) is the **identity + LLM proxy + collaboration core** — no business-plugin code here anymore.
+
+**Cutover status**: only `wg` has flipped to remote on .57 (`POLAR_WG_REMOTE=true`). The other 9 are deployed (heartbeating to dock) but nginx still routes `/api/<plugin>/*` to dock — per-plugin cutover PRs flip the flag + add the nginx snippet one at a time.
 
 ## What's deployed
 
