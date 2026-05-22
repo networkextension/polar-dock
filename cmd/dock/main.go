@@ -4,7 +4,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"strings"
 
 	"gin-auth-app/internal/app/dock"
 )
@@ -112,10 +111,10 @@ func main() {
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 
-		// Remaining cutover flags for plugins whose dock-side code is still
-		// alive. The other plugins were fully removed (see H-series cleanup
-		// PRs); their flags + dock-side routes no longer exist.
-		HostsRemote:    strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_HOSTS_REMOTE")), "true"),
+		// All plugin cutover flags were removed alongside their dock-side
+		// routes in the H-series cleanups; see open-platform.md for the
+		// history. Setting POLAR_*_REMOTE env vars no longer has any
+		// effect — the plugins are always remote now.
 	}
 
 	server, err := dock.NewServer(cfg)

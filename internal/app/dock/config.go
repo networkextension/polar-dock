@@ -145,9 +145,7 @@ type Config struct {
 	// doc/ops/grafana-integration.md.
 	MetricsToken string
 
-	// HostsRemote — cutover-flag pattern. When true dock skips the
-	// hosts main route block; nginx routes to polar-hosts-svc instead.
-	// The /ws/host/* WS bridge stays in dock regardless (uses
-	// agent_hub).
-	HostsRemote bool
+	// Plugin cutover flags fully removed in the H-series cleanups. All
+	// plugin REST surfaces are remote now; the previous POLAR_<X>_REMOTE
+	// env vars are unused and the corresponding fields are gone.
 }
