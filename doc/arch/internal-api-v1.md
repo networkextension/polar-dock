@@ -243,6 +243,122 @@ Plugin announces it is alive. Called **every 30 seconds** by each plugin process
 
 The first time a name appears, the plugin is auto-rejected unless an admin has provisioned the row in `plugin_modules` (with the HMAC key). This prevents an attacker who learns one key from creating new plugin identities.
 
+---
+
+## v1.1 additions (Phase 2 handler-migration prereqs)
+
+These 5 endpoints unblock the Phase 2 batch migration of packtunnel / library / video / projects / hosts / iosdist handlers. Same HMAC gate as the v1 surface.
+
+### 10. `GET /internal/v1/bot-users/:id`
+
+`:id` is the bot's `user_id` (the `"u_..."` string), NOT the bigserial PK. Used by projects and hosts handlers to render bot metadata + look up the bot's LLM binding.
+
+**Response 200:**
+```json
+{
+  "id": 7,
+  "bot_user_id": "u_helper",
+  "workspace_id": "t_root",
+  "owner_user_id": "u_kong",
+  "name": "Helper Bot",
+  "description": "…",
+  "llm_config_id": 42,
+  "bot_kind": "classic",
+  "preferred_tool": "kimi",
+  "host_skill_id": null,
+  "model_override": ""
+}
+```
+
+**404** if no such bot.
+
+### 11. `GET /internal/v1/chat-threads/:id`
+
+Used by projects' `project_research_runs` UI to dereference the `chat_thread_id` pointer for display.
+
+**Response 200:**
+```json
+{
+  "id":              42,
+  "user_low":        "u_kong",
+  "user_high":       "u_helper",
+  "last_message":    "First 200 chars of last message…",
+  "last_message_at": "2026-05-22T01:23:45Z",
+  "created_at":      "2026-05-01T00:00:00Z"
+}
+```
+
+`last_message` is server-truncated to ≤200 chars. Full thread history is read by the end-user's token via `/api/chat/*` (NOT via this internal endpoint).
+
+**404** if no such thread.
+
+### 12. `GET /internal/v1/agent-presence/:bot_id`
+
+`:bot_id` is the bot's `user_id`. Returns the live `agentHub` attach state. Plugins use this to decide whether to enqueue an agent task vs. surface "agent offline" in the UI.
+
+**Response 200 (agent attached):**
+```json
+{
+  "bot_user_id":  "u_helper",
+  "attached":     true,
+  "host_id":      "h_zen",
+  "tool":         "kimi",
+  "last_seen_at": "2026-05-22T01:23:45Z"
+}
+```
+
+**Response 200 (no agent attached):**
+```json
+{ "bot_user_id": "u_helper", "attached": false }
+```
+
+Always 200 — empty state is not an error. If dock's `agentHub` is uninitialized (e.g. during boot), behaves the same as "no agent".
+
+### 13. `POST /internal/v1/agent/dispatch`
+
+Asks dock to enqueue an `aiAgentTask` for an attached agent. Returns immediately; the LLM round-trip happens asynchronously inside dock's `aiAgent` loop, and the result lands on the chat_thread as a new message (caller poll-or-WS-watches it).
+
+**Request body:**
+```json
+{
+  "thread_id":         42,
+  "llm_thread_id":     7,        // optional
+  "user_id":           "u_kong",
+  "responder_user_id": "u_helper",
+  "responder_name":    "Helper Bot",  // optional
+  "content":           "Please review …"
+}
+```
+
+**Response 200:** `{ "queued": true }`.
+
+**503** if dock's `aiAgent` is nil (e.g. during shutdown).
+
+### 14. `POST /internal/v1/agent/llm-call-record`
+
+Cost-ledger insert for plugins that run their own LLM dispatch (anything not going through `AgentDispatch`). Keeps `/llm-billing.html` totals consistent across all caller paths.
+
+**Request body:**
+```json
+{
+  "workspace_id":       "t_root",
+  "llm_config_id":      42,
+  "model_requested":    "gpt-4",
+  "model_resolved":     "gpt-4-turbo",
+  "prompt_tokens":      120,
+  "completion_tokens":  60,
+  "total_tokens":       180,
+  "latency_ms":         2300,
+  "status_code":        200,
+  "error_text":         "",
+  "cost_override_usd":  null     // optional; dock estimates via llm_proxy_pricing if absent
+}
+```
+
+**Response 200:** `{ "recorded": true }`.
+
+Empty `workspace_id` or `llm_config_id<=0` is treated as a silent no-op (the dock helper has the same semantics; plugins don't need to pre-validate).
+
 ## Go client snippet
 
 A reference HMAC client a plugin author can copy. The full SDK (`github.com/<org>/polar-plugin-sdk-go`) ships in Phase 3 — for now, copy this into `internal/plugins/<name>/client.go`.

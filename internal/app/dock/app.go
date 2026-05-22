@@ -690,6 +690,14 @@ func (s *Server) registerRoutes() {
 		internal.POST("/llm/chat-completion", s.handleInternalLLMChatCompletion)
 		internal.POST("/notify", s.handleInternalNotify)
 		internal.POST("/plugin-registry/heartbeat", s.handleInternalHeartbeat)
+
+		// F1 — Phase 2 handler-migration prereqs. See
+		// doc/arch/internal-api-v1.md §v1.1.
+		internal.GET("/bot-users/:id", s.handleInternalBotUserGet)
+		internal.GET("/chat-threads/:id", s.handleInternalChatThreadGet)
+		internal.GET("/agent-presence/:bot_id", s.handleInternalAgentPresence)
+		internal.POST("/agent/dispatch", s.handleInternalAgentDispatch)
+		internal.POST("/agent/llm-call-record", s.handleInternalLLMCallRecord)
 	}
 
 	// iOS distribution OTA endpoints (no auth — gated by a short-lived,
