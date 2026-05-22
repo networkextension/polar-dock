@@ -236,34 +236,8 @@ func (s *Server) PolarAgentAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-func (s *Server) AgentAuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		token := extractBearerToken(c)
-		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
-			c.Abort()
-			return
-		}
-		node, tokenID, err := s.authenticateLatchAgentToken(token)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
-			c.Abort()
-			return
-		}
-		if node == nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid agent token"})
-			c.Abort()
-			return
-		}
-		now := time.Now()
-		if err := s.touchLatchAgentToken(tokenID, now); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
-			c.Abort()
-			return
-		}
-		c.Set("agent_node", node)
-		c.Set("agent_node_id", node.ID)
-		c.Set("agent_token_id", tokenID)
-		c.Next()
-	}
-}
+// AgentAuthMiddleware was the latch-specific bearer-token auth used
+// by /api/latch/agent/{register,heartbeat}. Latch moved to
+// github.com/networkextension/polar-latch; this middleware now has no
+// callers. polar-agent uses PolarAgentAuthMiddleware (above), which
+// remains in dock.

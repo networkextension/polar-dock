@@ -61,16 +61,8 @@ type Server struct {
 	apnsTokens          map[string]cachedAPNSToken
 	publicBaseURL       string
 	mailer              MailSender
-	// Video studio: provider client + bg context for submissions, in-process
-	// render queue for ffmpeg concat. Workers (poll + render) are spawned in
-	// NewServer and shut down via backgroundCtx cancellation.
-	videoProvider        *videoProviderClient
-	videoProviderCtx     context.Context
-	videoRenderQueue     chan int64
-	videoPollIntervalSec int
-	videoSeedanceBaseURL string
-	videoSeedanceModel   string
-	videoSeedanceAPIKey  string
+	// Video studio fields removed — video extracted to
+	// github.com/networkextension/polar-video.
 
 	// Platform-default LLM (Kimi). Seeded at startup if KIMI_API_KEY
 	// is set; users / workspaces can pick this row in the bot
@@ -121,20 +113,9 @@ type Server struct {
 	metricsRegistry *metrics
 	metricsToken    string
 
-	// expenseRemote — when true, expense routes are skipped. See
-	// Config.ExpenseRemote.
-	expenseRemote bool
-
-	// latchRemote — when true, latch routes are skipped. See
-	// Config.LatchRemote.
-	latchRemote bool
-
 	// Plugin cutover flags — see Config.<X>Remote.
-	packtunnelRemote bool
-	libraryRemote    bool
-	projectsRemote   bool
-	videoRemote      bool
-	hostsRemote      bool
+	projectsRemote bool
+	hostsRemote    bool
 
 	// LLM proxy in-memory rate limiter. Per-token sliding window;
 	// see llm_proxy_rate_limit.go.
@@ -415,35 +396,19 @@ func NewServer(cfg Config) (*Server, error) {
 		go server.aiAgent.run()
 	}
 
-	// Video studio wiring. The provider client is stateless — created here
-	// once so handlers and the poll worker share the same HTTP transport.
-	server.videoProvider = newVideoProviderClient()
-	server.videoProviderCtx = server.backgroundCtx
-	server.videoPollIntervalSec = cfg.VideoPollIntervalSeconds
-	server.videoSeedanceBaseURL = cfg.VideoSeedanceBaseURL
-	server.videoSeedanceModel = cfg.VideoSeedanceModel
-	server.videoSeedanceAPIKey = cfg.VideoSeedanceAPIKey
+	// Video studio + Seedance system-config moved to
+	// github.com/networkextension/polar-video.
 	server.kimiBaseURL = cfg.KimiBaseURL
 	server.kimiModel = cfg.KimiModel
 	server.kimiAPIKey = cfg.KimiAPIKey
-	if err := server.ensureSeedanceSystemConfig(); err != nil {
-		log.Printf("seed seedance system config failed: %v", err)
-	}
 	if err := server.ensureKimiPlatformConfig(); err != nil {
 		log.Printf("seed kimi platform config failed: %v", err)
 	}
-	server.startVideoRenderWorker(server.backgroundCtx)
-	go server.runVideoPollWorker(server.backgroundCtx)
 
 	server.metricsRegistry = newMetrics()
 	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
-	server.expenseRemote = cfg.ExpenseRemote
-	server.latchRemote = cfg.LatchRemote
-	server.packtunnelRemote = cfg.PacktunnelRemote
-	server.libraryRemote = cfg.LibraryRemote
 	server.projectsRemote = cfg.ProjectsRemote
-	server.videoRemote = cfg.VideoRemote
 	server.hostsRemote = cfg.HostsRemote
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
@@ -490,56 +455,8 @@ func (s *Server) Close() error {
 }
 
 // ensureSeedanceSystemConfig seeds an LLMConfig row with provider_kind =
-// 'video.seedance' on first boot when VIDEO_SEEDANCE_API_KEY is set, so the
-// operator can ship a working default without clicking through the UI form.
-// Idempotent: if a row already exists for the system user we leave it alone
-// (operators can edit it via the LLM-config form afterwards).
-//
-// Post T6: lives under the system user's personal team workspace so
-// the workspace_id NOT NULL constraint is satisfied. shared=TRUE +
-// is_platform=TRUE both true so any workspace can pick this row in
-// the video-config picker.
-func (s *Server) ensureSeedanceSystemConfig() error {
-	if s == nil {
-		return nil
-	}
-	apiKey := strings.TrimSpace(s.videoSeedanceAPIKey)
-	baseURL := strings.TrimSpace(s.videoSeedanceBaseURL)
-	model := strings.TrimSpace(s.videoSeedanceModel)
-	if apiKey == "" || baseURL == "" || model == "" {
-		return nil
-	}
-	var existingID int64
-	err := s.db.QueryRow(
-		`SELECT id FROM llm_configs WHERE owner_user_id = $1 AND provider_kind = $2 LIMIT 1`,
-		systemUserID, LLMConfigKindVideoSeedance,
-	).Scan(&existingID)
-	if err == nil && existingID > 0 {
-		return nil
-	}
-	workspaceID, err := s.systemWorkspaceID()
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	if _, err := s.db.Exec(
-		`INSERT INTO llm_configs (owner_user_id, workspace_id, share_id, shared, is_platform, name, base_url, model, api_key, system_prompt, provider_kind, extras, created_at, updated_at)
-		 VALUES ($1, $2, '', TRUE, TRUE, $3, $4, $5, $6, '', $7, $8::jsonb, $9, $9)`,
-		systemUserID,
-		workspaceID,
-		"Seedance · 默认",
-		baseURL,
-		model,
-		apiKey,
-		LLMConfigKindVideoSeedance,
-		`{"ratio":"9:16","duration":10,"generate_audio":true,"watermark":false}`,
-		now,
-	); err != nil {
-		return err
-	}
-	log.Printf("seeded seedance system config (model=%s)", model)
-	return nil
-}
+// ensureSeedanceSystemConfig moved to github.com/networkextension/polar-video
+// (polar-video now seeds its own Seedance llm_configs row at first boot).
 
 // ensureKimiPlatformConfig seeds the platform-default Kimi LLM
 // config. Once set, every workspace's bot picker / agent surfaces
@@ -835,96 +752,13 @@ func (s *Server) registerRoutes() {
 		// deploy tooling can probe a fresh box. See sysinfo.go for
 		// what's exposed vs not.
 		api.GET("/system/info", s.handleSystemInfo)
-		// Knowledge-base (P-library-0a) — see doc/agent/jtag-debug-skill-design.md
-		// §3.5. Global tables; writes admin-only, reads any-logged-in.
-		// Full block skipped when POLAR_LIBRARY_REMOTE=true; nginx then
-		// routes /api/library/* to polar-library-svc. rev_agent_handlers
+		// Knowledge-base (rev_devices/firmwares/functions) moved to
+		// github.com/networkextension/polar-library. rev_agent_handlers
 		// stays in dock (depends on PolarAgentAuthMiddleware).
-		if !s.libraryRemote {
-		api.GET("/library/devices", s.AuthMiddleware(), s.handleRevDeviceList)
-		api.GET("/library/devices/recent", s.AuthMiddleware(), s.handleRevDeviceRecent)
-		api.GET("/library/devices/:id", s.AuthMiddleware(), s.handleRevDeviceGet)
-		api.POST("/library/devices", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevDeviceUpsert)
-		api.DELETE("/library/devices/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevDeviceDelete)
-		api.GET("/library/firmwares", s.AuthMiddleware(), s.handleRevFirmwareList)
-		api.GET("/library/firmwares/matching", s.AuthMiddleware(), s.handleRevFirmwareMatching)
-		api.GET("/library/firmwares/:id", s.AuthMiddleware(), s.handleRevFirmwareGet)
-		api.POST("/library/firmwares", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFirmwareCreate)
-		api.POST("/library/firmwares/upload", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFirmwareUpload)
-		api.GET("/library/firmwares/:id/download", s.AuthMiddleware(), s.handleRevFirmwareDownload)
-		api.DELETE("/library/firmwares/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFirmwareDelete)
-		api.GET("/library/functions", s.AuthMiddleware(), s.handleRevFunctionList)
-		api.GET("/library/functions/lookup-by-address", s.AuthMiddleware(), s.handleRevFunctionLookupByAddress)
-		api.GET("/library/functions/lookup-by-symbol", s.AuthMiddleware(), s.handleRevFunctionLookupBySymbol)
-		api.GET("/library/functions/search", s.AuthMiddleware(), s.handleRevFunctionSearch)
-		api.GET("/library/functions/match-signature", s.AuthMiddleware(), s.handleRevFunctionMatchSignature)
-		api.GET("/library/functions/:id", s.AuthMiddleware(), s.handleRevFunctionGet)
-		api.POST("/library/functions", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFunctionCreate)
-		api.DELETE("/library/functions/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleRevFunctionDelete)
-		} // end libraryRemote gate
-		// packtunnel routes — skipped when POLAR_PACKTUNNEL_REMOTE=true;
-		// nginx routes /api/packtunnel/* + /api/proxy-configs* to polar-packtunnel-svc.
-		if !s.packtunnelRemote {
-		api.GET("/packtunnel/profiles", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileList)
-		api.GET("/packtunnel/profiles/active", s.AuthMiddleware(), s.handlePackTunnelActiveProfileGet)
-		api.GET("/packtunnel/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileGet)
-		api.POST("/packtunnel/profiles", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileCreate)
-		api.PUT("/packtunnel/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileUpdate)
-		api.DELETE("/packtunnel/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileDelete)
-		api.PUT("/packtunnel/profiles/:id/activate", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileActivate)
-		api.POST("/packtunnel/rules", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelRuleUpload)
-		api.GET("/packtunnel/rules", s.AuthMiddleware(), s.handlePackTunnelRuleDownload)
-		api.DELETE("/packtunnel/rules", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelRuleDelete)
-		// Legacy aliases for older clients that still use /proxy-configs paths.
-		api.GET("/proxy-configs", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileList)
-		api.GET("/proxy-configs/active", s.AuthMiddleware(), s.handlePackTunnelActiveProfileGet)
-		api.GET("/proxy-configs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileGet)
-		api.POST("/proxy-configs", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileCreate)
-		api.PUT("/proxy-configs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileUpdate)
-		api.DELETE("/proxy-configs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileDelete)
-		api.POST("/proxy-configs/:id/activate", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileActivate)
-		} // end packtunnelRemote gate
-		// Latch — full block skipped when POLAR_LATCH_REMOTE=true; nginx
-		// then routes /api/latch/* to polar-latch-svc (see scripts/nginx
-		// in github.com/networkextension/polar-latch).
-		if !s.latchRemote {
-		// Latch — proxies (admin)
-		api.GET("/latch/proxies", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchProxyList)
-		api.POST("/latch/proxies", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchProxyCreate)
-		api.GET("/latch/proxies/:group_id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchProxyGet)
-		api.PUT("/latch/proxies/:group_id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchProxyUpdate)
-		api.DELETE("/latch/proxies/:group_id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchProxyDelete)
-		api.GET("/latch/proxies/:group_id/versions", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchProxyVersions)
-		api.PUT("/latch/proxies/:group_id/rollback/:version", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchProxyRollback)
-		// Latch — rules (admin)
-		api.GET("/latch/rules", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleList)
-		api.POST("/latch/rules", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleCreate)
-		api.POST("/latch/rules/upload", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleCreateUpload)
-		api.GET("/latch/rules/:group_id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleGet)
-		api.GET("/latch/rules/:group_id/content", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleContent)
-		api.GET("/latch/rules/:group_id/versions", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleVersions)
-		api.PUT("/latch/rules/:group_id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleUpdate)
-		api.POST("/latch/rules/:group_id/upload", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleUpload)
-		api.DELETE("/latch/rules/:group_id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleDelete)
-		api.PUT("/latch/rules/:group_id/rollback/:version", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchRuleRollback)
-		// Latch — profiles (admin)
-		api.GET("/latch/admin/profiles", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchAdminProfileList)
-		api.POST("/latch/admin/profiles", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchAdminProfileCreate)
-		api.GET("/latch/admin/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchAdminProfileGet)
-		api.PUT("/latch/admin/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchAdminProfileUpdate)
-		api.DELETE("/latch/admin/profiles/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchAdminProfileDelete)
-		// Latch — service nodes (admin)
-		api.GET("/latch/admin/service-nodes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchServiceNodeList)
-		api.POST("/latch/admin/service-nodes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchServiceNodeCreate)
-		api.PUT("/latch/admin/service-nodes/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchServiceNodeUpdate)
-		api.DELETE("/latch/admin/service-nodes/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchServiceNodeDelete)
-		api.POST("/latch/admin/service-nodes/:id/agent-token", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchServiceNodeIssueAgentToken)
-		// Latch — lightweight agent runtime
-		api.POST("/latch/agent/register", s.AgentAuthMiddleware(), s.handleLatchAgentRegister)
-		api.POST("/latch/agent/heartbeat", s.AgentAuthMiddleware(), s.handleLatchAgentHeartbeat)
-		// Latch — profiles (user: enabled+shared)
-		api.GET("/latch/profiles", s.AuthMiddleware(), s.handleLatchProfileList)
-		} // end latchRemote gate
+		// packtunnel (+legacy /proxy-configs aliases) moved to
+		// github.com/networkextension/polar-packtunnel.
+		// Latch (proxies/rules/profiles/service-nodes/agent) moved to
+		// github.com/networkextension/polar-latch.
 		api.GET("/bots", s.AuthMiddleware(), s.handleBotUserList)
 		api.POST("/bots", s.AuthMiddleware(), s.handleBotUserCreate)
 		api.PUT("/bots/:id", s.AuthMiddleware(), s.handleBotUserUpdate)
@@ -1009,31 +843,8 @@ func (s *Server) registerRoutes() {
 		api.POST("/chats/:id/messages/:messageId/retry", s.AuthMiddleware(), s.handleChatRetry)
 		api.GET("/chats/:id/messages/:messageId/markdown", s.AuthMiddleware(), s.handleChatSharedMarkdown)
 		api.DELETE("/chats/:id/messages/:messageId", s.AuthMiddleware(), s.handleChatDelete)
-		// Video studio. Project + shot + asset CRUD, provider submit/retry,
-		// and final render. Full block skipped when POLAR_VIDEO_REMOTE=true;
-		// nginx routes /api/video-* to polar-video-svc.
-		if !s.videoRemote {
-		api.GET("/video-llm-configs", s.AuthMiddleware(), s.handleVideoLLMConfigList)
-		api.GET("/video-projects", s.AuthMiddleware(), s.handleVideoProjectList)
-		api.POST("/video-projects", s.AuthMiddleware(), s.handleVideoProjectCreate)
-		api.GET("/video-projects/:id", s.AuthMiddleware(), s.handleVideoProjectDetail)
-		api.PATCH("/video-projects/:id", s.AuthMiddleware(), s.handleVideoProjectUpdate)
-		api.DELETE("/video-projects/:id", s.AuthMiddleware(), s.handleVideoProjectDelete)
-		api.POST("/video-projects/:id/shots", s.AuthMiddleware(), s.handleVideoShotCreate)
-		api.PATCH("/video-projects/:id/shots/:shotId", s.AuthMiddleware(), s.handleVideoShotUpdate)
-		api.DELETE("/video-projects/:id/shots/:shotId", s.AuthMiddleware(), s.handleVideoShotDelete)
-		api.POST("/video-projects/:id/shots/:shotId/submit", s.AuthMiddleware(), s.handleVideoShotSubmit)
-		api.POST("/video-projects/:id/shots/:shotId/retry", s.AuthMiddleware(), s.handleVideoShotRetry)
-		api.POST("/video-projects/:id/shots/:shotId/duplicate", s.AuthMiddleware(), s.handleVideoShotDuplicate)
-		api.POST("/video-projects/:id/shots/:shotId/extract-frame", s.AuthMiddleware(), s.handleVideoShotExtractFrame)
-		api.POST("/video-projects/:id/submit-all", s.AuthMiddleware(), s.handleVideoProjectSubmitAll)
-		api.POST("/video-projects/:id/assets", s.AuthMiddleware(), s.handleVideoAssetUpload)
-		api.PATCH("/video-projects/:id/assets/:assetId", s.AuthMiddleware(), s.handleVideoAssetUpdate)
-		api.DELETE("/video-projects/:id/assets/:assetId", s.AuthMiddleware(), s.handleVideoAssetDelete)
-		api.POST("/video-projects/:id/render", s.AuthMiddleware(), s.handleVideoProjectRender)
-		api.GET("/video-projects/:id/download", s.AuthMiddleware(), s.handleVideoProjectDownload)
-		api.GET("/video-projects/:id/shots.zip", s.AuthMiddleware(), s.handleVideoProjectShotsZip)
-		} // end videoRemote gate
+		// Video studio (projects + shots + assets + render) moved to
+		// github.com/networkextension/polar-video.
 		api.GET("/system-agent", s.AuthMiddleware(), s.handleSystemAgentStatus)
 		// polar-agent local CLI: long-lived bearer tokens + debug
 		// dispatch endpoint that proves the WS round-trip without
@@ -1162,26 +973,8 @@ func (s *Server) registerRoutes() {
 		// stay in dock because they share PolarAgentAuthMiddleware with
 		// the agent_hub still living in dock core.
 
-		// expense (家庭账本) — full block skipped when POLAR_EXPENSE_REMOTE=true;
-		// nginx then routes /api/expense* to polar-expense-svc (see
-		// scripts/nginx in github.com/networkextension/polar-expense).
-		if !s.expenseRemote {
-		// expense L1 — manual CRUD over per-workspace expenses + categories.
-		// Every workspace member can read/write — no admin gate. L2 adds
-		// OCR/LLM extraction.
-		api.GET("/expense-categories", s.AuthMiddleware(), s.handleExpenseCategoryList)
-		api.POST("/expense-categories", s.AuthMiddleware(), s.handleExpenseCategoryCreate)
-		api.PUT("/expense-categories/:id", s.AuthMiddleware(), s.handleExpenseCategoryUpdate)
-		api.DELETE("/expense-categories/:id", s.AuthMiddleware(), s.handleExpenseCategoryDelete)
-		api.GET("/expenses", s.AuthMiddleware(), s.handleExpenseList)
-		api.POST("/expenses", s.AuthMiddleware(), s.handleExpenseCreate)
-		api.PUT("/expenses/:id", s.AuthMiddleware(), s.handleExpenseUpdate)
-		api.DELETE("/expenses/:id", s.AuthMiddleware(), s.handleExpenseDelete)
-		// L2: receipt upload — multipart image → Apple Vision OCR →
-		// LLM-structured draft (status=0). User confirms via PUT above.
-		api.POST("/expenses/from-image", s.AuthMiddleware(), s.handleExpenseFromImage)
-		api.GET("/expenses/:id/image", s.AuthMiddleware(), s.handleExpenseImageDownload)
-		} // end expenseRemote gate
+		// expense (家庭账本, L1 CRUD + L2 OCR/multimodal extraction) moved to
+		// github.com/networkextension/polar-expense.
 		api.GET("/admin/logs", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLogs)
 		api.GET("/admin/users", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserList)
 		api.GET("/admin/users/:id/login-history", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserLoginHistory)

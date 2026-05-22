@@ -145,30 +145,12 @@ type Config struct {
 	// doc/ops/grafana-integration.md.
 	MetricsToken string
 
-	// ExpenseRemote — when true, dock skips registering expense routes
-	// (/api/expense-categories, /api/expenses, /api/expenses/from-image,
-	// /api/expenses/:id/image). Flip on after nginx is reconfigured to
-	// route /api/expense* paths to polar-expense-svc. Default false →
-	// dock owns expense routes.
-	ExpenseRemote bool
-
-	// LatchRemote — when true, dock skips registering latch routes
-	// (/api/latch/proxies, /api/latch/rules, /api/latch/admin/*,
-	// /api/latch/agent/*, /api/latch/profiles). Flip on after nginx is
-	// reconfigured to route /api/latch/* to polar-latch-svc. Default
-	// false → dock owns latch routes.
-	LatchRemote bool
-
-	// PacktunnelRemote, LibraryRemote, ProjectsRemote, VideoRemote,
-	// HostsRemote — same cutover-flag pattern. When true dock skips
-	// the corresponding plugin's main contiguous route block; nginx
+	// ProjectsRemote, HostsRemote — cutover-flag pattern. When true dock
+	// skips the corresponding plugin's main contiguous route block; nginx
 	// routes to the plugin svc instead. See open-platform.md +
 	// plugin-deployment-state.md for the per-plugin range owned by each
 	// flag — flags do NOT gate routes that intentionally stay in dock
 	// (sharpen/retrospect/research for projects, /ws/host/* for hosts).
-	PacktunnelRemote bool
-	LibraryRemote    bool
-	ProjectsRemote   bool
-	VideoRemote      bool
-	HostsRemote      bool
+	ProjectsRemote bool
+	HostsRemote    bool
 }
