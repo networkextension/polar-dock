@@ -135,7 +135,6 @@ type Server struct {
 	projectsRemote   bool
 	videoRemote      bool
 	hostsRemote      bool
-	iosdistRemote    bool
 
 	// LLM proxy in-memory rate limiter. Per-token sliding window;
 	// see llm_proxy_rate_limit.go.
@@ -400,7 +399,7 @@ func NewServer(cfg Config) (*Server, error) {
 			}
 		}(recoverIDs)
 	}
-	go server.runIOSSignWorker(server.backgroundCtx)
+	// iosdist sign worker moved to github.com/networkextension/polar-iosdist.
 
 	// Bootstrap prompt template registry — inserts any newly-added
 	// slugs and refreshes the default_content column on every start.
@@ -446,13 +445,12 @@ func NewServer(cfg Config) (*Server, error) {
 	server.projectsRemote = cfg.ProjectsRemote
 	server.videoRemote = cfg.VideoRemote
 	server.hostsRemote = cfg.HostsRemote
-	server.iosdistRemote = cfg.IOSDistRemote
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
 	server.llmProxyProber.start()
 	server.llmProxyQuota = newLLMProxyQuotaTracker(server)
-	// wg background workers moved to github.com/networkextension/polar-wg
-	server.startIOSDistStatusSync(server.backgroundCtx)
+	// wg + iosdist background workers moved to their plugin repos
+	// (github.com/networkextension/polar-{wg,iosdist}).
 
 	server.router = gin.Default()
 	// Increase max upload size for video files (default gin limit is 32 MiB)
@@ -718,18 +716,9 @@ func (s *Server) registerRoutes() {
 		internal.POST("/agent/llm-call-record", s.handleInternalLLMCallRecord)
 	}
 
-	// iOS distribution OTA endpoints (no auth — gated by a short-lived,
-	// random install token bound to a single version). The manifest.plist
-	// must be served with content-type application/xml; see iosdist_handlers.go.
-	s.router.GET("/iosdist/install/:token", s.handleIOSInstallPage)
-	s.router.GET("/iosdist/manifest/:token", s.handleIOSInstallManifest)
-	// Public share page (App Store-style landing). Slug-keyed; visibility
-	// is gated server-side by iosdist_apps.is_public.
-	s.router.GET("/iosdist/share/:slug", s.handleIOSPublicShareHTML)
-	s.router.POST("/iosdist/share/:slug/install", s.handleIOSPublicShareInstall)
-	s.router.POST("/iosdist/share/:slug/test-request", s.handleIOSPublicShareTestRequest)
-	// Public discovery / "App 广场" — lists all apps that opted in to is_public.
-	s.router.GET("/iosdist/plaza", s.handleIOSPublicPlaza)
+	// iOS distribution OTA endpoints + public share/plaza/install pages
+	// moved to github.com/networkextension/polar-iosdist. nginx routes
+	// /iosdist/{install,manifest,share,plaza}* to polar-iosdist-svc.
 
 	// wg-mac join control plane (see github.com/networkextension/polar-wg doc/JOIN_PROTOCOL.md). All /v1/*
 	// routes are unauthenticated at the gin layer; /v1/register
@@ -775,8 +764,8 @@ func (s *Server) registerRoutes() {
 		api.POST("/iosdist/agent/builds/init", s.PolarAgentAuthMiddleware(), s.handleIOSAgentBuildInit)
 		api.POST("/iosdist/agent/builds/:id/start", s.PolarAgentAuthMiddleware(), s.handleIOSAgentBuildStart)
 		api.POST("/iosdist/agent/builds/:id/result", s.PolarAgentAuthMiddleware(), s.handleIOSAgentBuildResult)
-		api.POST("/iosdist/asc/bundle-ids", s.AuthMiddleware(), s.handleIOSASCBundleIDCreate)
-		api.POST("/iosdist/asc/apps", s.AuthMiddleware(), s.handleIOSASCAppCreate)
+		// /api/iosdist/asc/bundle-ids + /asc/apps moved to
+		// github.com/networkextension/polar-iosdist.
 		api.GET("/prompts", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateList)
 		api.GET("/prompts/:slug", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateGet)
 		api.PUT("/prompts/:slug", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateUpdate)
@@ -1167,54 +1156,11 @@ func (s *Server) registerRoutes() {
 		api.POST("/invitations/:token/decline", s.handleInvitationDecline)
 		api.GET("/users/me/invitations", s.AuthMiddleware(), s.handleInvitationInbox)
 		api.GET("/users/me/invitations/count", s.AuthMiddleware(), s.handleInvitationInboxCount)
-		// iOS distribution module (M1 — owner-scoped CRUD + IPA upload + OTA token).
-		// Signing pipeline lands in M2, see DEV_PLAN.md. Main block skipped
-		// when POLAR_IOSDIST_REMOTE=true; nginx routes /api/iosdist/apps,
-		// /api/iosdist/certificates, /api/iosdist/profiles, /api/iosdist/sign-tasks,
-		// /api/iosdist/asc/* to polar-iosdist-svc. NOT gated by this flag:
-		// - /api/iosdist/agent/* + /api/iosdist/asc/{bundle-ids,apps} (lines
-		//   784-788) — iosdist_agent_handlers stays in dock (depends on
-		//   PolarAgentAuthMiddleware)
-		// - /iosdist/install/:token, /iosdist/manifest/:token, /iosdist/share/*,
-		//   /iosdist/plaza (lines 716-724, router-level) — public OTA install
-		//   pages. CAVEAT: these depend on iosdist_crypto.go which moved to
-		//   plugin; will need separate analysis before iosdist cutover.
-		if !s.iosdistRemote {
-		api.GET("/iosdist/apps", s.AuthMiddleware(), s.handleIOSAppList)
-		api.POST("/iosdist/apps", s.AuthMiddleware(), s.handleIOSAppCreate)
-		api.GET("/iosdist/apps/:id", s.AuthMiddleware(), s.handleIOSAppDetail)
-		api.DELETE("/iosdist/apps/:id", s.AuthMiddleware(), s.handleIOSAppDelete)
-		api.POST("/iosdist/apps/:id/icon", s.AuthMiddleware(), s.handleIOSAppIconUpload)
-		api.PUT("/iosdist/apps/:id/testflight", s.AuthMiddleware(), s.handleIOSAppTestFlightUpdate)
-		api.PUT("/iosdist/apps/:id/visibility", s.AuthMiddleware(), s.handleIOSAppVisibilityUpdate)
-		api.GET("/iosdist/apps/:id/test-requests", s.AuthMiddleware(), s.handleIOSAppTestRequestList)
-		api.POST("/iosdist/apps/:id/versions", s.AuthMiddleware(), s.handleIOSVersionUpload)
-		api.DELETE("/iosdist/apps/:id/versions/:versionId", s.AuthMiddleware(), s.handleIOSVersionDelete)
-		api.POST("/iosdist/apps/:id/versions/:versionId/install-token", s.AuthMiddleware(), s.handleIOSVersionInstallToken)
-		api.POST("/iosdist/apps/:id/versions/:versionId/sign", s.AuthMiddleware(), s.handleIOSVersionSign)
-		api.GET("/iosdist/apps/:id/sign-tasks", s.AuthMiddleware(), s.handleIOSAppSignTaskList)
-		api.GET("/iosdist/sign-tasks/:id", s.AuthMiddleware(), s.handleIOSSignTaskDetail)
-		api.GET("/iosdist/certificates", s.AuthMiddleware(), s.handleIOSCertificateList)
-		api.POST("/iosdist/certificates", s.AuthMiddleware(), s.handleIOSCertificateUpload)
-		api.DELETE("/iosdist/certificates/:id", s.AuthMiddleware(), s.handleIOSCertificateDelete)
-		api.GET("/iosdist/profiles", s.AuthMiddleware(), s.handleIOSProfileList)
-		api.POST("/iosdist/profiles", s.AuthMiddleware(), s.handleIOSProfileUpload)
-		api.DELETE("/iosdist/profiles/:id", s.AuthMiddleware(), s.handleIOSProfileDelete)
-		// App Store Connect bridge: per-owner key + ASC API forwarders.
-		api.GET("/iosdist/asc/config", s.AuthMiddleware(), s.handleIOSASCConfigGet)
-		api.POST("/iosdist/asc/config", s.AuthMiddleware(), s.handleIOSASCConfigUpsert)
-		api.DELETE("/iosdist/asc/config", s.AuthMiddleware(), s.handleIOSASCConfigDelete)
-		api.GET("/iosdist/asc/apps", s.AuthMiddleware(), s.handleIOSASCAppList)
-		api.GET("/iosdist/asc/beta-groups", s.AuthMiddleware(), s.handleIOSASCBetaGroupList)
-		api.PUT("/iosdist/apps/:id/asc-binding", s.AuthMiddleware(), s.handleIOSAppASCBindingUpdate)
-		api.POST("/iosdist/apps/:id/invite-tester", s.AuthMiddleware(), s.handleIOSAppInviteTester)
-		api.POST("/iosdist/apps/:id/asc-sync", s.AuthMiddleware(), s.handleIOSAppASCSyncMeta)
-		// iosdist M4: ops status snapshot (review state, latest build, TF testers).
-		// GET reads the cached row (worker refreshes every IOSDIST_STATUS_SYNC_INTERVAL_SEC,
-		// default 900s); POST forces an immediate refresh.
-		api.GET("/iosdist/apps/:id/status", s.AuthMiddleware(), s.handleIOSAppStatusGet)
-		api.POST("/iosdist/apps/:id/status/sync", s.AuthMiddleware(), s.handleIOSAppStatusSync)
-		} // end iosdistRemote gate
+		// iOS distribution module — handlers + public install + sign worker
+		// + ASC bridge moved to github.com/networkextension/polar-iosdist.
+		// Only the agent endpoints (/api/iosdist/agent/*, lines 766-768)
+		// stay in dock because they share PolarAgentAuthMiddleware with
+		// the agent_hub still living in dock core.
 
 		// expense (家庭账本) — full block skipped when POLAR_EXPENSE_REMOTE=true;
 		// nginx then routes /api/expense* to polar-expense-svc (see
