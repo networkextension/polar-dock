@@ -113,8 +113,9 @@ type Server struct {
 	metricsRegistry *metrics
 	metricsToken    string
 
-	// Plugin cutover flags — see Config.<X>Remote.
-	hostsRemote    bool
+	// Plugin cutover flags removed — all plugin REST surfaces are now
+	// remote. The H-series cleanups dropped the per-plugin gated route
+	// blocks; see open-platform.md for history.
 
 	// LLM proxy in-memory rate limiter. Per-token sliding window;
 	// see llm_proxy_rate_limit.go.
@@ -407,7 +408,6 @@ func NewServer(cfg Config) (*Server, error) {
 	server.metricsRegistry = newMetrics()
 	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
-	server.hostsRemote = cfg.HostsRemote
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
 	server.llmProxyProber.start()
@@ -868,55 +868,19 @@ func (s *Server) registerRoutes() {
 		api.POST("/agent/library/devices/upsert", s.PolarAgentAuthMiddleware(), s.handleAgentRevDeviceUpsert)
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
 		api.POST("/agent/bots/:bot_id/dispatch", s.AuthMiddleware(), s.handleAgentDispatch)
-		// hosts (workspace-scoped named machines reachable via
-		// polar-agent; see github.com/networkextension/polar-hosts doc/host-module-design.md). Phase 0
-		// landed CRUD + enrollment; skill enable/start lands in P1+.
-		// Full block skipped when POLAR_HOSTS_REMOTE=true; nginx routes
-		// /api/hosts/*, /api/host-skills, /api/console/layouts to
-		// polar-hosts-svc. /ws/host/* (router-level, line 671/674) is
-		// NOT gated — WS still bridges through dock's agent_hub.
-		if !s.hostsRemote {
-		api.POST("/hosts/enroll", s.AuthMiddleware(), s.handleHostEnroll)
-		api.POST("/hosts/register", s.handleHostRegister) // bearer = enroll token, no session
-		// P1e: loopback-only co-located bootstrap. Opt-in via
-		// POLAR_ALLOW_LOCAL_BOOTSTRAP=true; the handler also rejects
-		// requests with proxy headers or non-loopback RemoteAddr.
-		api.POST("/hosts/local-bootstrap", s.handleHostLocalBootstrap)
-		api.GET("/hosts", s.AuthMiddleware(), s.handleHostList)
-		api.GET("/hosts/:id", s.AuthMiddleware(), s.handleHostDetail)
-		api.DELETE("/hosts/:id", s.AuthMiddleware(), s.handleHostDelete)
-		// P1d: list endpoints used by the UI surfaces.
-		api.GET("/host-skills", s.AuthMiddleware(), s.handleHostSkillsListWorkspace)
-		api.GET("/hosts/:id/skills", s.AuthMiddleware(), s.handleHostSkillsListForHost)
-		// Rename a host_skill row's display name (does not change kind / id).
-		api.PATCH("/hosts/:id/skills/:skillId", s.AuthMiddleware(), s.handleHostSkillRename)
-		// P1c.4: per-skill credential vault. Admin-only; never surfaces
-		// raw plaintext on read.
-		api.GET("/hosts/:id/skills/:skillId/credentials", s.AuthMiddleware(), s.handleHostSkillCredentialsList)
-		api.PUT("/hosts/:id/skills/:skillId/credentials/:key", s.AuthMiddleware(), s.handleHostSkillCredentialsPut)
-		api.DELETE("/hosts/:id/skills/:skillId/credentials/:key", s.AuthMiddleware(), s.handleHostSkillCredentialsDelete)
-		// P2 (Shell): open / sessions / kick. Admin-only.
-		api.POST("/hosts/:id/skills/:skillId/shell/open", s.AuthMiddleware(), s.handleHostShellOpen)
-		api.GET("/hosts/:id/skills/shell/sessions", s.AuthMiddleware(), s.handleHostShellSessions)
-		api.DELETE("/hosts/:id/skills/shell/sessions/:run_id", s.AuthMiddleware(), s.handleHostShellKick)
-		// VNC: open / sessions / kick. Admin-only. Wire shape mirrors
-		// the Shell endpoints; binary RFB stream bridges via /ws/host/
-		// :id/vnc/:run_id.
-		api.POST("/hosts/:id/skills/:skillId/vnc/open", s.AuthMiddleware(), s.handleHostVNCOpen)
-		api.GET("/hosts/:id/skills/vnc/sessions", s.AuthMiddleware(), s.handleHostVNCSessions)
-		api.DELETE("/hosts/:id/skills/vnc/sessions/:run_id", s.AuthMiddleware(), s.handleHostVNCKick)
-		// /console.html named layouts (per workspace + per user).
-		api.GET("/console/layouts", s.AuthMiddleware(), s.handleConsoleLayoutList)
-		api.POST("/console/layouts", s.AuthMiddleware(), s.handleConsoleLayoutCreate)
-		api.PATCH("/console/layouts/:layoutId", s.AuthMiddleware(), s.handleConsoleLayoutUpdate)
-		api.DELETE("/console/layouts/:layoutId", s.AuthMiddleware(), s.handleConsoleLayoutDelete)
-		} // end hostsRemote gate
+		// hosts REST + console layouts now served by polar-hosts-svc; nginx
+		// routes /api/hosts/*, /api/host-skills/*, /api/console/layouts/* to
+		// the plugin. /ws/host/:id/{shell,vnc}/:run_id remains on dock
+		// (router-level, see /ws routes above) so the shell + VNC bridges
+		// continue to use dock's agent_hub.
+		//
 		// projects CRUD + decompose + plan + task lifecycle moved to
-		// github.com/networkextension/polar-projects. The following routes
-		// stay in dock because their handlers depend on dock-only services
-		// (system-agent LLM resolution + agent_hub for research dispatch).
-		// Sharpen/retrospect handlers live in system_agent_handlers.go +
-		// task_retrospect.go; research handlers in research_handlers.go.
+		// github.com/networkextension/polar-projects. The three routes
+		// below stay in dock because their handlers depend on dock-only
+		// services (system-agent LLM resolution + agent_hub for research
+		// dispatch). Sharpen/retrospect handlers live in
+		// system_agent_handlers.go + task_retrospect.go; research handlers
+		// in research_handlers.go.
 		api.POST("/projects/:id/tasks/:task_id/sharpen", s.AuthMiddleware(), s.handleProjectTaskSharpen)
 		api.GET("/projects/:id/tasks/:task_id/retrospect", s.AuthMiddleware(), s.handleProjectTaskRetrospectGet)
 		api.POST("/projects/:id/tasks/:task_id/retrospect", s.AuthMiddleware(), s.handleProjectTaskRetrospectGenerate)
