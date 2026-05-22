@@ -117,6 +117,12 @@ func main() {
 		// to route /v1/{register,peers,…} + /api/admin/wg-* to
 		// wg-svc (cmd/wg-svc binary). See doc/arch/wg-svc-extraction.md.
 		WGRemote: strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_WG_REMOTE")), "true"),
+
+		// Phase D-2 cutover flags: when true, dock skips the corresponding
+		// plugin's route registration so nginx can route to the standalone
+		// plugin service (see github.com/networkextension/polar-{expense,latch}).
+		ExpenseRemote: strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_EXPENSE_REMOTE")), "true"),
+		LatchRemote:   strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_LATCH_REMOTE")), "true"),
 	}
 
 	server, err := dock.NewServer(cfg)

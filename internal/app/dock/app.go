@@ -125,6 +125,14 @@ type Server struct {
 	// Config.WGRemote.
 	wgRemote bool
 
+	// expenseRemote — when true, expense routes are skipped. See
+	// Config.ExpenseRemote.
+	expenseRemote bool
+
+	// latchRemote — when true, latch routes are skipped. See
+	// Config.LatchRemote.
+	latchRemote bool
+
 	// LLM proxy in-memory rate limiter. Per-token sliding window;
 	// see llm_proxy_rate_limit.go.
 	llmProxyRateLimiter *llmProxyRateLimiter
@@ -428,6 +436,8 @@ func NewServer(cfg Config) (*Server, error) {
 	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
 	server.wgRemote = cfg.WGRemote
+	server.expenseRemote = cfg.ExpenseRemote
+	server.latchRemote = cfg.LatchRemote
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
 	server.llmProxyProber.start()
@@ -903,6 +913,10 @@ func (s *Server) registerRoutes() {
 		api.PUT("/proxy-configs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileUpdate)
 		api.DELETE("/proxy-configs/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileDelete)
 		api.POST("/proxy-configs/:id/activate", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePackTunnelProfileActivate)
+		// Latch — full block skipped when POLAR_LATCH_REMOTE=true; nginx
+		// then routes /api/latch/* to polar-latch-svc (see scripts/nginx
+		// in github.com/networkextension/polar-latch).
+		if !s.latchRemote {
 		// Latch — proxies (admin)
 		api.GET("/latch/proxies", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchProxyList)
 		api.POST("/latch/proxies", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLatchProxyCreate)
@@ -939,6 +953,7 @@ func (s *Server) registerRoutes() {
 		api.POST("/latch/agent/heartbeat", s.AgentAuthMiddleware(), s.handleLatchAgentHeartbeat)
 		// Latch — profiles (user: enabled+shared)
 		api.GET("/latch/profiles", s.AuthMiddleware(), s.handleLatchProfileList)
+		} // end latchRemote gate
 		api.GET("/bots", s.AuthMiddleware(), s.handleBotUserList)
 		api.POST("/bots", s.AuthMiddleware(), s.handleBotUserCreate)
 		api.PUT("/bots/:id", s.AuthMiddleware(), s.handleBotUserUpdate)
@@ -1191,9 +1206,13 @@ func (s *Server) registerRoutes() {
 		api.GET("/iosdist/apps/:id/status", s.AuthMiddleware(), s.handleIOSAppStatusGet)
 		api.POST("/iosdist/apps/:id/status/sync", s.AuthMiddleware(), s.handleIOSAppStatusSync)
 
-		// expense (家庭账本) L1 — manual CRUD over per-workspace expenses
-		// + categories. Every workspace member can read/write — no admin
-		// gate (household ledger model). OCR/LLM extraction → L2.
+		// expense (家庭账本) — full block skipped when POLAR_EXPENSE_REMOTE=true;
+		// nginx then routes /api/expense* to polar-expense-svc (see
+		// scripts/nginx in github.com/networkextension/polar-expense).
+		if !s.expenseRemote {
+		// expense L1 — manual CRUD over per-workspace expenses + categories.
+		// Every workspace member can read/write — no admin gate. L2 adds
+		// OCR/LLM extraction.
 		api.GET("/expense-categories", s.AuthMiddleware(), s.handleExpenseCategoryList)
 		api.POST("/expense-categories", s.AuthMiddleware(), s.handleExpenseCategoryCreate)
 		api.PUT("/expense-categories/:id", s.AuthMiddleware(), s.handleExpenseCategoryUpdate)
@@ -1206,6 +1225,7 @@ func (s *Server) registerRoutes() {
 		// LLM-structured draft (status=0). User confirms via PUT above.
 		api.POST("/expenses/from-image", s.AuthMiddleware(), s.handleExpenseFromImage)
 		api.GET("/expenses/:id/image", s.AuthMiddleware(), s.handleExpenseImageDownload)
+		} // end expenseRemote gate
 		api.GET("/admin/logs", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLogs)
 		api.GET("/admin/users", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserList)
 		api.GET("/admin/users/:id/login-history", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminUserLoginHistory)
