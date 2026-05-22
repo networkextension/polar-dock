@@ -115,7 +115,6 @@ func main() {
 		// Remaining cutover flags for plugins whose dock-side code is still
 		// alive. The other plugins were fully removed (see H-series cleanup
 		// PRs); their flags + dock-side routes no longer exist.
-		ProjectsRemote: strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_PROJECTS_REMOTE")), "true"),
 		HostsRemote:    strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_HOSTS_REMOTE")), "true"),
 	}
 

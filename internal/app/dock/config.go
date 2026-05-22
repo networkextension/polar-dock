@@ -145,12 +145,9 @@ type Config struct {
 	// doc/ops/grafana-integration.md.
 	MetricsToken string
 
-	// ProjectsRemote, HostsRemote — cutover-flag pattern. When true dock
-	// skips the corresponding plugin's main contiguous route block; nginx
-	// routes to the plugin svc instead. See open-platform.md +
-	// plugin-deployment-state.md for the per-plugin range owned by each
-	// flag — flags do NOT gate routes that intentionally stay in dock
-	// (sharpen/retrospect/research for projects, /ws/host/* for hosts).
-	ProjectsRemote bool
-	HostsRemote    bool
+	// HostsRemote — cutover-flag pattern. When true dock skips the
+	// hosts main route block; nginx routes to polar-hosts-svc instead.
+	// The /ws/host/* WS bridge stays in dock regardless (uses
+	// agent_hub).
+	HostsRemote bool
 }
