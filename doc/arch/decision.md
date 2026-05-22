@@ -127,7 +127,7 @@ An admin UI at `/admin/plugins.html` shows the list with heartbeat freshness, le
 
 ## Phased execution
 
-This ADR locks the architecture. Execution is phased in `doc/arch/wg-svc-extraction.md` and the project plan file:
+This ADR locks the architecture. Execution is phased in `github.com/networkextension/polar-wg/doc/wg-svc-extraction.md` and the project plan file:
 
 | Phase | Scope | Duration |
 |---|---|---|

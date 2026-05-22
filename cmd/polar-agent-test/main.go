@@ -2,7 +2,7 @@
 //
 // Connects to `polar-agent test-serve` over TCP loopback, drives skills
 // via NDJSON envelopes (same shape as dock↔agent), asserts outcomes.
-// See doc/agent-test-harness.md for the protocol + scope.
+// See doc/agent/agent-test-harness.md for the protocol + scope.
 //
 // Subcommands:
 //   ping                          — liveness probe

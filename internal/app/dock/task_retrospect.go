@@ -1,6 +1,6 @@
 package dock
 
-// System-agent task retrospect (capability C from doc/system-agent-design.md).
+// System-agent task retrospect (capability C from doc/agent/system-agent-design.md).
 // One row per project_task; system agent emits a four-section post-
 // mortem (summary / tools used / open issues / next time) when the
 // task flips to done — also via manual POST .../retrospect.

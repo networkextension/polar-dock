@@ -10,7 +10,7 @@
 //     skills lands with P1+).
 //
 // No skill enable / start / stop yet. That's by design; per
-// doc/host-module-dev.md the foundation lands first.
+// github.com/networkextension/polar-hosts doc/host-module-dev.md the foundation lands first.
 
 import { fetchCurrentUser, logout } from "./api/session.js";
 import {

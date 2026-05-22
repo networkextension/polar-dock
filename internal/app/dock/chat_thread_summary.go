@@ -1,6 +1,6 @@
 package dock
 
-// System-agent thread summary (capability D from doc/system-agent-design.md).
+// System-agent thread summary (capability D from doc/agent/system-agent-design.md).
 // One row per chat_thread; the system agent emits a 1–2 sentence
 // "上次停在哪" so a user re-opening an old conversation can pick up
 // without scrolling. Stale-detection compares

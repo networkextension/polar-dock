@@ -56,7 +56,7 @@ type AdminUserSummary struct {
 
 // Session is the short-lived access session injected into the Gin
 // context by AuthMiddleware. It is the access-token half of the
-// refresh-token scheme documented in doc/auth-refresh.md.
+// refresh-token scheme documented in doc/auth/auth-refresh.md.
 type Session struct {
 	ID         string
 	UserID     string
@@ -73,7 +73,7 @@ type Session struct {
 
 // RefreshToken is the long-lived record that can mint new access
 // tokens. Rotated on every use; the whole family is revoked on
-// replay (see doc/auth-refresh.md).
+// replay (see doc/auth/auth-refresh.md).
 type RefreshToken struct {
 	ID          string
 	UserID      string
@@ -2354,7 +2354,7 @@ END
 $$;
 
 -- ============================================================
--- Host module (Phase 0). Design: doc/host-module-design.md
+-- Host module (Phase 0). Design: github.com/networkextension/polar-hosts doc/host-module-design.md
 -- ============================================================
 -- hosts: a named machine reachable via polar-agent. Workspace-scoped
 -- (one host can only belong to one workspace). Linked 1:1 to an
@@ -2717,7 +2717,7 @@ COMMENT ON COLUMN llm_configs.owner_user_id          IS 'audit: who created/upse
 -- (Cursor, Raycast, custom scripts) hit our OpenAI-compatible
 -- /v1/chat/completions proxy. Plaintext shown ONCE at create time;
 -- only sha256(plaintext) + a short prefix are stored. See
--- doc/llm-proxy-design.md.
+-- doc/llm/llm-proxy-design.md.
 CREATE TABLE IF NOT EXISTS llm_proxy_tokens (
     id BIGSERIAL PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
@@ -2767,7 +2767,7 @@ CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_ts
 -- there's a match, dispatch goes to that llm_config_id. Otherwise
 -- falls back to llm_proxy_tokens.default_llm_config_id. Lets a
 -- single token route gpt-4o-mini -> Kimi, polar:research -> Gemini,
--- etc. See doc/llm-proxy-design.md.
+-- etc. See doc/llm/llm-proxy-design.md.
 CREATE TABLE IF NOT EXISTS llm_proxy_routes (
     token_id BIGINT NOT NULL REFERENCES llm_proxy_tokens(id) ON DELETE CASCADE,
     alias_model TEXT NOT NULL,
@@ -2798,7 +2798,7 @@ CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_created
     WHERE cost_usd IS NOT NULL;
 
 -- ============================================================
--- Knowledge base (P-library-0a) — see doc/jtag-skill-design.md §3.5
+-- Knowledge base (P-library-0a) — see doc/agent/jtag-debug-skill-design.md §3.5
 --
 -- Three global tables (NOT workspace-scoped — the "network effect
 -- across operators" is the point):
@@ -2867,7 +2867,7 @@ CREATE INDEX IF NOT EXISTS ix_rev_functions_symbol ON rev_functions(symbol);
 CREATE INDEX IF NOT EXISTS ix_rev_functions_addr ON rev_functions(firmware_id, address);
 
 -- ============================================================
--- wg-mac join control plane — see doc/JOIN_PROTOCOL.md
+-- wg-mac join control plane — see github.com/networkextension/polar-wg doc/JOIN_PROTOCOL.md
 --
 -- Tailscale-style mesh: admin issues a join token, operator runs
 -- curl-bash install.sh, device gets a 10.88.<S>.<D>/32 wg IP +
@@ -2979,7 +2979,7 @@ CREATE INDEX IF NOT EXISTS ix_wg_heartbeats_device_ts ON wg_heartbeats(device_id
 
 -- ============================================================
 -- wg-mac Phase 2 — multi-hub + role-aware tokens.
--- See doc/JOIN_PROTOCOL.md §2 v0.2 and doc/playbook.md §12.
+-- See github.com/networkextension/polar-wg doc/JOIN_PROTOCOL.md §2 v0.2 and doc/ops/playbook.md §12.
 --
 -- Migration shape:
 --   - wg_hub (singleton) → wg_hubs (plural). Existing singleton row,

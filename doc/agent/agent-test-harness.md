@@ -16,7 +16,7 @@ nginx 任何一个.
   的代码上 dock 即可用，无需重复测试
 - **scriptable**: 一个 polar-agent-test 二进制 + 命名 scenario, 可手跑
   也可进 `go test` / CI
-- **MCP-ready**: 当 mcp-server skill 落地（doc/mcp-skill-dev.md P0-mcp）后,
+- **MCP-ready**: 当 mcp-server skill 落地（doc/agent/mcp-skill-dev.md P0-mcp）后,
   天然能用 harness 测 MCP protocol handshake + tools/list + tools/call
 
 ## 架构
@@ -75,7 +75,7 @@ overhead — agent_loop 一直用 `json.Decoder`, harness 复用.
 |---|---|---|---|
 | **A** | test-serve subcommand + JSON envelope server + ping/list scaffold | ~250 Go | `polar-agent-test ping` + `polar-agent-test list` 两条命令 pass |
 | **B** | polar-agent-test CLI + 3 scenarios (shell-echo, vnc-handshake, ...) + Go test runner | ~500 Go | `polar-agent-test all` 全绿; `go test ./cmd/polar-agent-test/...` 通过 |
-| **C** | mcp-server skill P0 (per doc/mcp-skill-dev.md): scaffold + gdb-mi adapter + 2 tools | ~700 Go | harness 能跑 `mcp-initialize` / `mcp-tools-list` / `mcp-gdb-run` 三个 scenario |
+| **C** | mcp-server skill P0 (per doc/agent/mcp-skill-dev.md): scaffold + gdb-mi adapter + 2 tools | ~700 Go | harness 能跑 `mcp-initialize` / `mcp-tools-list` / `mcp-gdb-run` 三个 scenario |
 | **D** | CI hook: `make test-harness` 启 test-serve + 跑所有 scenarios + tear down | ~50 Go + Makefile | 单条命令绿/红, PR 阻断在红 |
 
 A → D 串行做. A 是地基, B 是开发体验, C 是 MCP 第一块业务, D 是制度化.
@@ -102,7 +102,7 @@ cmd/polar-agent/skills/mcp/  NEW (Phase C)
 
 Makefile               NEW (Phase D) — `make test-harness` target
 
-doc/agent-test-harness.md    this file
+doc/agent/agent-test-harness.md    this file
 ```
 
 ## 安全 / 注意点

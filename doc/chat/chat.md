@@ -4,7 +4,7 @@
 
 补充说明：
 
-- 用户级 `LLM Config`、`Bot User`、`llm_thread`、`shared_markdown` 与 Retry 的重构说明，见 [doc/llm-bot.md](/Users/apple/github/Polar-/doc/llm-bot.md)
+- 用户级 `LLM Config`、`Bot User`、`llm_thread`、`shared_markdown` 与 Retry 的重构说明，见 [doc/llm-bot.md](/Users/apple/github/Polar-/doc/chat/llm-bot.md)
 
 ## 设计概览
 - 私聊是双人会话（thread）+ 消息（message）模型。
@@ -525,7 +525,7 @@ iOS 端连接时需带 Cookie（Session）。
 建议补充以下表：
 
 #### 1. user_devices
-用于保存设备类型与 Push Token，对应 [api.md](/Users/apple/github/Polar-/doc/api.md) 中已有的 `X-Device-Type` 与 `X-Push-Token`。
+用于保存设备类型与 Push Token，对应 [api.md](/Users/apple/github/Polar-/doc/ops/api.md) 中已有的 `X-Device-Type` 与 `X-Push-Token`。
 
 字段建议：
 - `id` BIGSERIAL PRIMARY KEY
@@ -774,7 +774,7 @@ sequenceDiagram
 
 ### API 补充建议
 
-[api.md](/Users/apple/github/Polar-/doc/api.md) 已支持登录/注册时通过请求头上报 `X-Device-Type` 和 `X-Push-Token`。为了更完整支持 Push，建议后续补充以下接口或等价能力。
+[api.md](/Users/apple/github/Polar-/doc/ops/api.md) 已支持登录/注册时通过请求头上报 `X-Device-Type` 和 `X-Push-Token`。为了更完整支持 Push，建议后续补充以下接口或等价能力。
 
 #### 1. 更新 Push Token
 `POST /api/devices/push-token`

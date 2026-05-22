@@ -106,7 +106,7 @@
 | 端口 3000/8080 被占 | `PORT=3001 API_BASE=http://localhost:8081 ...`；或者 `kill $(lsof -ti :3000)` |
 | 想换数据库 | 改环境变量 `POSTGRES_DSN='postgres://用户:密码@主机:端口/库?sslmode=disable'` 后重启 |
 
-完整运维细节（HTTPS、Cloudflare R2、Apple 推送、SMTP、生产部署）见 `doc/deploy-local.md`。
+完整运维细节（HTTPS、Cloudflare R2、Apple 推送、SMTP、生产部署）见 `doc/ops/deploy-local.md`。
 
 ---
 

@@ -12,8 +12,8 @@ inspection, and Apple Silicon kernel-port work that used to take a
 week of grep'ing the ARMv8 manual collapses to hours.
 
 **Companion docs**:
-- `doc/mcp-skill-design.md` — protocol + dock-side dispatch overview
-- `doc/mcp-skill-dev.md` — phase plan; this proposal slots between P0c (sessions) and P2-mcp (lldb-dap)
+- `doc/agent/mcp-skill-design.md` — protocol + dock-side dispatch overview
+- `doc/agent/mcp-skill-dev.md` — phase plan; this proposal slots between P0c (sessions) and P2-mcp (lldb-dap)
 - `doc/jtag/all_arch.md` — the operator's whole-system vision; this skill is the "JTAG" branch of the §2.3 Skill Layer
 
 ## 1. Problem in one paragraph
@@ -697,7 +697,7 @@ real subprocesses by setting `POLAR_LLDB_BIN=/usr/bin/lldb` etc.
 - IDA Pro / Ghidra / Frida / radare2 adapters — same pattern, each
   is its own future P-* design.
 - The dock-side LLM integration (`ai_agent.go` learning to call
-  MCP tools) — covered separately by `doc/mcp-skill-dev.md`'s
+  MCP tools) — covered separately by `doc/agent/mcp-skill-dev.md`'s
   P1-mcp.
 - A web UI for the MCP catalogue + session list (`doc/mcp-skill-
   dev.md` P7-mcp).

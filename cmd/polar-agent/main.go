@@ -146,7 +146,7 @@ func main() {
 	case "test-serve":
 		// Standalone skill testbed. NO dock connection. NO auth.
 		// Loopback TCP socket speaking the same envelope JSON as
-		// the dock↔agent WS. See doc/agent-test-harness.md.
+		// the dock↔agent WS. See doc/agent/agent-test-harness.md.
 		os.Exit(runTestServer(args))
 	case "help", "-h", "--help":
 		printUsage()

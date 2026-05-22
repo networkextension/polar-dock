@@ -14,7 +14,7 @@ import (
 // Phase 1 metric set: HTTP shape + Go runtime + DB pool.
 // Phase 2 added: LLM call counter / latency / token consumption.
 // Phase 3+ will add agent fleet + business counters
-// (see doc/grafana-integration.md).
+// (see doc/ops/grafana-integration.md).
 //
 // All metrics live on a private registry so the /metrics endpoint can be
 // gated independently of any other Prometheus surface a future reverse

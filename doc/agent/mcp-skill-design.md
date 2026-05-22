@@ -253,8 +253,8 @@ Diff shape, by file:
 - `internal/app/dock/host_skill_handlers.go` — new, ~150 LOC.
   POST `/api/hosts/:id/skills/mcp/tools/:tool` direct-call.
 - `internal/app/dock/app.go` — wire the new route (~3 LOC).
-- `doc/mcp-skill-dev.md` — new. Per-phase implementation notes,
-  mirrors `doc/host-module-dev.md`.
+- `doc/agent/mcp-skill-dev.md` — new. Per-phase implementation notes,
+  mirrors `github.com/networkextension/polar-hosts doc/host-module-dev.md`.
 
 Smoke: bring up `polar-agent` with `mcp-server` skill enabled +
 `adapters: ["gdb"]` config, run the two `curl` commands from §4, get

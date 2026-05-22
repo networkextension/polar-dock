@@ -111,4 +111,4 @@ bench 是"主动一次性压测出曲线"，Prometheus 是"持续被动观察生
 - `internal/app/dock/llm_proxy_chat_handlers.go` — 服务端实现
 - `internal/app/dock/llm_proxy_probe.go` — 上游健康探针（不要跟 bench 混了）
 - `scripts/prometheus/llm-proxy-alerts.yml` — 告警规则
-- `doc/llm-proxy-design.md` — 整体设计
+- `doc/llm/llm-proxy-design.md` — 整体设计

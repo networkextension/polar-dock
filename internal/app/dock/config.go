@@ -4,7 +4,7 @@ import "time"
 
 const (
 	// AccessCookieName is the cookie that carries the short-lived access
-	// token on every authenticated API request. See doc/auth-refresh.md.
+	// token on every authenticated API request. See doc/auth/auth-refresh.md.
 	AccessCookieName = "access_token"
 	// RefreshCookieName is the cookie that carries the long-lived refresh
 	// token; it is only sent on the refresh endpoint because of the
@@ -142,7 +142,7 @@ type Config struct {
 	// 404 (fail-closed); when set, the request must carry
 	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's
 	// scrape job with the same value via `bearer_token`. See
-	// doc/grafana-integration.md.
+	// doc/ops/grafana-integration.md.
 	MetricsToken string
 
 	// ExpenseRemote — when true, dock skips registering expense routes

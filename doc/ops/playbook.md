@@ -106,7 +106,7 @@ USD 估算来自 `internal/app/dock/llm_proxy_pricing.go` 的硬编码价
 
 ### 1.6 设计 / 代码参考
 
-- `doc/llm-proxy-design.md` — 整体设计
+- `doc/llm/llm-proxy-design.md` — 整体设计
 - `internal/app/dock/llm_proxy_*.go` — handler / store / pricing / quota / rate_limit / probe
 - `scripts/proxy-bench.py` — 经过 Polar 链路压测
 - `scripts/upstream-bench.py` — 直连上游对比测
@@ -168,7 +168,7 @@ library.devices.recent_seen    library.firmwares.matching
 
 ### 2.3 设计 / 代码参考
 
-- `doc/jtag-debug-skill-design.md` §3.5 — 知识库部分设计
+- `doc/agent/jtag-debug-skill-design.md` §3.5 — 知识库部分设计
 - `internal/app/dock/rev_*.go` — store / handlers / blob upload
 - `cmd/polar-agent/skills/mcp_adapter_library.go` — 9 个 MCP 工具
 - `ui/src/library.ts` + `ui/public/library.html` — 3-tab admin UI
