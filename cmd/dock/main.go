@@ -112,21 +112,11 @@ func main() {
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 
-		// Phase D-2 cutover flags: when true, dock skips the corresponding
-		// plugin's route registration so nginx can route to the standalone
-		// plugin service (see github.com/networkextension/polar-{expense,latch}).
-		ExpenseRemote: strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_EXPENSE_REMOTE")), "true"),
-		LatchRemote:   strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_LATCH_REMOTE")), "true"),
-
-		// Bulk cutover flags for the rest of the extracted plugins. Same
-		// pattern: env unset / "" / not-"true" → flag false → dock owns
-		// the routes. Flip "true" + reload dock + install nginx snippet
-		// from the corresponding polar-<svc> repo to cut over.
-		PacktunnelRemote: strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_PACKTUNNEL_REMOTE")), "true"),
-		LibraryRemote:    strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_LIBRARY_REMOTE")), "true"),
-		ProjectsRemote:   strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_PROJECTS_REMOTE")), "true"),
-		VideoRemote:      strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_VIDEO_REMOTE")), "true"),
-		HostsRemote:      strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_HOSTS_REMOTE")), "true"),
+		// Remaining cutover flags for plugins whose dock-side code is still
+		// alive. The other plugins were fully removed (see H-series cleanup
+		// PRs); their flags + dock-side routes no longer exist.
+		ProjectsRemote: strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_PROJECTS_REMOTE")), "true"),
+		HostsRemote:    strings.EqualFold(strings.TrimSpace(os.Getenv("POLAR_HOSTS_REMOTE")), "true"),
 	}
 
 	server, err := dock.NewServer(cfg)
