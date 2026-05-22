@@ -376,6 +376,185 @@ type internalHeartbeatReq struct {
 	MetricsURL    string `json:"metrics_url"`
 }
 
+// ── F1 additions (Phase 2 handlers prep) ─────────────────────────
+//
+// These 5 endpoints unblock cross-domain calls from the 6 remaining
+// plugin migrations (packtunnel / library / video / projects / hosts
+// / iosdist). Same hmacPluginAuth gate as the rest of /internal/v1.
+
+// ── 10. GET /internal/v1/bot-users/:id ─────────────────────────────
+// id is the bot's user_id (the "u_..." string). Used by projects +
+// hosts handler migrations for bot metadata + LLM binding.
+
+func (s *Server) handleInternalBotUserGet(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		internalErr(c, http.StatusBadRequest, "id required")
+		return
+	}
+	b, err := s.getBotUserByUserID(id)
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "bot lookup failed")
+		return
+	}
+	if b == nil {
+		internalErr(c, http.StatusNotFound, "bot not found")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":             b.ID,
+		"bot_user_id":    b.BotUserID,
+		"workspace_id":   b.WorkspaceID,
+		"owner_user_id":  b.OwnerUserID,
+		"name":           b.Name,
+		"description":    b.Description,
+		"llm_config_id":  b.LLMConfigID,
+		"bot_kind":       b.BotKind,
+		"preferred_tool": b.PreferredTool,
+		"host_skill_id":  b.HostSkillID,
+		"model_override": b.ModelOverride,
+	})
+}
+
+// ── 11. GET /internal/v1/chat-threads/:id ───────────────────────────
+// LastMessage is truncated to 200 chars at the gateway to keep this
+// endpoint small; full chat history goes through the dock-side
+// /api/chat/* surface as the end-user.
+
+func (s *Server) handleInternalChatThreadGet(c *gin.Context) {
+	idStr := strings.TrimSpace(c.Param("id"))
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		internalErr(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	t, err := s.getChatThread(id)
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "thread lookup failed")
+		return
+	}
+	if t == nil {
+		internalErr(c, http.StatusNotFound, "thread not found")
+		return
+	}
+	excerpt := t.LastMessage
+	if len(excerpt) > 200 {
+		excerpt = excerpt[:200] + "…"
+	}
+	out := gin.H{
+		"id":           t.ID,
+		"user_low":     t.UserLow,
+		"user_high":    t.UserHigh,
+		"last_message": excerpt,
+		"created_at":   t.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if t.LastMessageAt != nil {
+		out["last_message_at"] = t.LastMessageAt.UTC().Format(time.RFC3339)
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// ── 12. GET /internal/v1/agent-presence/:bot_id ─────────────────────
+// Returns the live agentHub attach state for one bot user. Plugins
+// (projects in particular) use this to decide whether to dispatch
+// an agent task vs. surface "agent offline" in the UI.
+
+func (s *Server) handleInternalAgentPresence(c *gin.Context) {
+	botID := strings.TrimSpace(c.Param("bot_id"))
+	if botID == "" {
+		internalErr(c, http.StatusBadRequest, "bot_id required")
+		return
+	}
+	out := gin.H{"bot_user_id": botID, "attached": false}
+	if s.agentHub != nil {
+		if conn := s.agentHub.lookup(botID); conn != nil {
+			out["attached"] = true
+			if conn.hostID != "" {
+				out["host_id"] = conn.hostID
+			}
+			if conn.tool != "" {
+				out["tool"] = conn.tool
+			}
+			if !conn.attachedAt.IsZero() {
+				out["last_seen_at"] = conn.attachedAt.UTC().Format(time.RFC3339)
+			}
+		}
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// ── 13. POST /internal/v1/agent/dispatch ────────────────────────────
+// Plugin asks dock to enqueue an aiAgent task. Returns 200 +
+// {queued:true} immediately; the LLM round-trip happens asynchronously
+// inside dock's aiAgent loop and the result is delivered as a new
+// message on the chat_thread (UI poll-or-WS-watches it).
+
+type internalAgentDispatchReq struct {
+	ThreadID        int64  `json:"thread_id" binding:"required"`
+	LLMThreadID     *int64 `json:"llm_thread_id"`
+	UserID          string `json:"user_id" binding:"required"`
+	ResponderUserID string `json:"responder_user_id" binding:"required"`
+	ResponderName   string `json:"responder_name"`
+	Content         string `json:"content" binding:"required"`
+}
+
+func (s *Server) handleInternalAgentDispatch(c *gin.Context) {
+	var req internalAgentDispatchReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		internalErr(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	if s.aiAgent == nil {
+		internalErr(c, http.StatusServiceUnavailable, "aiAgent not initialized")
+		return
+	}
+	s.aiAgent.enqueue(aiAgentTask{
+		ThreadID:        req.ThreadID,
+		LLMThreadID:     req.LLMThreadID,
+		UserID:          req.UserID,
+		ResponderUserID: req.ResponderUserID,
+		ResponderName:   req.ResponderName,
+		Content:         req.Content,
+	})
+	c.JSON(http.StatusOK, gin.H{"queued": true})
+}
+
+// ── 14. POST /internal/v1/agent/llm-call-record ─────────────────────
+// Cost-ledger insert for plugins that drive their own LLM dispatch
+// (anything not going through AgentDispatch). Keeps /llm-billing.html
+// totals consistent across all caller paths.
+
+type internalLLMCallRecordReq struct {
+	WorkspaceID      string   `json:"workspace_id" binding:"required"`
+	LLMConfigID      int64    `json:"llm_config_id" binding:"required"`
+	ModelRequested   string   `json:"model_requested"`
+	ModelResolved    string   `json:"model_resolved"`
+	PromptTokens     int      `json:"prompt_tokens"`
+	CompletionTokens int      `json:"completion_tokens"`
+	TotalTokens      int      `json:"total_tokens"`
+	LatencyMS        int      `json:"latency_ms"`
+	StatusCode       int      `json:"status_code"`
+	ErrorText        string   `json:"error_text"`
+	CostOverrideUSD  *float64 `json:"cost_override_usd"`
+}
+
+func (s *Server) handleInternalLLMCallRecord(c *gin.Context) {
+	var req internalLLMCallRecordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		internalErr(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	if err := s.recordAgentLLMCall(
+		req.WorkspaceID, req.LLMConfigID, req.ModelRequested, req.ModelResolved,
+		req.PromptTokens, req.CompletionTokens, req.TotalTokens,
+		req.LatencyMS, req.StatusCode, req.ErrorText, req.CostOverrideUSD,
+	); err != nil {
+		internalErr(c, http.StatusInternalServerError, "ledger write failed")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"recorded": true})
+}
+
 func (s *Server) handleInternalHeartbeat(c *gin.Context) {
 	plugin, _ := c.Get("plugin_name")
 	pluginStr, _ := plugin.(string)
