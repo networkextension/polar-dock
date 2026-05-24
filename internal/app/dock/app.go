@@ -120,6 +120,10 @@ type Server struct {
 	// expense.4950.store, …). See setAuthCookies in middleware.go.
 	cookieDomain string
 
+	// polarHostsTouchURL — post-H9 forward target for skill.advertise.
+	// See polar_hosts_touch.go.
+	polarHostsTouchURL string
+
 	// Plugin cutover flags removed — all plugin REST surfaces are now
 	// remote. The H-series cleanups dropped the per-plugin gated route
 	// blocks; see open-platform.md for history.
@@ -418,6 +422,10 @@ func NewServer(cfg Config) (*Server, error) {
 	server.cookieDomain = strings.TrimSpace(cfg.CookieDomain)
 	if server.cookieDomain != "" {
 		log.Printf("auth: cookies scoped to Domain=%s (cross-subdomain SSO enabled)", server.cookieDomain)
+	}
+	server.polarHostsTouchURL = strings.TrimSpace(cfg.PolarHostsTouchURL)
+	if server.polarHostsTouchURL != "" {
+		log.Printf("hosts: skill.advertise forwarding to %s", server.polarHostsTouchURL)
 	}
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
