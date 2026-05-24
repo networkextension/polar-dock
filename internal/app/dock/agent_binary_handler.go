@@ -51,11 +51,18 @@ func (s *Server) handleAgentBinary(c *gin.Context) {
 	}
 
 	// Path 2: JIT cross-compile if source + toolchain available.
+	// polar-agent was extracted to its own repo
+	// (https://github.com/networkextension/polar-agent), so the in-tree
+	// `./cmd/polar-agent` no longer exists in normal dock checkouts —
+	// buildAgentBinary will report "source not found" and we fall through
+	// to the operator hint.
 	path, err := s.buildAgentBinary(osName, arch)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "polar-agent binary unavailable: " + err.Error() +
-				". Configure POLAR_AGENT_DIST_DIR pointing at release.sh's dist/agents/, or run dock from the source repo so JIT cross-compile works.",
+				". Either set POLAR_AGENT_DIST_DIR to a dir containing pre-built " +
+				"polar-agent_<os>_<arch> binaries, OR install polar-agent directly: " +
+				"https://github.com/networkextension/polar-agent/releases",
 		})
 		return
 	}
