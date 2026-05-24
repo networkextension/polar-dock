@@ -15,11 +15,17 @@ func isAPIRequest(c *gin.Context) bool {
 // clearAuthCookies expires both auth cookies so the browser drops them
 // on the next response. Used on logout and on any unauthenticated API
 // hit that carries a stale cookie.
-func clearAuthCookies(c *gin.Context) {
+//
+// Domain attribute matches setAuthCookies: when s.cookieDomain is set
+// (e.g. `.4950.store`), the browser only honors the Set-Cookie for
+// expiry if the Domain matches what was originally set. Without
+// matching the Domain on clear, the stale cookie sticks around.
+func (s *Server) clearAuthCookies(c *gin.Context) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     AccessCookieName,
 		Value:    "",
 		Path:     "/",
+		Domain:   s.cookieDomain,
 		MaxAge:   -1,
 		HttpOnly: true,
 		Expires:  time.Unix(0, 0),
@@ -28,6 +34,7 @@ func clearAuthCookies(c *gin.Context) {
 		Name:     RefreshCookieName,
 		Value:    "",
 		Path:     RefreshCookiePath,
+		Domain:   s.cookieDomain,
 		MaxAge:   -1,
 		HttpOnly: true,
 		Expires:  time.Unix(0, 0),
@@ -37,11 +44,18 @@ func clearAuthCookies(c *gin.Context) {
 // setAuthCookies writes a fresh access + refresh pair onto the
 // response. Keep in one place so cookie attributes stay consistent
 // across login, register, passkey, and refresh handlers.
-func setAuthCookies(c *gin.Context, accessToken, refreshToken string) {
+//
+// Domain is read from s.cookieDomain. When empty (default), the
+// browser scopes the cookie to the request host — `zen.4950.store`
+// only. When set to `.4950.store` (leading dot), the cookie is sent
+// for every `*.4950.store` subdomain so SSO works across plugin UIs
+// (project.4950.store, expense.4950.store, …).
+func (s *Server) setAuthCookies(c *gin.Context, accessToken, refreshToken string) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     AccessCookieName,
 		Value:    accessToken,
 		Path:     "/",
+		Domain:   s.cookieDomain,
 		MaxAge:   int(AccessTokenTTL.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -50,6 +64,7 @@ func setAuthCookies(c *gin.Context, accessToken, refreshToken string) {
 		Name:     RefreshCookieName,
 		Value:    refreshToken,
 		Path:     RefreshCookiePath,
+		Domain:   s.cookieDomain,
 		MaxAge:   int(RefreshTokenTTL.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
@@ -116,7 +131,7 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 
 		session := s.getAccessSession(token)
 		if session == nil {
-			clearAuthCookies(c)
+			s.clearAuthCookies(c)
 			if isAPIRequest(c) {
 				jsonError(c, http.StatusUnauthorized, "auth.unauthorized")
 			} else {

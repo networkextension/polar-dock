@@ -111,6 +111,10 @@ func main() {
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 
+		// Auth cookie Domain. Empty = host-scoped (browser default).
+		// Set to ".4950.store" for SSO across plugin subdomains.
+		CookieDomain: os.Getenv("POLAR_COOKIE_DOMAIN"),
+
 		// All plugin cutover flags were removed alongside their dock-side
 		// routes in the H-series cleanups; see open-platform.md for the
 		// history. Setting POLAR_*_REMOTE env vars no longer has any

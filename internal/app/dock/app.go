@@ -113,6 +113,13 @@ type Server struct {
 	metricsRegistry *metrics
 	metricsToken    string
 
+	// cookieDomain controls the Domain attribute on the auth Set-Cookie
+	// headers. Empty (default) → browser scopes the cookie to the
+	// request host (zen.4950.store). Set to `.4950.store` (leading dot)
+	// to enable SSO across plugin subdomains (project.4950.store,
+	// expense.4950.store, …). See setAuthCookies in middleware.go.
+	cookieDomain string
+
 	// Plugin cutover flags removed — all plugin REST surfaces are now
 	// remote. The H-series cleanups dropped the per-plugin gated route
 	// blocks; see open-platform.md for history.
@@ -408,6 +415,10 @@ func NewServer(cfg Config) (*Server, error) {
 	server.metricsRegistry = newMetrics()
 	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
+	server.cookieDomain = strings.TrimSpace(cfg.CookieDomain)
+	if server.cookieDomain != "" {
+		log.Printf("auth: cookies scoped to Domain=%s (cross-subdomain SSO enabled)", server.cookieDomain)
+	}
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
 	server.llmProxyProber.start()
