@@ -23,6 +23,7 @@ import {
 import type { AgentLoop } from "./types/room.js";
 import { logout } from "./api/session.js";
 import { byId } from "./lib/dom.js";
+import { renderMarkdown } from "./lib/marked.js";
 import { hydrateSidebarFoot, hydrateSiteBrand } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import type { Room, RoomMember, RoomMessage } from "./types/room.js";
@@ -179,11 +180,15 @@ function renderMessages(): void {
     .map((m) => {
       const who = escapeHTML(m.sender_username || m.sender_id || "?");
       const when = new Date(m.created_at).toLocaleString();
-      const body = escapeHTML(m.content || "");
+      // renderMarkdown handles its own escaping (it sanitizes via the
+      // marked pipeline) AND emits real markdown — headings, lists,
+      // code blocks, links. Match chat.ts's `markdown-body` wrap so
+      // both surfaces inherit the same CSS rules.
+      const body = renderMarkdown(m.content || "");
       const metaPill = showMeta ? renderMetadataPill(m) : "";
       return `<div style="padding:6px 8px; border-bottom:1px solid var(--border,#eee);">` +
         `<div style="font-size:11px; color:var(--meta,#888);">${who} · ${when}</div>` +
-        `<div style="margin-top:2px; white-space:pre-wrap;">${body}</div>` +
+        `<div class="markdown-body" style="margin-top:2px;">${body}</div>` +
         metaPill +
         `</div>`;
     })
