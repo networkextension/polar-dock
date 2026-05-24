@@ -514,11 +514,10 @@ logoutBtn?.addEventListener("click", () => {
   hydrateSidebarFoot();
   // Capture self-id BEFORE first loadRooms so the bubble renderer
   // aligns the current user's messages to the right on first paint.
-  // fetchCurrentUser swallows 401 and returns null; we only set when
-  // it resolves to a real session.
+  // fetchCurrentUser returns {response, data}; data.id is unset on 401.
   try {
-    const me = await fetchCurrentUser();
-    if (me?.id) currentUserId = String(me.id);
+    const { response, data } = await fetchCurrentUser();
+    if (response.ok && data?.user_id) currentUserId = String(data.user_id);
   } catch {
     /* fall through — bubbles will all render as `other` (server still 401s on writes) */
   }
