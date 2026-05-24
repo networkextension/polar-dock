@@ -74,6 +74,32 @@ function formatLatency(ms: number): string {
     return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** Standalone meta-foot atom — `sender · model · time · latency · extras`.
+ *
+ * Returns the full `<div class="message-meta message-meta-foot">…</div>`
+ * or empty string when no parts apply. Used by renderBubble's bot foot
+ * AND by chat.ts directly (chat.ts builds its bubble inline because of
+ * its many content-variant branches but wants the same meta foot HTML).
+ */
+export function renderBubbleMetaFoot(opts: {
+    sender: string;
+    model?: string;
+    timestamp: string;
+    latencyMs?: number;
+    /** Pre-formatted HTML strings appended after latency (streaming pulse, failed badge, etc.). */
+    extraParts?: string[];
+}): string {
+    const parts: string[] = [
+        escapeHtml(opts.sender),
+        opts.model ? escapeHtml(opts.model) : "",
+        escapeHtml(opts.timestamp),
+        opts.latencyMs && opts.latencyMs > 0 ? escapeHtml(formatLatency(opts.latencyMs)) : "",
+        ...(opts.extraParts || []),
+    ].filter(Boolean);
+    if (parts.length === 0) return "";
+    return `<div class="message-meta message-meta-foot">${parts.join(" · ")}</div>`;
+}
+
 function avatarHtml(m: BubbleMessage): string {
     if (m.sender_icon) {
         return `<img class="avatar-xs message-avatar" src="${escapeHtml(m.sender_icon)}" alt="${escapeHtml(m.sender_username || "")}" />`;
@@ -118,17 +144,17 @@ export function renderBubble(m: BubbleMessage, ctx: BubbleContext): string {
     // nothing (alignment + avatar already identify them).
     let footerHtml = "";
     if (isBot) {
-        const model = m.llm_model || m.llm_config_name || "";
-        const latency = m.latency_ms && m.latency_ms > 0 ? formatLatency(m.latency_ms) : "";
-        const parts = [
-            escapeHtml(m.sender_username || m.sender_id),
-            escapeHtml(model),
-            escapeHtml(formatTime(m.created_at)),
-            latency ? escapeHtml(latency) : "",
-            isFailedBot ? escapeHtml(t("chat.failed")) : "",
-        ].filter(Boolean);
         const trailer = ctx.metaTrailer ? ctx.metaTrailer(m) : "";
-        footerHtml = `<div class="message-meta message-meta-foot">${parts.join(" · ")}${trailer ? " " + trailer : ""}</div>`;
+        footerHtml = renderBubbleMetaFoot({
+            sender: m.sender_username || m.sender_id,
+            model: m.llm_model || m.llm_config_name,
+            timestamp: formatTime(m.created_at),
+            latencyMs: m.latency_ms,
+            extraParts: [
+                isFailedBot ? escapeHtml(t("chat.failed")) : "",
+                trailer,
+            ].filter(Boolean),
+        });
     } else if (ctx.metaTrailer) {
         // Non-bot messages may still want the trailer (rooms shows per-user
         // metadata too if/when enabled). Render it standalone.
