@@ -6,6 +6,7 @@ import { resolveAvatar } from "./lib/avatar.js";
 import { formatDeviceType } from "./lib/client.js";
 import { byId } from "./lib/dom.js";
 import { renderMarkdown } from "./lib/marked.js";
+import { renderBubbleMetaFoot } from "./lib/message-bubble.js";
 import { hydrateSiteBrand, renderSidebarFoot } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import { t } from "./lib/i18n.js";
@@ -946,18 +947,17 @@ function renderMessages(messages: ChatMessage[], scrollToBottom = false): void {
       const streamingMeta = isStreamingBot
         ? `<span class="message-meta-streaming">${t("chat.streaming") || "streaming"}<span class="message-streaming-dots"></span></span>`
         : "";
-      const botFootParts = isBotReply
-        ? [
-            escapeHtml(msg.sender_username),
-            escapeHtml(botModelMeta),
-            escapeHtml(formatTime(msg.created_at)),
-            latencyText ? escapeHtml(latencyText) : "",
-            streamingMeta,
-            isFailedBotReply ? escapeHtml(t("chat.failed")) : "",
-          ].filter(Boolean)
-        : [];
-      const botMetaFooter = botFootParts.length
-        ? `<div class="message-meta message-meta-foot">${botFootParts.join(" · ")}</div>`
+      const botMetaFooter = isBotReply
+        ? renderBubbleMetaFoot({
+            sender: msg.sender_username,
+            model: botModelMeta,
+            timestamp: formatTime(msg.created_at),
+            latencyMs: isStreamingBot ? undefined : msg.latency_ms,
+            extraParts: [
+              streamingMeta,
+              isFailedBotReply ? escapeHtml(t("chat.failed")) : "",
+            ].filter(Boolean),
+          })
         : "";
       if (isMine) {
         return `
