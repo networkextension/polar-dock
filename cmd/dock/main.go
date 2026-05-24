@@ -115,6 +115,11 @@ func main() {
 		// Set to ".4950.store" for SSO across plugin subdomains.
 		CookieDomain: os.Getenv("POLAR_COOKIE_DOMAIN"),
 
+		// Forward skill.advertise heartbeats to polar-hosts-svc so the
+		// row the UI reads stays fresh (the table moved to polar_hosts
+		// DB in H9 cleanup). Empty disables.
+		PolarHostsTouchURL: os.Getenv("POLAR_HOSTS_TOUCH_URL"),
+
 		// All plugin cutover flags were removed alongside their dock-side
 		// routes in the H-series cleanups; see open-platform.md for the
 		// history. Setting POLAR_*_REMOTE env vars no longer has any

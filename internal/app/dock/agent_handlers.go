@@ -442,6 +442,14 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 					log.Printf("[agent ws] ensure host_skill host=%s kind=%s: %v", ac.hostID, sk.Kind, err)
 				}
 			}
+			// H9 fallout: the legacy local update above hits ideamesh.hosts,
+			// but post-extraction the UI reads from polar_hosts via the
+			// polar-hosts plugin svc. Forward to polar-hosts so the row
+			// the UI sees gets refreshed too. Fire-and-forget; persist
+			// errors get logged but don't drop the WS frame.
+			if s.polarHostsTouchURL != "" {
+				go s.forwardSkillAdvertiseToPolarHosts(ac.hostID, msg.Skills, remoteIP, now)
+			}
 			log.Printf("[agent ws] skill.advertise host=%s skills=%d", ac.hostID, len(msg.Skills))
 		case "skill.event":
 			// Host module P1c.3: agent reports lifecycle events for a

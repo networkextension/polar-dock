@@ -157,4 +157,12 @@ type Config struct {
 	// Plugin cutover flags fully removed in the H-series cleanups. All
 	// plugin REST surfaces are remote now; the previous POLAR_<X>_REMOTE
 	// env vars are unused and the corresponding fields are gone.
+
+	// PolarHostsTouchURL forwards skill.advertise WS frames to polar-hosts
+	// so the row the UI reads (in polar_hosts DB) gets refreshed. Pre-H9
+	// dock owned the hosts table and updated it directly on every
+	// advertise; post-H9 the data lives in the plugin's DB. Set to
+	// http://127.0.0.1:8095/internal/v1/hosts/touch in the standard
+	// .57-style deploy. Empty disables forwarding (legacy behavior).
+	PolarHostsTouchURL string
 }
