@@ -145,6 +145,15 @@ type Config struct {
 	// doc/ops/grafana-integration.md.
 	MetricsToken string
 
+	// CookieDomain sets the Domain attribute on the auth Set-Cookie
+	// headers (access + refresh). Empty (default) leaves it unset, so
+	// the browser scopes the cookie to the request host only. Set to
+	// `.4950.store` (leading dot) so the cookie is sent for every
+	// `*.4950.store` subdomain — required for SSO across plugin UIs
+	// at project.4950.store, expense.4950.store, etc. Configure via
+	// POLAR_COOKIE_DOMAIN env on the dock launch env.
+	CookieDomain string
+
 	// Plugin cutover flags fully removed in the H-series cleanups. All
 	// plugin REST surfaces are remote now; the previous POLAR_<X>_REMOTE
 	// env vars are unused and the corresponding fields are gone.

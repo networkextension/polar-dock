@@ -115,7 +115,7 @@ func (s *Server) handleRegister(c *gin.Context) {
 		jsonError(c, http.StatusInternalServerError, "common.server_error")
 		return
 	}
-	setAuthCookies(c, accessToken, refreshToken)
+	s.setAuthCookies(c, accessToken, refreshToken)
 	s.recordLoginEvent(c, user.ID, "register", deviceType)
 
 	jsonMessage(c, http.StatusCreated, "auth.register_success", gin.H{
@@ -161,7 +161,7 @@ func (s *Server) handleLogin(c *gin.Context) {
 		jsonError(c, http.StatusInternalServerError, "common.server_error")
 		return
 	}
-	setAuthCookies(c, accessToken, refreshToken)
+	s.setAuthCookies(c, accessToken, refreshToken)
 	s.recordLoginEvent(c, user.ID, "password", deviceType)
 
 	jsonMessage(c, http.StatusOK, "auth.login_success", gin.H{
@@ -173,7 +173,7 @@ func (s *Server) handleLogin(c *gin.Context) {
 func (s *Server) handleTokenRefresh(c *gin.Context) {
 	presented := extractRefreshToken(c)
 	if presented == "" {
-		clearAuthCookies(c)
+		s.clearAuthCookies(c)
 		jsonError(c, http.StatusUnauthorized, "auth.unauthorized")
 		return
 	}
@@ -183,12 +183,12 @@ func (s *Server) handleTokenRefresh(c *gin.Context) {
 	if err != nil {
 		// On replay we've already revoked the entire family — force
 		// the client back to a full login instead of a retry loop.
-		clearAuthCookies(c)
+		s.clearAuthCookies(c)
 		jsonError(c, http.StatusUnauthorized, "auth.unauthorized")
 		return
 	}
 
-	setAuthCookies(c, accessToken, newRefresh)
+	s.setAuthCookies(c, accessToken, newRefresh)
 	jsonMessage(c, http.StatusOK, "auth.token_refreshed", nil)
 }
 
@@ -213,7 +213,7 @@ func (s *Server) handleLogout(c *gin.Context) {
 		}
 	}
 
-	clearAuthCookies(c)
+	s.clearAuthCookies(c)
 	jsonMessage(c, http.StatusOK, "auth.logout_success", nil)
 }
 

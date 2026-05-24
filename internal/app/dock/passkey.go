@@ -363,7 +363,7 @@ func (s *Server) handlePasskeyLoginFinish(c *gin.Context) {
 		jsonError(c, http.StatusInternalServerError, "common.server_error")
 		return
 	}
-	setAuthCookies(c, accessToken, refreshToken)
+	s.setAuthCookies(c, accessToken, refreshToken)
 	s.recordLoginEvent(c, user.ID, "passkey", deviceType)
 
 	jsonMessage(c, http.StatusOK, "auth.login_success", gin.H{
