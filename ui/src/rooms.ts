@@ -21,9 +21,9 @@ import {
   updateRoom,
 } from "./api/rooms.js";
 import type { AgentLoop } from "./types/room.js";
-import { logout } from "./api/session.js";
+import { fetchCurrentUser, logout } from "./api/session.js";
 import { byId } from "./lib/dom.js";
-import { renderMarkdown } from "./lib/marked.js";
+import { renderBubble, type BubbleMessage } from "./lib/message-bubble.js";
 import { hydrateSidebarFoot, hydrateSiteBrand } from "./lib/site.js";
 import { bindThemeSync, initStoredTheme } from "./lib/theme.js";
 import type { Room, RoomMember, RoomMessage } from "./types/room.js";
@@ -71,6 +71,11 @@ let activeRoomId: number | null = null;
 let activeMessages: RoomMessage[] = [];
 let activeMembers: RoomMember[] = [];
 let activeAgentLoops: Map<string, AgentLoop> = new Map();
+// Captured at init for the bubble renderer's alignment (mine vs other).
+// Empty string before the session call returns; bubbles then render every
+// message as "other" until the first render after init resolves, which is
+// fine — sender-id-based alignment, no flicker.
+let currentUserId = "";
 
 function escapeHTML(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -177,21 +182,16 @@ async function loadMessages(roomId: number): Promise<void> {
 function renderMessages(): void {
   const showMeta = showMetadataPref();
   messageListEl.innerHTML = activeMessages
-    .map((m) => {
-      const who = escapeHTML(m.sender_username || m.sender_id || "?");
-      const when = new Date(m.created_at).toLocaleString();
-      // renderMarkdown handles its own escaping (it sanitizes via the
-      // marked pipeline) AND emits real markdown — headings, lists,
-      // code blocks, links. Match chat.ts's `markdown-body` wrap so
-      // both surfaces inherit the same CSS rules.
-      const body = renderMarkdown(m.content || "");
-      const metaPill = showMeta ? renderMetadataPill(m) : "";
-      return `<div style="padding:6px 8px; border-bottom:1px solid var(--border,#eee);">` +
-        `<div style="font-size:11px; color:var(--meta,#888);">${who} · ${when}</div>` +
-        `<div class="markdown-body" style="margin-top:2px;">${body}</div>` +
-        metaPill +
-        `</div>`;
-    })
+    .map((m) =>
+      renderBubble(m as BubbleMessage, {
+        currentUserId,
+        // Qunliao bot convention: sender_id has the `bot_` prefix when
+        // a chat_room_members row points at a bot_user.
+        isBot: (msg) => msg.sender_id.startsWith("bot_"),
+        // Append the cost pill (rooms-only) to the meta footer.
+        metaTrailer: showMeta ? (msg) => renderMetadataPill(msg as RoomMessage) : undefined,
+      })
+    )
     .join("");
   // Scroll to bottom.
   messageScrollEl.scrollTop = messageScrollEl.scrollHeight;
@@ -512,6 +512,15 @@ logoutBtn?.addEventListener("click", () => {
 (async () => {
   hydrateSiteBrand();
   hydrateSidebarFoot();
+  // Capture self-id BEFORE first loadRooms so the bubble renderer
+  // aligns the current user's messages to the right on first paint.
+  // fetchCurrentUser returns {response, data}; data.id is unset on 401.
+  try {
+    const { response, data } = await fetchCurrentUser();
+    if (response.ok && data?.user_id) currentUserId = String(data.user_id);
+  } catch {
+    /* fall through — bubbles will all render as `other` (server still 401s on writes) */
+  }
   await loadRooms();
   connectWS();
 })();
