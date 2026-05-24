@@ -209,6 +209,37 @@ func runOneSession(cfg AgentConfig, botID, workdir string, verbose bool, spec *t
 	// keep running with no operator holding the other end.
 	defer activeRuns.stopAll("agent_disconnect")
 
+	// Periodic skill.advertise — keeps polar-hosts.last_seen_at fresh
+	// while the WS stays open. Without this the only advertise frame is
+	// the one above (right after hello), so a long-lived WS leaves the
+	// UI thinking the host went idle. Cadence matches plugin heartbeat
+	// (60s); the WS pings already cover liveness for the dock side.
+	go func() {
+		t := time.NewTicker(60 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				tick := map[string]any{
+					"kind":   "skill.advertise",
+					"skills": skills.Default().Advertised(),
+				}
+				b, err := json.Marshal(tick)
+				if err != nil {
+					continue
+				}
+				if err := send(b); err != nil {
+					// WS likely dead; the read loop will return next and
+					// trigger ctx.Done above, ending us cleanly.
+					log.Printf("periodic skill.advertise send failed: %v", err)
+					return
+				}
+			}
+		}
+	}()
+
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
