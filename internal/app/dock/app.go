@@ -887,6 +887,10 @@ func (s *Server) registerRoutes() {
 		// skill.uninstall frame to the agent attached to the host.
 		api.POST("/hosts/:host_id/skills/install", s.AuthMiddleware(), s.handleHostSkillInstall)
 		api.POST("/hosts/:host_id/skills/uninstall", s.AuthMiddleware(), s.handleHostSkillUninstall)
+		// P4: list (host, publisher, kind) tuples with catalog versions
+		// newer than what's installed. UI uses count for a badge +
+		// rows for a "1-click upgrade" link.
+		api.GET("/skill-updates", s.AuthMiddleware(), s.handleSkillUpdatesList)
 		api.GET("/agent/bots/:bot_id/config", s.PolarAgentAuthMiddleware(), s.handleAgentBotConfig)
 		api.POST("/agent/auto-register", s.PolarAgentAuthMiddleware(), s.handleAgentAutoRegister)
 		// P-recovery-0a: knowledge-base device upsert via agent token.
