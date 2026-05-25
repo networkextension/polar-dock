@@ -16,6 +16,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -62,17 +63,20 @@ func (s *Server) handleAttachmentUpload(c *gin.Context) {
 	// committing to the canonical content-addressed location.
 	stagePath := filepath.Join(s.uploadDir, "attachments-staging-"+generateResourceID()+filepath.Ext(file.Filename))
 	if err := os.MkdirAll(filepath.Dir(stagePath), 0o755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		log.Printf("attachment-upload: mkdir uploadDir=%s failed: %v", s.uploadDir, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误: " + err.Error()})
 		return
 	}
 	if err := c.SaveUploadedFile(file, stagePath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "文件保存失败"})
+		log.Printf("attachment-upload: SaveUploadedFile name=%q size=%d dst=%s failed: %v", file.Filename, file.Size, stagePath, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "文件保存失败: " + err.Error()})
 		return
 	}
 	storageRef, sha, err := s.hashAndStoreAttachmentFile(workspaceID, stagePath)
 	if err != nil {
+		log.Printf("attachment-upload: hashAndStore workspace=%s stage=%s failed: %v", workspaceID, stagePath, err)
 		_ = os.Remove(stagePath)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "文件写入失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "文件写入失败: " + err.Error()})
 		return
 	}
 
@@ -96,7 +100,8 @@ func (s *Server) handleAttachmentUpload(c *gin.Context) {
 		Sha256:         sha,
 	}
 	if err := s.insertAttachment(att); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		log.Printf("attachment-upload: insertAttachment workspace=%s sha=%s name=%q failed: %v", workspaceID, sha, file.Filename, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误: " + err.Error()})
 		return
 	}
 	att.DownloadURL = att.attachmentDownloadURL()
