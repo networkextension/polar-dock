@@ -59,10 +59,20 @@ func (s *Server) handleHostSkillInstall(c *gin.Context) {
 		return
 	}
 
-	entry, err := s.fetchCatalogEntry(req.CatalogID)
+	// P3: visibility is enforced by polar-hosts when we pass the
+	// operator's session workspace_id as a query param. A 404 from the
+	// catalog endpoint may mean "doesn't exist" OR "exists but belongs
+	// to another workspace" — surface as the same 404 to avoid leaking
+	// the existence of private bundles from other workspaces.
+	workspaceID := strings.TrimSpace(c.GetString("workspace_id"))
+	if workspaceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "active workspace required"})
+		return
+	}
+	entry, err := s.fetchCatalogEntry(req.CatalogID, workspaceID)
 	if err != nil {
 		if errors.Is(err, errCatalogNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "catalog entry not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "catalog entry not found or not visible to this workspace"})
 			return
 		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": "polar-hosts catalog lookup failed: " + err.Error()})
@@ -194,7 +204,7 @@ type catalogEntry struct {
 
 var errCatalogNotFound = errors.New("catalog entry not found")
 
-func (s *Server) fetchCatalogEntry(id string) (*catalogEntry, error) {
+func (s *Server) fetchCatalogEntry(id, workspaceID string) (*catalogEntry, error) {
 	base := strings.TrimSpace(s.polarHostsTouchURL)
 	if base == "" {
 		return nil, errors.New("POLAR_HOSTS_TOUCH_URL not configured")
@@ -207,7 +217,11 @@ func (s *Server) fetchCatalogEntry(id string) (*catalogEntry, error) {
 	if idx > 0 {
 		origin = base[:idx]
 	}
-	url := fmt.Sprintf("%s/api/skill-catalog/%s", origin, id)
+	// P3: use the loopback-trusted internal endpoint that takes
+	// workspace_id as a query param and applies the same visibility
+	// rule as the auth-gated /api/skill-catalog/:id.
+	url := fmt.Sprintf("%s/internal/v1/skill-catalog/%s?workspace_id=%s",
+		origin, id, workspaceID)
 	resp, err := http.Get(url) //nolint:gosec // operator-controlled host
 	if err != nil {
 		return nil, err
