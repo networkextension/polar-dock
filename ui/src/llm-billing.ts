@@ -45,6 +45,19 @@ interface MarketRow {
   my_application_status?: string;
 }
 
+interface LLMHealthItem {
+  config_id: number;
+  name: string;
+  model: string;
+  up: boolean;
+  reason?: string;
+  checked_at: string;
+}
+
+// Populated by loadHealth(); used by renderMarket() to render the
+// Availability column. Empty before the first probe pass completes.
+let healthByConfigID = new Map<number, LLMHealthItem>();
+
 interface TeamQuotaRow {
   id: number;
   llm_config_id: number;
@@ -236,6 +249,23 @@ function renderMarket(): void {
     }
     tr.appendChild(tdStatus);
 
+    // Upstream availability cell — empty until first probe pass.
+    // Driven by /api/llm-configs/health refreshed every 30s.
+    const tdHealth = document.createElement("td");
+    const h = healthByConfigID.get(row.id);
+    if (!h) {
+      tdHealth.innerHTML = '<span class="meta-subtitle" title="尚未探测">—</span>';
+    } else if (h.up) {
+      const since = fmtRelative(h.checked_at);
+      tdHealth.innerHTML = `<span style="color: var(--ok, #0a7a3a);" title="最近探测 ${since}">🟢 可用</span>`;
+    } else {
+      const reason = h.reason || "未知原因";
+      const safe = reason.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      const since = fmtRelative(h.checked_at);
+      tdHealth.innerHTML = `<span style="color: var(--danger, #c00);" title="${safe} · 最近探测 ${since}">🔴 不可用</span>`;
+    }
+    tr.appendChild(tdHealth);
+
     const tdAct = document.createElement("td");
     tdAct.style.whiteSpace = "nowrap";
     if (!hasBudget) {
@@ -276,6 +306,29 @@ async function loadMarket(): Promise<void> {
   } catch (err) {
     setStatus("加载市场失败");
     console.error(err);
+  }
+}
+
+// loadHealth pulls the prober snapshot and updates the in-memory map
+// keyed by llm_config.id. Called once at boot and then on a 30s timer
+// matching the backend probe cadence. Failures are silent — the
+// status cells gracefully fall back to "—".
+async function loadHealth(): Promise<void> {
+  // Skip the round-trip if this page doesn't render the marketplace
+  // table — e.g. on llm-billing.html (admin-only) or llm-apps.html.
+  if (!marketTbody) return;
+  try {
+    const { data } = await requestJson<{ items: LLMHealthItem[] }>("/api/llm-configs/health");
+    const next = new Map<number, LLMHealthItem>();
+    for (const item of data.items ?? []) {
+      next.set(item.config_id, item);
+    }
+    healthByConfigID = next;
+    if (marketRows.length > 0) {
+      renderMarket();
+    }
+  } catch (err) {
+    console.error("loadHealth failed", err);
   }
 }
 
@@ -896,10 +949,17 @@ async function bootstrap(): Promise<void> {
     if (adminQuotasSection) adminQuotasSection.hidden = false;
     if (adminAppsSection) adminAppsSection.hidden = false;
   }
-  await Promise.all([loadMarket(), loadMyTokens()]);
+  await Promise.all([loadMarket(), loadMyTokens(), loadHealth()]);
   if (isAdmin) {
     await Promise.all([loadQuotas(), loadApplications()]);
   }
+  // Match backend probe cadence — refresh the status column on
+  // /llm.html so a recovery / new failure surfaces within ~30s.
+  // No-op on pages that don't render the marketplace table (the
+  // guard inside loadHealth handles it).
+  setInterval(() => {
+    void loadHealth();
+  }, 30000);
 }
 
 // Wire modal buttons
