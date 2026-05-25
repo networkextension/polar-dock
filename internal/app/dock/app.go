@@ -718,6 +718,7 @@ func (s *Server) registerRoutes() {
 		// LLM billing (B1) — shared-config marketplace, applications,
 		// and per-team budgets.
 		api.GET("/llm-configs/marketplace", s.AuthMiddleware(), s.handleSharedLLMConfigList)
+		api.GET("/llm-configs/health", s.AuthMiddleware(), s.handleLLMConfigsHealth)
 		api.GET("/llm-config-applications", s.AuthMiddleware(), s.handleLLMConfigApplicationsListMine)
 		api.POST("/llm-config-applications", s.AuthMiddleware(), s.handleLLMConfigApply)
 		api.PUT("/admin/llm-configs/:id/pricing", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminLLMConfigPricingUpdate)

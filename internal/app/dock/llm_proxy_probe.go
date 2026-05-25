@@ -42,13 +42,17 @@ type llmProxyProber struct {
 }
 
 // llmProbeResult is the per-config probe state kept in memory so
-// non-Prometheus callers (e.g. dashboard-stats handler) can read
-// upstream health without scraping /metrics.
+// non-Prometheus callers (e.g. dashboard-stats handler, /api/llm-configs/health)
+// can read upstream health without scraping /metrics.
 type llmProbeResult struct {
+	ConfigID  int64
 	Name      string
 	Model     string
 	Up        bool
 	CheckedAt time.Time
+	// Reason is the human-readable failure surface (HTTP status,
+	// timeout, transport error) when Up==false. Empty when Up==true.
+	Reason string
 }
 
 func newLLMProxyProber(s *Server) *llmProxyProber {
@@ -144,14 +148,16 @@ func (p *llmProxyProber) runOnce() {
 		wg.Add(1)
 		go func(t target) {
 			defer wg.Done()
-			ok := p.probeOne(t.baseURL, t.model, t.apiKey, t.proxyURL)
+			ok, reason := p.probeOne(t.baseURL, t.model, t.apiKey, t.proxyURL)
 			p.server.metricsRegistry.setLLMUpstreamUp(t.id, t.name, t.model, ok)
 			p.mu.Lock()
 			p.lastResults[t.id] = llmProbeResult{
+				ConfigID:  t.id,
 				Name:      t.name,
 				Model:     t.model,
 				Up:        ok,
 				CheckedAt: time.Now(),
+				Reason:    reason,
 			}
 			p.mu.Unlock()
 		}(t)
@@ -159,13 +165,14 @@ func (p *llmProxyProber) runOnce() {
 	wg.Wait()
 }
 
-// probeOne fires one minimal completion. Returns true on 2xx within
-// timeout. Provider-specific quirks (e.g. some endpoints reject
-// max_tokens=1) are absorbed by allowing any successful response
-// with at least a parseable structure.
-func (p *llmProxyProber) probeOne(baseURL, model, apiKey, proxyURL string) bool {
+// probeOne fires one minimal completion. Returns (up, reason). On
+// failure, reason is a short human-readable string suitable for the UI
+// (HTTP status code, timeout, transport error). Provider-specific
+// quirks (e.g. some endpoints reject max_tokens=1) are absorbed by
+// allowing any successful response with at least a parseable structure.
+func (p *llmProxyProber) probeOne(baseURL, model, apiKey, proxyURL string) (bool, string) {
 	if p.server.aiAgent == nil {
-		return false
+		return false, "aiAgent uninitialized"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), llmProbeTimeout)
 	defer cancel()
@@ -187,12 +194,22 @@ func (p *llmProxyProber) probeOne(baseURL, model, apiKey, proxyURL string) bool 
 	}
 	resp, err := p.server.aiAgent.requestChatCompletion(runtimeCfg, payload)
 	if err != nil {
-		return false
+		// Trim verbose error messages so they fit in a UI cell.
+		// Typical shapes we see: "HTTP 401: …", "context deadline exceeded",
+		// "dial tcp …: connect: connection refused".
+		msg := err.Error()
+		if len(msg) > 200 {
+			msg = msg[:200] + "…"
+		}
+		return false, msg
 	}
 	if resp == nil {
-		return false
+		return false, "empty response"
 	}
 	// Any non-empty response shape counts as "up" — some upstreams
 	// return only `choices` with empty content for max_tokens=1.
-	return len(resp.Choices) > 0 || resp.Usage != nil
+	if len(resp.Choices) > 0 || resp.Usage != nil {
+		return true, ""
+	}
+	return false, "no choices and no usage in response"
 }

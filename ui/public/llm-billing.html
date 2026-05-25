@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LLM 定价与配额 — Polar-</title>
+    <title>LLM 计费 — Polar-</title>
     <link rel="icon" type="image/svg+xml" href="/assets/polaris-logo.svg" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="stylesheet" href="/styles.css" />
@@ -44,8 +44,14 @@
           <a class="lp-nav-item" href="/editor.html">
             <span class="lp-nav-icon" data-icon="code">✎</span><span>Editor</span>
           </a>
-          <a class="lp-nav-item active" href="/llm-billing.html">
+          <a class="lp-nav-item" href="/llm.html">
+            <span class="lp-nav-icon" data-icon="sparkles">🤖</span><span>LLM</span>
+          </a>
+          <a class="lp-nav-item active" href="/llm-billing.html" hidden data-admin-nav>
             <span class="lp-nav-icon" data-icon="dollar-sign">¤</span><span>LLM 计费</span>
+          </a>
+          <a class="lp-nav-item" href="/llm-apps.html" hidden data-admin-nav>
+            <span class="lp-nav-icon" data-icon="inbox">📥</span><span>LLM 申请</span>
           </a>
           <a class="lp-nav-item" href="/expense.html">
             <span class="lp-nav-icon" data-icon="receipt">💰</span><span>家庭账本</span>
@@ -91,95 +97,29 @@
 
       <div class="lp-main">
         <div class="lp-topbar">
-          <span class="lp-topbar-title">LLM 计费</span>
+          <span class="lp-topbar-title">LLM 计费 · 单价 + 团队配额</span>
           <div class="lp-topbar-end">
             <span id="billingStatus" class="meta-subtitle"></span>
           </div>
         </div>
 
         <div class="lp-content" style="padding: 12px; display: flex; flex-direction: column; gap: 14px;">
-          <!-- Marketplace (all members) -->
-          <section class="lp-preview-main">
-            <div class="lp-preview-head">
-              <span class="badge">LLM 市场</span>
-              <span id="marketCount" class="lp-mode-badge">—</span>
-            </div>
-            <div class="lp-preview-body">
-              <p class="meta-subtitle" style="margin: 0 0 12px 0;">
-                平台共享的 LLM 配置。管理员按 LLM 设单价 + 充值预付余额；团队消耗按价计费扣余额，
-                余额 ≤ 0 时聊天返回 402。未开通的配置点 <strong>申请</strong> 自动审批。
-              </p>
-              <div id="marketWrap">
-                <table id="marketTable" class="lp-table" hidden>
-                  <thead>
-                    <tr>
-                      <th>名称</th>
-                      <th>模型</th>
-                      <th>$/1M in</th>
-                      <th>$/1M out</th>
-                      <th>本月已用</th>
-                      <th>本月预算</th>
-                      <th>余额</th>
-                      <th>状态</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody id="marketTbody"></tbody>
-                </table>
-                <div id="marketEmpty" class="meta-subtitle" hidden>暂无共享配置。管理员先在 Bot Management 把某个 LLM 配置标记为 shared。</div>
-                <div id="marketLoading" class="meta-subtitle">加载中...</div>
-              </div>
-            </div>
-          </section>
-
-          <!-- B6: member-side own-token consumption -->
-          <section class="lp-preview-main" id="myTokensSection">
-            <div class="lp-preview-head">
-              <span class="badge">我的 API Token 用量</span>
-              <span id="myTokensCount" class="lp-mode-badge">—</span>
-              <label style="margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted, #6b7280); cursor: pointer;">
-                <input type="checkbox" id="myTokensShowRevokedToggle" />
-                <span>显示已撤销</span>
-              </label>
-            </div>
-            <div class="lp-preview-body">
-              <p class="meta-subtitle" style="margin: 0 0 10px 0;">
-                团队名下的 proxy token + 本月调用次数 / USD。点「📊 审计」展开调用历史，含每次调用的延迟、状态、错误。
-              </p>
-              <table id="myTokensTable" class="lp-table" hidden>
-                <thead>
-                  <tr>
-                    <th>名称</th>
-                    <th>前缀</th>
-                    <th>上游 LLM</th>
-                    <th>本月调用</th>
-                    <th>本月成功率</th>
-                    <th>本月 USD</th>
-                    <th>最近使用</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody id="myTokensTbody"></tbody>
-              </table>
-              <div id="myTokensEmpty" class="meta-subtitle" hidden>这个工作区还没有 proxy token。联系管理员在 /proxy-tokens.html 创建。</div>
-              <div id="myTokensLoading" class="meta-subtitle">加载中...</div>
-            </div>
-          </section>
-
-          <!-- Admin: pricing editor + all team-quotas + all applications -->
-          <section class="lp-preview-main" id="adminPricingSection" hidden>
+          <!-- Admin: pricing editor entry point -->
+          <section class="lp-preview-main" id="adminPricingSection">
             <div class="lp-preview-head">
               <span class="badge">管理员 · 单价</span>
-              <span class="meta-subtitle">点击市场表里的"✏ 价格"按钮编辑</span>
+              <span class="meta-subtitle">点 /llm.html 市场表里的「✏ 价格」按钮编辑</span>
             </div>
             <div class="lp-preview-body">
               <p class="meta-subtitle" style="margin: 0;">
                 NUMERIC(10,4) — 单位 USD / 1M tokens。留空或填 0 = 回退到内置 prefix 价格表。
+                单价编辑入口在 <a href="/llm.html">/llm.html</a> 市场表的每一行。
               </p>
             </div>
           </section>
 
-          <section class="lp-preview-main" id="adminQuotasSection" hidden>
+          <!-- Admin: per-team quotas -->
+          <section class="lp-preview-main" id="adminQuotasSection">
             <div class="lp-preview-head">
               <span class="badge">管理员 · 团队配额</span>
               <span id="quotasCount" class="lp-mode-badge">—</span>
@@ -199,73 +139,6 @@
               <div id="quotasEmpty" class="meta-subtitle" hidden>暂无团队配额。第一个团队点"申请"后会自动出现。</div>
             </div>
           </section>
-
-          <section class="lp-preview-main" id="adminAppsSection" hidden>
-            <div class="lp-preview-head">
-              <span class="badge">管理员 · 申请记录</span>
-              <span id="appsCount" class="lp-mode-badge">—</span>
-            </div>
-            <div class="lp-preview-body">
-              <table id="appsTable" class="lp-table" hidden>
-                <thead>
-                  <tr>
-                    <th>时间</th><th>团队</th><th>申请人</th><th>LLM 配置</th><th>状态</th><th>授予预算</th><th>备注</th>
-                  </tr>
-                </thead>
-                <tbody id="appsTbody"></tbody>
-              </table>
-              <div id="appsEmpty" class="meta-subtitle" hidden>暂无申请记录。</div>
-            </div>
-          </section>
-        </div>
-      </div>
-    </div>
-
-    <!-- Pricing edit modal (admin) -->
-    <div id="pricingModal" class="lp-modal" hidden>
-      <div class="lp-modal-card" style="max-width: 460px;">
-        <div class="lp-modal-head">
-          <span class="lp-modal-title" id="pricingTitle">编辑单价</span>
-          <button id="pricingCloseBtn" type="button" class="lp-modal-close">✕</button>
-        </div>
-        <div class="lp-modal-body">
-          <div class="settings-section-card" style="margin-bottom: 12px;">
-            <label class="settings-section-title" for="pricingInput">$/1M input tokens</label>
-            <input id="pricingInput" class="input" type="number" min="0" step="0.0001" placeholder="留空 = 回退" />
-          </div>
-          <div class="settings-section-card" style="margin-bottom: 12px;">
-            <label class="settings-section-title" for="pricingOutput">$/1M output tokens</label>
-            <input id="pricingOutput" class="input" type="number" min="0" step="0.0001" placeholder="留空 = 回退" />
-          </div>
-          <div id="pricingError" class="status-text" style="color: var(--danger, #c00);"></div>
-        </div>
-        <div class="lp-modal-foot">
-          <button id="pricingCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
-          <button id="pricingSubmitBtn" type="button" class="btn-inline btn-primary">保存</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Apply modal (member) -->
-    <div id="applyModal" class="lp-modal" hidden>
-      <div class="lp-modal-card" style="max-width: 460px;">
-        <div class="lp-modal-head">
-          <span class="lp-modal-title" id="applyTitle">申请 LLM 配置</span>
-          <button id="applyCloseBtn" type="button" class="lp-modal-close">✕</button>
-        </div>
-        <div class="lp-modal-body">
-          <p class="meta-subtitle" style="margin: 0 0 10px 0;" id="applyHint">
-            申请后立即自动审批，默认月预算 $10。超额后会返回 402，登录后将提示充值。
-          </p>
-          <div class="settings-section-card">
-            <label class="settings-section-title" for="applyNote">备注（可选）</label>
-            <input id="applyNote" class="input" type="text" placeholder="e.g. 给 cursor 客户端用" />
-          </div>
-          <div id="applyError" class="status-text" style="color: var(--danger, #c00);"></div>
-        </div>
-        <div class="lp-modal-foot">
-          <button id="applyCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
-          <button id="applySubmitBtn" type="button" class="btn-inline btn-primary">申请</button>
         </div>
       </div>
     </div>
@@ -288,93 +161,6 @@
         <div class="lp-modal-foot">
           <button id="quotaCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
           <button id="quotaSubmitBtn" type="button" class="btn-inline btn-primary">保存</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Recharge modal (admin) -->
-    <div id="rechargeModal" class="lp-modal" hidden>
-      <div class="lp-modal-card" style="max-width: 460px;">
-        <div class="lp-modal-head">
-          <span class="lp-modal-title" id="rechargeTitle">充值</span>
-          <button id="rechargeCloseBtn" type="button" class="lp-modal-close">✕</button>
-        </div>
-        <div class="lp-modal-body">
-          <p class="meta-subtitle" style="margin: 0 0 10px 0;" id="rechargeHint">
-            给该 (团队, LLM) 组合预付一笔余额。立即生效；聊天时按价计费扣减；余额 ≤ 0 时返回 402。
-            可填负数清退余额。
-          </p>
-          <div class="settings-section-card" style="margin-bottom: 12px;">
-            <label class="settings-section-title" for="rechargeAmount">金额 (USD)</label>
-            <input id="rechargeAmount" class="input" type="number" step="0.01" placeholder="e.g. 100" />
-          </div>
-          <div class="settings-section-card" style="margin-bottom: 12px;">
-            <label class="settings-section-title" for="rechargeNote">备注（可选）</label>
-            <input id="rechargeNote" class="input" type="text" placeholder="e.g. 2026-05 首次充值" />
-          </div>
-          <div id="rechargeError" class="status-text" style="color: var(--danger, #c00);"></div>
-        </div>
-        <div class="lp-modal-foot">
-          <button id="rechargeCancelBtn" type="button" class="btn-inline btn-secondary">取消</button>
-          <button id="rechargeSubmitBtn" type="button" class="btn-inline btn-primary">充值</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- B6: audit modal — same shape as /proxy-tokens.html, member-side data source -->
-    <div id="auditModal" class="lp-modal" hidden>
-      <div class="lp-modal-card" style="width: 95vw; max-width: 1400px;">
-        <div class="lp-modal-head" style="flex-direction: column; align-items: stretch; gap: 4px;">
-          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-            <span class="lp-modal-title" id="auditTitle">审计日志</span>
-            <button id="auditCloseBtn" type="button" class="lp-modal-close">✕</button>
-          </div>
-          <div id="auditSubtitle" class="meta-subtitle" style="display: flex; align-items: center; gap: 6px;"></div>
-        </div>
-        <div class="lp-modal-body">
-          <div class="toolbar" style="margin-bottom: 12px; gap: 8px; align-items: center;">
-            <span class="meta-subtitle">时间范围：</span>
-            <div id="auditDaysGroup" role="tablist" style="display: inline-flex; border: 1px solid var(--border, #d1d5db); border-radius: 6px; overflow: hidden;">
-              <button type="button" class="audit-day-btn" data-days="1" style="padding: 4px 12px; background: transparent; border: none; border-right: 1px solid var(--border, #d1d5db); cursor: pointer; font-size: 13px;">1d</button>
-              <button type="button" class="audit-day-btn" data-days="7" style="padding: 4px 12px; background: transparent; border: none; border-right: 1px solid var(--border, #d1d5db); cursor: pointer; font-size: 13px;">7d</button>
-              <button type="button" class="audit-day-btn" data-days="30" style="padding: 4px 12px; background: transparent; border: none; cursor: pointer; font-size: 13px;">30d</button>
-            </div>
-            <select id="auditDays" hidden>
-              <option value="1">1</option>
-              <option value="7" selected>7</option>
-              <option value="30">30</option>
-            </select>
-            <button id="auditRefreshBtn" type="button" class="btn-inline btn-secondary" title="刷新">⟲</button>
-            <span id="auditStatus" class="meta-subtitle"></span>
-          </div>
-
-          <div class="settings-section-card" style="margin-bottom: 12px;">
-            <div class="settings-section-title">按模型聚合</div>
-            <table id="auditAggregateTable" class="lp-table" style="width: 100%; margin-top: 6px;" hidden>
-              <thead>
-                <tr>
-                  <th>模型</th><th>调用</th><th>成功率</th><th>prompt</th><th>completion</th><th>total</th><th>估算 USD</th>
-                </tr>
-              </thead>
-              <tbody id="auditAggregateTbody"></tbody>
-            </table>
-            <div id="auditAggregateEmpty" class="meta-subtitle" hidden>该时段无调用记录。</div>
-          </div>
-
-          <div class="settings-section-card">
-            <div class="settings-section-title">最近调用</div>
-            <div style="overflow-x: auto;">
-              <table id="auditCallsTable" class="lp-table" style="width: 100%; margin-top: 6px; white-space: nowrap;" hidden>
-                <thead>
-                  <tr>
-                    <th>时间</th><th>状态</th><th>模型</th><th>tokens (P/C)</th><th>USD</th><th>延迟</th><th>错误</th>
-                  </tr>
-                </thead>
-                <tbody id="auditCallsTbody"></tbody>
-              </table>
-            </div>
-            <div id="auditCallsEmpty" class="meta-subtitle" hidden>无调用记录。</div>
-          </div>
         </div>
       </div>
     </div>
