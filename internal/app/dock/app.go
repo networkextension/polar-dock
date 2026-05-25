@@ -882,6 +882,11 @@ func (s *Server) registerRoutes() {
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
 		api.GET("/agent/whoami", s.handleAgentWhoAmI)
 		api.GET("/agent/binary", s.handleAgentBinary)
+		// P1a: dock-initiated bundle install/uninstall. Admin issues
+		// the REST call; dock translates into a WS skill.install /
+		// skill.uninstall frame to the agent attached to the host.
+		api.POST("/hosts/:host_id/skills/install", s.AuthMiddleware(), s.handleHostSkillInstall)
+		api.POST("/hosts/:host_id/skills/uninstall", s.AuthMiddleware(), s.handleHostSkillUninstall)
 		api.GET("/agent/bots/:bot_id/config", s.PolarAgentAuthMiddleware(), s.handleAgentBotConfig)
 		api.POST("/agent/auto-register", s.PolarAgentAuthMiddleware(), s.handleAgentAutoRegister)
 		// P-recovery-0a: knowledge-base device upsert via agent token.
