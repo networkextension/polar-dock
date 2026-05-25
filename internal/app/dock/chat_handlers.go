@@ -1160,8 +1160,13 @@ func (s *Server) handleChatMessageDetail(c *gin.Context) {
 const (
 	chatAttachmentMaxImageSize = 10 << 20  // 10 MB
 	chatAttachmentMaxVideoSize = 100 << 20 // 100 MB
-	chatAttachmentMaxFileSize  = 50 << 20  // 50 MB
+	chatAttachmentMaxFileSize  = 200 << 20 // 200 MB — covers RE archives, IPAs, log bundles
 )
+
+// nginx note: the dock vhost (zen.4950.store) must allow at least
+// `client_max_body_size 200m;` for the above cap to be reachable.
+// Without it, large uploads fail at nginx with 413 before this
+// handler ever runs.
 
 func (s *Server) handleChatSendAttachment(c *gin.Context) {
 	userID, _ := c.Get("user_id")
@@ -1229,7 +1234,14 @@ func (s *Server) handleChatSendAttachment(c *gin.Context) {
 		maxSize = chatAttachmentMaxVideoSize
 	}
 	if file.Size > maxSize {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("文件大小超过限制（最大 %d MB）", maxSize>>20)})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":          fmt.Sprintf("文件 %.1f MB 超过限制（最大 %d MB）", float64(file.Size)/(1<<20), maxSize>>20),
+			"code":           "attachment_too_large",
+			"file_size":      file.Size,
+			"file_size_max":  maxSize,
+			"file_size_mb":   float64(file.Size) / (1 << 20),
+			"limit_mb":       maxSize >> 20,
+		})
 		return
 	}
 
