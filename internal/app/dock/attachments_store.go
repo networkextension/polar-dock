@@ -36,7 +36,11 @@ const (
 	AttachmentStorageLocalFS = "local_fs"
 	AttachmentStorageRemote  = "remote"
 
-	attachmentMaxSize = 100 * 1024 * 1024 // 100 MiB per file
+	// Kept in sync with chatAttachmentMaxFileSize (chat_handlers.go).
+	// 200 MiB covers RE archives + textbook PDFs (e.g. OS Internals Vol 2)
+	// without making the upload UX painful. nginx vhost must be at
+	// least client_max_body_size 200m — see scripts/nginx/dock-vhost-snippet.conf.
+	attachmentMaxSize = 200 * 1024 * 1024 // 200 MiB per file
 )
 
 // allowedAttachmentExtensions is the whitelist for the new
