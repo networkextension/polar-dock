@@ -100,10 +100,12 @@ The platform is organized into modules. Each module is workspace-scoped (a works
 
 ### Frontend
 
+Lives in its own repo: **[networkextension/polar-dock-ui](https://github.com/networkextension/polar-dock-ui)** (private).
+
 - TypeScript + esbuild
 - Vanilla JavaScript modules (no framework)
 - `marked` for Markdown rendering
-- `express` for local UI hosting and API proxying
+- `express` for local dev hosting and API proxying
 
 ### Local Coding Agents (optional, paired via polar-agent)
 
@@ -129,6 +131,31 @@ The platform is organized into modules. Each module is workspace-scoped (a works
 ├── scripts                   # Setup, migrations, release helpers
 └── data                      # Runtime data (uploads, GeoLite db, ...)
 ```
+
+## Companion Repositories
+
+The dock is the API + agent core. Everything else lives in its own repo
+under [networkextension/](https://github.com/networkextension):
+
+| Repo | Visibility | What it is |
+|---|---|---|
+| **[polar-dock-ui](https://github.com/networkextension/polar-dock-ui)** | private | The web UI — HTML pages + TypeScript bundles served in front of this dock. Built with esbuild → `dist/`. CI on every push. |
+| [polar-sdk](https://github.com/networkextension/polar-sdk) | public | Go SDK + HMAC plugin-token helpers shared by every plugin service |
+| [polar-agent](https://github.com/networkextension/polar-agent) | public | Local-side CLI: pairs a user's machine with a bot, runs skills (shell, VNC, MCP, library, …) |
+| [polar-hosts](https://github.com/networkextension/polar-hosts) | public | Hosts + skill catalog + workspace-scoped skill installs |
+| [polar-wg](https://github.com/networkextension/polar-wg) | public | wg-mac mesh control plane + Headscale-compat self-hosted coordinator |
+| [polar-library](https://github.com/networkextension/polar-library) | public | Reverse-engineering library: devices, firmwares, functions |
+| [polar-projects](https://github.com/networkextension/polar-projects) | public | PRD decompose → plan → task pickup |
+| [polar-video](https://github.com/networkextension/polar-video) | public | Video studio: provider dispatch, polling, render |
+| [polar-expense](https://github.com/networkextension/polar-expense) | public | Family expense ledger + OCR/multimodal extract |
+| [polar-latch](https://github.com/networkextension/polar-latch) | public | Latch profiles + rules + proxy |
+| [polar-packtunnel](https://github.com/networkextension/polar-packtunnel) | private | Pack-tunnel rules + proxy (split-out, not yet open) |
+| [polar-iosdist](https://github.com/networkextension/polar-iosdist) | private | iOS distribution + ASC + signing |
+| [polar-ui-common](https://github.com/networkextension/polar-ui-common) | private | Shared UI library used by plugin pages |
+
+Plugins talk back to this dock via the `/internal/v1/*` API (HMAC plugin
+tokens). See `doc/arch/internal-api-v1.md` for the contract and
+`doc/arch/open-platform.md` for the overall architecture.
 
 ## Local Development
 
