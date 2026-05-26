@@ -1,8 +1,12 @@
 # Multi-stage dock image. Final image carries:
 #   /app/dock                        the dock binary for $TARGETPLATFORM
-#   /app/ui/dist/                    built UI static + express server
 #   /app/dist/agents/                polar-agent binaries for ALL platforms
 #                                    (so /api/agent/binary works zero-config)
+#
+# UI is no longer baked in — the dock binary serves /api only. The
+# static UI lives in its own repo (networkextension/polar-dock-ui)
+# and is fronted by nginx (or any static server) at deploy time.
+# See README "UI" section for the rsync/mount recipe.
 #
 # POLAR_AGENT_DIST_DIR is set to /app/dist/agents so the binary
 # endpoint serves them out of the box. Operator can override to
@@ -19,17 +23,7 @@
 #     ghcr.io/<org>/polar-dock:latest
 
 # ──────────────────────────────────────────────────────────────────
-# Stage 1: build UI
-# ──────────────────────────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM node:22-alpine AS ui-builder
-WORKDIR /work
-COPY ui/package.json ui/package-lock.json ./ui/
-RUN cd ui && npm ci
-COPY ui/ ./ui/
-RUN cd ui && npm run build
-
-# ──────────────────────────────────────────────────────────────────
-# Stage 2: cross-compile polar-agent for every supported target
+# Stage 1: cross-compile polar-agent for every supported target
 #
 # Build all 5 (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64,
 # windows/amd64) in one go so the final image can serve any of them
@@ -53,7 +47,7 @@ RUN mkdir -p /agents \
     done
 
 # ──────────────────────────────────────────────────────────────────
-# Stage 3: build dock binary for $TARGETPLATFORM
+# Stage 2: build dock binary for $TARGETPLATFORM
 # ──────────────────────────────────────────────────────────────────
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS dock-builder
 ARG TARGETOS
@@ -83,10 +77,6 @@ RUN apk add --no-cache tini ca-certificates tzdata curl
 WORKDIR /app
 
 COPY --from=dock-builder /dock                 /app/dock
-COPY --from=ui-builder   /work/ui/dist/        /app/ui/dist/
-COPY --from=ui-builder   /work/ui/server.js    /app/ui/server.js
-COPY --from=ui-builder   /work/ui/node_modules /app/ui/node_modules
-COPY --from=ui-builder   /work/ui/package.json /app/ui/package.json
 COPY --from=agent-builder /agents              /app/dist/agents
 
 # Env defaults: dock listens 0.0.0.0:8080, agents served from baked-in

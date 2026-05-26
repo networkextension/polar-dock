@@ -170,35 +170,34 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-# ---- launch UI -------------------------------------------------------------
-if [[ ! -d "$ROOT_DIR/ui" ]]; then
-  warn "ui/ directory missing — backend will keep running on :8080 but no web UI."
-  wait "$BACKEND_PID"
-  exit $?
-fi
-
-if ! command -v node >/dev/null 2>&1; then
-  warn "node not installed; UI cannot start. Install Node 18+ and re-run, or use the API directly on :8080."
-  wait "$BACKEND_PID"
-  exit $?
-fi
-
-if [[ "${SKIP_NPM_INSTALL:-false}" != "true" ]]; then
-  if [[ ! -d "$ROOT_DIR/ui/node_modules/express" ]]; then
-    say "installing UI runtime deps (express) ..."
-    (cd "$ROOT_DIR/ui" && npm install --omit=dev --silent)
+# ---- UI -------------------------------------------------------------
+# The static UI lives in its own repo: networkextension/polar-dock-ui.
+# Set POLAR_UI_DIR to a directory containing the built dist/, or point
+# any static server / nginx at it manually. If unset we just run the
+# backend on :8080 and exit when it does.
+if [[ -n "${POLAR_UI_DIR:-}" && -d "${POLAR_UI_DIR}" ]]; then
+  if ! command -v node >/dev/null 2>&1; then
+    warn "node not installed; UI cannot start. Install Node 22+ and re-run, or use the API directly on :8080."
+    wait "$BACKEND_PID"
+    exit $?
   fi
+  if [[ ! -f "${POLAR_UI_DIR}/server.js" ]]; then
+    warn "POLAR_UI_DIR=$POLAR_UI_DIR has no server.js — clone networkextension/polar-dock-ui there and run \`npm ci && npm run build\` first."
+    wait "$BACKEND_PID"
+    exit $?
+  fi
+  export PORT="${PORT:-3000}"
+  export API_BASE="${API_BASE:-http://localhost:8080}"
+  export UI_STATIC_DIR="${UI_STATIC_DIR:-dist}"
+  say "starting UI on http://localhost:$PORT (proxying API → $API_BASE) from $POLAR_UI_DIR"
+  (cd "$POLAR_UI_DIR" && node server.js) &
+  UI_PID=$!
+  printf "\n%s%sIdeaMesh ready:%s open %shttp://localhost:%s%s in your browser\n\n" \
+    "$C_BOLD" "$C_GREEN" "$C_RESET" "$C_BOLD" "$PORT" "$C_RESET"
+  printf "%sCtrl+C stops both processes.%s\n" "$C_DIM" "$C_RESET"
+else
+  say "no POLAR_UI_DIR set — backend running on :8080 only."
+  say "to enable the UI: git clone https://github.com/networkextension/polar-dock-ui ../polar-dock-ui && (cd ../polar-dock-ui && npm ci && npm run build) && POLAR_UI_DIR=\$PWD/../polar-dock-ui $0"
 fi
-
-export PORT="${PORT:-3000}"
-export API_BASE="${API_BASE:-http://localhost:8080}"
-export UI_STATIC_DIR="${UI_STATIC_DIR:-dist}"
-say "starting UI on http://localhost:$PORT (proxying API → $API_BASE)"
-(cd "$ROOT_DIR/ui" && node server.js) &
-UI_PID=$!
-
-printf "\n%s%sIdeaMesh ready:%s open %shttp://localhost:%s%s in your browser\n\n" \
-  "$C_BOLD" "$C_GREEN" "$C_RESET" "$C_BOLD" "$PORT" "$C_RESET"
-printf "%sCtrl+C stops both processes.%s\n" "$C_DIM" "$C_RESET"
 
 wait

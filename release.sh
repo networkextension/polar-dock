@@ -209,16 +209,10 @@ for f in LICENSE README.md; do
   fi
 done
 
-# ---- UI dist + express server -----------------------------------
-if [ -d "${REPO_ROOT}/ui/dist" ]; then
-  mkdir -p "${PKG_DIR}/ui"
-  cp -r "${REPO_ROOT}/ui/dist" "${PKG_DIR}/ui/dist"
-  cp "${REPO_ROOT}/ui/server.js" "${PKG_DIR}/ui/server.js"
-  cp "${REPO_ROOT}/ui/package.json" "${PKG_DIR}/ui/package.json"
-  if [ -f "${REPO_ROOT}/ui/package-lock.json" ]; then
-    cp "${REPO_ROOT}/ui/package-lock.json" "${PKG_DIR}/ui/package-lock.json"
-  fi
-fi
+# ---- UI -----------------------------------------------------------
+# UI is no longer bundled with the dock release. It ships from
+# networkextension/polar-dock-ui — operators rsync the built dist/
+# from there alongside this tarball at deploy time.
 
 # ---- scripts ----------------------------------------------------
 mkdir -p "${PKG_DIR}/scripts"
