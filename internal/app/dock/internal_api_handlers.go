@@ -7,6 +7,7 @@ package dock
 // See doc/arch/internal-api-v1.md for request/response shapes.
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -369,11 +370,16 @@ func (s *Server) handleInternalNotify(c *gin.Context) {
 // plugin in the registry).
 
 type internalHeartbeatReq struct {
-	Name          string `json:"name" binding:"required"`
-	Version       string `json:"version"`
-	Endpoint      string `json:"endpoint"`
-	UptimeSeconds int64  `json:"uptime_seconds"`
-	MetricsURL    string `json:"metrics_url"`
+	Name          string          `json:"name" binding:"required"`
+	Version       string          `json:"version"`
+	Endpoint      string          `json:"endpoint"`
+	UptimeSeconds int64           `json:"uptime_seconds"`
+	MetricsURL    string          `json:"metrics_url"`
+	// UIRoutes: optional; raw JSON array of sidebar nav entries the
+	// plugin offers. See plugin_modules.ui_routes schema. Empty /
+	// missing = preserve current value in the column (don't blank
+	// existing routes on plugins that haven't yet been updated).
+	UIRoutes json.RawMessage `json:"ui_routes,omitempty"`
 }
 
 // ── F1 additions (Phase 2 handlers prep) ─────────────────────────
@@ -567,7 +573,7 @@ func (s *Server) handleInternalHeartbeat(c *gin.Context) {
 		internalErr(c, http.StatusForbidden, "heartbeat name does not match auth header")
 		return
 	}
-	if err := s.updatePluginHeartbeat(req.Name, req.Version, req.Endpoint); err != nil {
+	if err := s.updatePluginHeartbeat(req.Name, req.Version, req.Endpoint, []byte(req.UIRoutes)); err != nil {
 		internalErr(c, http.StatusInternalServerError, "heartbeat write failed")
 		return
 	}

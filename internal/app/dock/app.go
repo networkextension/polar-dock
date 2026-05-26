@@ -769,6 +769,10 @@ func (s *Server) registerRoutes() {
 		// plugin access. See [[project-llm-billing-state]].
 		api.GET("/admin/workspace-plugin-access", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWorkspacePluginAccessList)
 		api.PUT("/admin/workspace-plugin-access", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWorkspacePluginAccessUpsert)
+		// Dynamic sidebar source for polar-dock-ui. Each plugin
+		// pushes its routes via heartbeat → dock aggregates +
+		// filters by workspace_plugin_access for non-root tenants.
+		api.GET("/plugin-ui-routes", s.AuthMiddleware(), s.handlePluginUIRoutes)
 		// Public OpenAI-compatible chat completion endpoint. Auth is
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.

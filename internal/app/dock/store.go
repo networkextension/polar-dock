@@ -3389,6 +3389,14 @@ CREATE TABLE IF NOT EXISTS plugin_modules (
 );
 CREATE INDEX IF NOT EXISTS idx_plugin_modules_enabled
     ON plugin_modules(enabled) WHERE enabled = TRUE;
+
+-- ui_routes: plugins push their sidebar nav entries at heartbeat time
+-- so polar-dock-ui can render a dynamic sidebar instead of carrying
+-- a hardcoded list. Each element shape:
+--   {"path":"/expense.html","label":"家庭账本","icon":"receipt","admin_only":false,"order":40}
+-- Empty array / NULL = plugin has no UI surface (e.g. packtunnel).
+ALTER TABLE plugin_modules
+    ADD COLUMN IF NOT EXISTS ui_routes JSONB NOT NULL DEFAULT '[]'::jsonb;
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
