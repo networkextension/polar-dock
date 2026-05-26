@@ -759,6 +759,11 @@ func (s *Server) registerRoutes() {
 		api.GET("/me/llm-proxy/tokens", s.AuthMiddleware(), s.handleLLMProxyTokenList)
 		api.GET("/me/llm-proxy/tokens/:id/calls", s.AuthMiddleware(), s.handleLLMProxyTokenCalls)
 		api.GET("/me/llm-proxy/tokens/:id/calls/aggregate", s.AuthMiddleware(), s.handleLLMProxyTokenCallsAggregate)
+		// Video billing ledger reads (write side is /internal/v1/billing/video-shots).
+		// See doc/llm/video-billing.md.
+		api.GET("/video-shot-calls", s.AuthMiddleware(), s.handleVideoShotCallsList)
+		api.GET("/video-burn", s.AuthMiddleware(), s.handleVideoBurn)
+		api.GET("/admin/video-burn", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminVideoBurn)
 		// Public OpenAI-compatible chat completion endpoint. Auth is
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.
