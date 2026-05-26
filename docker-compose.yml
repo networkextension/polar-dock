@@ -56,25 +56,17 @@ services:
     volumes:
       - dock-data:/data
 
-  # UI server (Express). Serves the static dist + ?v= cache-busting +
-  # forwards /api/* to dock. Reuses the same image (node + server.js +
-  # ui/dist baked in via Dockerfile). Operators running their own
-  # reverse proxy (nginx etc.) can disable this service and point
-  # the proxy at /app/ui/dist directly + dock:8080 for /api.
-  ui:
-    image: ghcr.io/networkextension/polar-dock:latest
-    restart: unless-stopped
-    depends_on:
-      - dock
-    ports:
-      - "${UI_PORT:-3000}:3000"
-    environment:
-      PORT: "3000"
-      API_BASE: "http://dock:8080"
-      UI_STATIC_DIR: "/app/ui/dist"
-    working_dir: /app/ui
-    entrypoint: ["/sbin/tini", "--"]
-    command: ["node", "/app/ui/server.js"]
+  # The static UI lives in its own repo (networkextension/polar-dock-ui)
+  # and is no longer baked into this image. To serve it locally, build
+  # polar-dock-ui (`npm ci && npm run build` in that repo), then point
+  # any static server at its dist/ — examples:
+  #
+  #   nginx { root /path/to/polar-dock-ui/dist; ... try_files; proxy /api → dock:8080 }
+  #
+  #   docker run --rm -v /path/to/polar-dock-ui/dist:/usr/share/nginx/html:ro \
+  #     -p 3000:80 nginx:alpine
+  #
+  # Or use the polar-dock-ui repo's own server.js (express dev preview).
 
 volumes:
   pg-data:

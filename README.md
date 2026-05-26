@@ -125,9 +125,6 @@ The platform is organized into modules. Each module is workspace-scoped (a works
 │   ├── teams_*.go            # Workspace + members + invitations
 │   ├── iosdist_*.go          # iOS distribution + ASC + signing
 │   └── ...
-├── ui/src                    # TypeScript sources (per-page entrypoints)
-├── ui/public                 # Static assets + built bundles
-├── ui/server.js              # Local UI dev server (express, proxies /api → :8080)
 ├── doc                       # Module-level documentation
 ├── scripts                   # Setup, migrations, release helpers
 └── data                      # Runtime data (uploads, GeoLite db, ...)
@@ -148,14 +145,21 @@ Default backend address: `http://localhost:8080`.
 
 ### Start the UI
 
+The static UI ships from its own repo:
+**[networkextension/polar-dock-ui](https://github.com/networkextension/polar-dock-ui)** (private).
+
 ```bash
-cd /path/to/Polar-/ui
-npm install      # first time only
-npm run build    # produces public/scripts/*.js bundles
-node server.js
+git clone git@github.com:networkextension/polar-dock-ui.git ../polar-dock-ui
+cd ../polar-dock-ui
+npm ci          # first time only
+npm run build   # tsc + esbuild → dist/
+node server.js  # express dev preview, proxies /api → :8080
 ```
 
 Default UI address: `http://localhost:3000`.
+
+For production, point any static server (nginx, Caddy, etc.) at
+`polar-dock-ui/dist/` and proxy `/api` to the dock binary on `:8080`.
 
 ### Optionally pair a coding agent
 

@@ -35,31 +35,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.25'
-
-      - name: Build UI
-        run: |
-          set -euo pipefail
-          cd ui
-          npm install
-          npm run build
-          cd ..
-          echo "UI built successfully"
-          # Verify TypeScript build output
-          if [ ! -d "ui/dist" ]; then
-            echo "ERROR: UI dist directory not found"
-            exit 1
-          fi
-          echo "UI dist contents:"
-          ls -la ui/dist/
 
       - name: Debug info
         run: |
@@ -114,10 +93,7 @@ jobs:
           cp LICENSE README.md update.sh "$PKG_DIR/" || true
           cp scripts/db_init.sql "$PKG_DIR/" || true
           cp -r migrations "$PKG_DIR/" || true
-          # Include UI if built
-          if [ -d "ui/dist" ]; then
-            cp -r "ui/dist" "$PKG_DIR/ui"
-          fi
+          # UI is shipped from networkextension/polar-dock-ui; not bundled.
           TAR_NAME="polar-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
           tar -czf "$TAR_NAME" -C "dist/${VERSION}" ${{ matrix.os }}_${{ matrix.arch }}
           sha256sum "$TAR_NAME" > "$TAR_NAME.sha256"
