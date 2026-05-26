@@ -203,21 +203,29 @@ func (s *Server) rotatePluginModuleKey(name string) (string, bool, error) {
 // /internal/v1/plugin-registry/heartbeat handler. Empty version /
 // endpoint don't clobber existing values — only refresh what the
 // plugin sent.
-func (s *Server) updatePluginHeartbeat(name, version, endpoint string) error {
+func (s *Server) updatePluginHeartbeat(name, version, endpoint string, uiRoutes []byte) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("name required")
 	}
 	now := time.Now().UTC()
-	// COALESCE NULLIF lets us preserve current value when the plugin
-	// sent an empty string for version / endpoint.
+	// Preserve current values when the plugin sent empty strings.
+	// uiRoutes: nil / empty = preserve current value (don't overwrite
+	// to []), so a plugin that doesn't yet declare routes leaves the
+	// existing column alone. Plugins that DO declare routes
+	// authoritatively replace the column on every heartbeat.
+	var routes interface{}
+	if len(uiRoutes) > 0 {
+		routes = uiRoutes
+	}
 	_, err := s.db.Exec(`
 		UPDATE plugin_modules
 		   SET last_heartbeat = $2,
 		       version  = CASE WHEN $3 = '' THEN version  ELSE $3 END,
-		       endpoint = CASE WHEN $4 = '' THEN endpoint ELSE $4 END
+		       endpoint = CASE WHEN $4 = '' THEN endpoint ELSE $4 END,
+		       ui_routes = COALESCE($5::jsonb, ui_routes)
 		 WHERE name = $1`,
-		name, now, strings.TrimSpace(version), strings.TrimSpace(endpoint))
+		name, now, strings.TrimSpace(version), strings.TrimSpace(endpoint), routes)
 	return err
 }
 
