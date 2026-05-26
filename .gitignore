@@ -24,3 +24,8 @@ cf.env
 # Internal research / source-of-design notes — not for public
 # distribution. Kept locally; not pushed to the open repo.
 doc/internal/
+
+# Extracted plugin working copies — each subdir is its own git repo
+# under networkextension/. Kept here so they survive /tmp purges on
+# reboot; never tracked by the dock repo itself.
+/modules/
