@@ -2798,6 +2798,41 @@ CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_created
     WHERE cost_usd IS NOT NULL;
 
 -- ============================================================
+-- video_shot_calls: per-shot ledger written by polar-video plugin
+-- via /internal/v1/billing/video-shots. Workspace-scoped roll-up
+-- for "this team spent $X on video gen this month" style queries;
+-- the source-of-truth per-shot row lives in polar_video.video_shots.
+-- UNIQUE(shot_id) is the idempotency guard — re-polls won't double-
+-- bill. Mirrors llm_proxy_calls in shape so existing wallet
+-- machinery (recharge / month-spend SUM) can consume both.
+-- See doc/llm/video-billing.md.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS video_shot_calls (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    project_id   BIGINT NOT NULL,
+    shot_id      BIGINT NOT NULL,
+    provider     TEXT NOT NULL,
+    model        TEXT NOT NULL DEFAULT '',
+    resolution   TEXT NOT NULL DEFAULT '',
+    duration_charged_sec NUMERIC(6,3),
+    fps                  INT,
+    frames_total         INT,
+    cost_usd             NUMERIC(12,6),
+    cost_per_frame_usd   NUMERIC(14,9),
+    billing_meta         JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_video_shot_calls_shot
+    ON video_shot_calls(shot_id);
+CREATE INDEX IF NOT EXISTS idx_video_shot_calls_workspace_created
+    ON video_shot_calls(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_video_shot_calls_project
+    ON video_shot_calls(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_video_shot_calls_provider
+    ON video_shot_calls(provider, created_at DESC);
+
+-- ============================================================
 -- Knowledge base (P-library-0a) — see doc/agent/jtag-debug-skill-design.md §3.5
 --
 -- Three global tables (NOT workspace-scoped — the "network effect

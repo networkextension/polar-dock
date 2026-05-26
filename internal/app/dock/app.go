@@ -648,6 +648,7 @@ func (s *Server) registerRoutes() {
 		internal.GET("/agent-presence/:bot_id", s.handleInternalAgentPresence)
 		internal.POST("/agent/dispatch", s.handleInternalAgentDispatch)
 		internal.POST("/agent/llm-call-record", s.handleInternalLLMCallRecord)
+		internal.POST("/billing/video-shots", s.handleInternalVideoShotCall)
 	}
 
 	// iOS distribution OTA endpoints + public share/plaza/install pages
