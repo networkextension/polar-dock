@@ -2807,6 +2807,38 @@ CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_created
 -- machinery (recharge / month-spend SUM) can consume both.
 -- See doc/llm/video-billing.md.
 -- ============================================================
+-- ============================================================
+-- Tenant access control: teams.is_root + workspace_plugin_access.
+--
+-- "Root team" = the platform operator's tenant. Singleton (partial
+-- unique index). Defaults to FALSE on all rows — operator picks one
+-- existing team and flips the flag with a one-time UPDATE on each
+-- deploy. Used to gate write-side capabilities that only the
+-- platform operator should have:
+--   - publishing shared LLM configs to the marketplace
+--   - flipping workspace_plugin_access rows
+--
+-- Closed-by-default plugin access: workspace_plugin_access row
+-- missing OR enabled=FALSE → plugin returns 403 for that workspace.
+-- Root team bypasses the check (always allowed). Each non-root
+-- workspace × plugin must be explicitly granted.
+-- ============================================================
+ALTER TABLE teams
+    ADD COLUMN IF NOT EXISTS is_root BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_teams_is_root
+    ON teams(is_root) WHERE is_root = TRUE;
+
+CREATE TABLE IF NOT EXISTS workspace_plugin_access (
+    workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    plugin_name  TEXT NOT NULL,
+    enabled      BOOLEAN NOT NULL DEFAULT FALSE,
+    granted_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    granted_by_user_id TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (workspace_id, plugin_name)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_plugin_access_plugin
+    ON workspace_plugin_access(plugin_name);
+
 CREATE TABLE IF NOT EXISTS video_shot_calls (
     id BIGSERIAL PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,

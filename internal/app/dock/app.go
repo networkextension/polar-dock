@@ -649,6 +649,7 @@ func (s *Server) registerRoutes() {
 		internal.POST("/agent/dispatch", s.handleInternalAgentDispatch)
 		internal.POST("/agent/llm-call-record", s.handleInternalLLMCallRecord)
 		internal.POST("/billing/video-shots", s.handleInternalVideoShotCall)
+		internal.GET("/workspace-plugin-access", s.handleInternalWorkspacePluginAccess)
 	}
 
 	// iOS distribution OTA endpoints + public share/plaza/install pages
@@ -764,6 +765,10 @@ func (s *Server) registerRoutes() {
 		api.GET("/video-shot-calls", s.AuthMiddleware(), s.handleVideoShotCallsList)
 		api.GET("/video-burn", s.AuthMiddleware(), s.handleVideoBurn)
 		api.GET("/admin/video-burn", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminVideoBurn)
+		// Tenant access control — root team grants per-workspace
+		// plugin access. See [[project-llm-billing-state]].
+		api.GET("/admin/workspace-plugin-access", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWorkspacePluginAccessList)
+		api.PUT("/admin/workspace-plugin-access", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWorkspacePluginAccessUpsert)
 		// Public OpenAI-compatible chat completion endpoint. Auth is
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.
