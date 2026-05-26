@@ -99,6 +99,20 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 			return
 		}
 	}
+	// shared=TRUE publishes the config to the marketplace; only the
+	// root team can do that. Non-root tenants can create + use their
+	// own configs but can't redistribute. See [[project-llm-billing-state]].
+	if req.Shared {
+		isRoot, err := s.isRootWorkspace(workspaceID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if !isRoot {
+			c.JSON(http.StatusForbidden, gin.H{"error": "仅 root 团队可发布共享 LLM 配置"})
+			return
+		}
+	}
 	now := time.Now()
 	streaming := true
 	if req.Streaming != nil {
@@ -196,6 +210,23 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 	if req.IsSystem != nil {
 		if role, _ := c.Get("role"); role != "admin" {
 			c.JSON(http.StatusForbidden, gin.H{"error": "仅管理员可设置系统助理（is_system）"})
+			return
+		}
+	}
+	// shared=TRUE publishes the config to the marketplace; only the
+	// root team can do that. Non-root tenants can edit their own
+	// configs freely but the shared toggle is gated. Existing
+	// shared rows on non-root teams (pre-migration data) keep their
+	// shared state unless a subsequent update sets it explicitly —
+	// the gate only fires when shared is being raised.
+	if req.Shared {
+		isRoot, err := s.isRootWorkspace(workspaceID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if !isRoot {
+			c.JSON(http.StatusForbidden, gin.H{"error": "仅 root 团队可发布共享 LLM 配置"})
 			return
 		}
 	}
