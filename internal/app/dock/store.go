@@ -2383,6 +2383,21 @@ CREATE INDEX IF NOT EXISTS idx_hosts_last_seen ON hosts(last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_hosts_agent_token
 	ON hosts(agent_token_id) WHERE agent_token_id IS NOT NULL;
 
+-- machine_uuid — stable per-machine fingerprint the agent reports in
+-- hostinfo (IOPlatformUUID / machine-id / smbios). When non-empty,
+-- insertHostRow (used by /internal/v1/hosts/issue) upserts on
+-- (workspace_id, machine_uuid) so a re-register from the same
+-- physical box reuses the existing dock row instead of producing a
+-- duplicate. NULL / '' = legacy agent or collector failure — falls
+-- back to the legacy ON CONFLICT (id) path.
+ALTER TABLE hosts
+	ADD COLUMN IF NOT EXISTS machine_uuid TEXT;
+-- Partial unique guards the upsert; NULL/'' excluded so legacy rows
+-- that predate the column don't collide on the empty value.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_hosts_workspace_machine_uuid
+	ON hosts(workspace_id, machine_uuid)
+	WHERE machine_uuid IS NOT NULL AND machine_uuid <> '';
+
 -- host_skills: operator-enabled skill on a host. Schema exists in P0
 -- so future phase migrations don't need to add the table; nothing
 -- writes to this in P0 (Phase 1 adds the coder skill handlers).

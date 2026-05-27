@@ -610,7 +610,18 @@ func (s *Server) handleInternalAgentTokenIssue(c *gin.Context) {
 // Companion to agent-tokens/issue. Plugin already generated id + slug
 // locally; dock just records the canonical hosts row so its
 // getHostByAgentToken (called on every /ws/agent message) resolves.
-// Same idempotent + caller-id contract.
+//
+// MachineUUID (added with the host-machine-uuid PR series): when
+// non-empty, insertHostRow upserts on (workspace_id, machine_uuid)
+// instead of just (id), so a re-register from the same physical box
+// — which the plugin already dedup'd to its own existing hosts.id —
+// dedups onto dock's existing row too. Empty = legacy agent or
+// collector failure; falls back to the pre-PR id-only conflict path.
+//
+// Response: the {id} field returns dock's resolved id (req.ID when we
+// inserted or hit on-id, the EXISTING row's id when we hit on the
+// (workspace_id, machine_uuid) dedup index). {deduped} is true when
+// we did NOT insert a new row in either path.
 
 type internalHostIssueReq struct {
 	ID           string `json:"id" binding:"required"`
@@ -620,6 +631,7 @@ type internalHostIssueReq struct {
 	AgentTokenID string `json:"agent_token_id"`
 	OS           string `json:"os"`
 	Arch         string `json:"arch"`
+	MachineUUID  string `json:"machine_uuid"`
 }
 
 func (s *Server) handleInternalHostIssue(c *gin.Context) {
@@ -632,16 +644,16 @@ func (s *Server) handleInternalHostIssue(c *gin.Context) {
 	if v := strings.TrimSpace(req.AgentTokenID); v != "" {
 		agentTokenID = &v
 	}
-	inserted, err := s.insertHostRow(
-		req.ID, req.WorkspaceID, req.Slug, req.Name, agentTokenID, req.OS, req.Arch, time.Now().UTC(),
+	resolvedID, deduped, err := s.insertHostRow(
+		req.ID, req.WorkspaceID, req.Slug, req.Name, agentTokenID, req.OS, req.Arch, req.MachineUUID, time.Now().UTC(),
 	)
 	if err != nil {
 		internalErr(c, http.StatusInternalServerError, "host insert failed: "+err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"id":      req.ID,
-		"deduped": !inserted,
+		"id":      resolvedID,
+		"deduped": deduped,
 	})
 }
 
