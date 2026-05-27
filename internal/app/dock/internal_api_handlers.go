@@ -611,17 +611,11 @@ func (s *Server) handleInternalAgentTokenIssue(c *gin.Context) {
 // locally; dock just records the canonical hosts row so its
 // getHostByAgentToken (called on every /ws/agent message) resolves.
 //
-// MachineUUID (added with the host-machine-uuid PR series): when
-// non-empty, insertHostRow upserts on (workspace_id, machine_uuid)
-// instead of just (id), so a re-register from the same physical box
-// — which the plugin already dedup'd to its own existing hosts.id —
-// dedups onto dock's existing row too. Empty = legacy agent or
-// collector failure; falls back to the pre-PR id-only conflict path.
-//
-// Response: the {id} field returns dock's resolved id (req.ID when we
-// inserted or hit on-id, the EXISTING row's id when we hit on the
-// (workspace_id, machine_uuid) dedup index). {deduped} is true when
-// we did NOT insert a new row in either path.
+// v4 (doc/arch/agent-identity-v4.md): the MachineUUID dedup branch
+// was dropped — registerAgent owns host identity (UPSERT keyed on
+// id = sha256(salt + raw_uuid)). This handler stays for back-compat
+// with v3 plugin callers that haven't moved to AgentRegister yet.
+// The handler ignores any machine_uuid field a v3 caller sends.
 
 type internalHostIssueReq struct {
 	ID           string `json:"id" binding:"required"`
@@ -631,7 +625,8 @@ type internalHostIssueReq struct {
 	AgentTokenID string `json:"agent_token_id"`
 	OS           string `json:"os"`
 	Arch         string `json:"arch"`
-	MachineUUID  string `json:"machine_uuid"`
+	// Deprecated: v4 — accepted for v3 caller back-compat, ignored.
+	MachineUUID string `json:"machine_uuid,omitempty"`
 }
 
 func (s *Server) handleInternalHostIssue(c *gin.Context) {
@@ -645,7 +640,7 @@ func (s *Server) handleInternalHostIssue(c *gin.Context) {
 		agentTokenID = &v
 	}
 	resolvedID, deduped, err := s.insertHostRow(
-		req.ID, req.WorkspaceID, req.Slug, req.Name, agentTokenID, req.OS, req.Arch, req.MachineUUID, time.Now().UTC(),
+		req.ID, req.WorkspaceID, req.Slug, req.Name, agentTokenID, req.OS, req.Arch, time.Now().UTC(),
 	)
 	if err != nil {
 		internalErr(c, http.StatusInternalServerError, "host insert failed: "+err.Error())
@@ -655,6 +650,105 @@ func (s *Server) handleInternalHostIssue(c *gin.Context) {
 		"id":      resolvedID,
 		"deduped": deduped,
 	})
+}
+
+// ── 17. v4 — POST /internal/v1/agents/register ──────────────────────
+// Full agent-identity-v4 register chain. See doc/arch/agent-identity-v4.md.
+//
+//   1. host_id = sha256(POLAR_HOST_UUID_SALT + req.MachineUUIDRaw)[:32] hex
+//   2. UPSERT hosts (id, workspace_id, …) on conflict refresh last_seen
+//   3. mint agent_token (sha256-hashed)
+//   4. ensure workspace agent-pool llm_proxy_token (idempotent)
+//   5. resolve / auto-create bot_user bound to that proxy token
+//   6. INSERT agents (id=ag_<random32hex>, host_id, …)
+//
+// Salt is read from $POLAR_HOST_UUID_SALT; missing salt falls back
+// to the development sentinel + logs a WARN — the PR body documents
+// this as a deploy-time secret to set.
+
+type internalAgentRegisterReq struct {
+	EnrollToken    string         `json:"enroll_token"`
+	WorkspaceID    string         `json:"workspace_id" binding:"required"`
+	Name           string         `json:"name" binding:"required"`
+	MachineUUIDRaw string         `json:"machine_uuid_raw" binding:"required"`
+	HostInfo       map[string]any `json:"host_info"`
+	OS             string         `json:"os"`
+	Arch           string         `json:"arch"`
+	BotUserID      string         `json:"bot_user_id"`
+}
+
+func (s *Server) handleInternalAgentRegister(c *gin.Context) {
+	var req internalAgentRegisterReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		internalErr(c, http.StatusBadRequest, "invalid_json: "+err.Error())
+		return
+	}
+	resp, err := s.registerAgent(c.Request.Context(), req)
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "register: "+err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// ── 18. v4 — POST /internal/v1/workspace-proxy-tokens/ensure ────────
+// Idempotent return-or-create for the workspace's llm_proxy_tokens row
+// matching (workspace_id, name). polar-hosts calls this with
+// name="agent-pool" so every auto-created bot binds to one
+// workspace-scoped proxy token (so admins can SUM(cost_usd) per
+// workspace across all auto bots).
+
+type internalWorkspaceProxyTokenEnsureReq struct {
+	WorkspaceID string `json:"workspace_id" binding:"required"`
+	OwnerUserID string `json:"owner_user_id"`
+	Name        string `json:"name"`
+}
+
+func (s *Server) handleInternalWorkspaceProxyTokenEnsure(c *gin.Context) {
+	var req internalWorkspaceProxyTokenEnsureReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		internalErr(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "agent-pool"
+	}
+	id, created, err := s.ensureWorkspaceProxyToken(req.WorkspaceID, req.OwnerUserID, name)
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "ensure proxy token: "+err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"id": id, "created": created})
+}
+
+// ── 19. v4 — POST /internal/v1/bots/create-for-agent ────────────────
+// Idempotent bot_user creation keyed on (workspace_id, name). polar-hosts
+// calls this for each registered agent so the operator gets a stable bot
+// to attach to. LLMConfig carries the proxy-token binding hint;
+// {"proxy_token_id": N} translates server-side into a passthrough bot
+// pointing at that token's llm_config row.
+
+type internalBotForAgentReq struct {
+	WorkspaceID string         `json:"workspace_id" binding:"required"`
+	OwnerUserID string         `json:"owner_user_id"`
+	Name        string         `json:"name" binding:"required"`
+	Description string         `json:"description"`
+	LLMConfig   map[string]any `json:"llm_config"`
+}
+
+func (s *Server) handleInternalBotForAgent(c *gin.Context) {
+	var req internalBotForAgentReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		internalErr(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	botUserID, created, err := s.ensureBotForAgent(req.WorkspaceID, req.OwnerUserID, req.Name, req.Description, req.LLMConfig)
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "ensure bot: "+err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"bot_user_id": botUserID, "created": created})
 }
 
 func (s *Server) handleInternalHeartbeat(c *gin.Context) {

@@ -58,6 +58,12 @@ type agentConn struct {
 	attachedAt time.Time
 	userID     string
 	botUserID  string
+	// agentID — v4 logical agent identity (ag_<random32hex>); empty for
+	// legacy v3 conns that pre-date the agents table. Used as the
+	// primary hub key when non-empty so two agents on the same bot can
+	// coexist (e.g. emei-kimi + emei-claude both pointing at the same
+	// shared bot). See doc/arch/agent-identity-v4.md.
+	agentID     string
 	workspaceID string
 	workdir    string
 	// Capabilities the agent declared in its hello frame.
@@ -213,22 +219,45 @@ func (c *agentConn) deliverChatReply(r agentChatReply) {
 
 // agentHub owns the connection registry and the dispatch entry point.
 // All methods are safe for concurrent use.
+//
+// v4 (doc/arch/agent-identity-v4.md): the hub now keys connections by
+// agent_id when available (a new conn with the same bot but different
+// agent_id no longer kicks the old one off — multiple agents can share
+// a bot). Lookups still accept bot_user_id for back-compat with
+// callers that haven't been threaded through yet; the bot-keyed map
+// resolves to the *most-recently-attached* conn for that bot.
 type agentHub struct {
-	mu    sync.Mutex
-	byBot map[string]*agentConn // bot_user_id → conn
+	mu      sync.Mutex
+	byAgent map[string]*agentConn // agent_id → conn (v4 primary)
+	byBot   map[string]*agentConn // bot_user_id → conn (back-compat)
 }
 
 func newAgentHub() *agentHub {
-	return &agentHub{byBot: map[string]*agentConn{}}
+	return &agentHub{
+		byAgent: map[string]*agentConn{},
+		byBot:   map[string]*agentConn{},
+	}
 }
 
-// register adds a new connection, kicking out any existing one on
-// the same bot (last-write-wins). Returns the displaced conn (if
-// any) so the caller can close its socket cleanly.
+// register adds a new connection. Behaviour:
+//   - Same agent_id reconnects displace each other (last-write-wins).
+//   - Different agent_id with same bot do NOT displace each other in
+//     byAgent; the byBot map gets last-write-wins (legacy callers see
+//     the most recent conn).
+//   - Empty agent_id (legacy v3 attach) uses the bot id as the agent
+//     key so the old "one bot, one conn" behaviour is preserved.
+//
+// Returns the displaced conn (if any) so the caller can close its
+// socket cleanly.
 func (h *agentHub) register(c *agentConn) *agentConn {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	prev := h.byBot[c.botUserID]
+	key := c.agentID
+	if key == "" {
+		key = c.botUserID
+	}
+	prev := h.byAgent[key]
+	h.byAgent[key] = c
 	h.byBot[c.botUserID] = c
 	return prev
 }
@@ -236,15 +265,37 @@ func (h *agentHub) register(c *agentConn) *agentConn {
 func (h *agentHub) unregister(c *agentConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	key := c.agentID
+	if key == "" {
+		key = c.botUserID
+	}
+	if cur, ok := h.byAgent[key]; ok && cur == c {
+		delete(h.byAgent, key)
+	}
 	if cur, ok := h.byBot[c.botUserID]; ok && cur == c {
 		delete(h.byBot, c.botUserID)
 	}
 }
 
-func (h *agentHub) lookup(botUserID string) *agentConn {
+// lookup resolves a key to a live conn. The key may be either an
+// agent_id (v4) or a bot_user_id (legacy / dispatcher-side callers
+// that only know the bot). agent_id wins when both maps would match
+// because the byAgent map is the source of truth for v4 conns.
+func (h *agentHub) lookup(key string) *agentConn {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.byBot[botUserID]
+	if c, ok := h.byAgent[key]; ok {
+		return c
+	}
+	return h.byBot[key]
+}
+
+// lookupByAgentID is the v4-only resolver — used by callers that know
+// the agent_id and want to bypass the bot-fallback path.
+func (h *agentHub) lookupByAgentID(agentID string) *agentConn {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.byAgent[agentID]
 }
 
 // snapshotByTool returns a count of currently-attached agents grouped

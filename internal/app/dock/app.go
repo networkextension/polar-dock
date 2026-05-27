@@ -691,6 +691,14 @@ func (s *Server) registerRoutes() {
 		// newly-registered host.
 		internal.POST("/agent-tokens/issue", s.handleInternalAgentTokenIssue)
 		internal.POST("/hosts/issue", s.handleInternalHostIssue)
+
+		// v4 — Agent Identity (doc/arch/agent-identity-v4.md).
+		// polar-hosts' /api/hosts/register chains these on every agent
+		// register; raw machine_uuid arrives on the wire, host_id is
+		// hashed server-side, agent_id is server-minted.
+		internal.POST("/agents/register", s.handleInternalAgentRegister)
+		internal.POST("/workspace-proxy-tokens/ensure", s.handleInternalWorkspaceProxyTokenEnsure)
+		internal.POST("/bots/create-for-agent", s.handleInternalBotForAgent)
 	}
 
 	// iOS distribution OTA endpoints + public share/plaza/install pages

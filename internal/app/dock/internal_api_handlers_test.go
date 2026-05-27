@@ -242,3 +242,171 @@ func TestInternalHostIssueReq_MissingMachineUUIDIsOK(t *testing.T) {
 		t.Errorf("MachineUUID should default to empty, got %q", req.MachineUUID)
 	}
 }
+
+// ── v4 — agents/register + workspace-proxy-tokens/ensure + bots/create-for-agent ──
+
+func TestHandleInternalAgentRegister_BadJSON(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/internal/v1/agents/register",
+		strings.NewReader(`not json`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	(&Server{}).handleInternalAgentRegister(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 400", w.Code)
+	}
+}
+
+func TestHandleInternalAgentRegister_MissingRequired(t *testing.T) {
+	// v4 requires workspace_id + name + machine_uuid_raw. Missing any
+	// → 400, gin binding rejects before touching the DB.
+	cases := []string{
+		`{}`,
+		`{"name":"emei-kimi"}`,
+		`{"name":"emei-kimi","workspace_id":"t_x"}`,
+		`{"workspace_id":"t_x","machine_uuid_raw":"u"}`,
+	}
+	for _, body := range cases {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(
+			http.MethodPost,
+			"/internal/v1/agents/register",
+			strings.NewReader(body),
+		)
+		c.Request.Header.Set("Content-Type", "application/json")
+		(&Server{}).handleInternalAgentRegister(c)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status got %d want 400", body, w.Code)
+		}
+	}
+}
+
+func TestHandleInternalWorkspaceProxyTokenEnsure_MissingWorkspace(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/internal/v1/workspace-proxy-tokens/ensure",
+		strings.NewReader(`{"name":"agent-pool"}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	(&Server{}).handleInternalWorkspaceProxyTokenEnsure(c)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 400 (missing workspace_id)", w.Code)
+	}
+}
+
+func TestHandleInternalBotForAgent_MissingFields(t *testing.T) {
+	cases := []string{
+		`{}`,                            // missing both
+		`{"workspace_id":"t_x"}`,        // missing name
+		`{"name":"bot-emei-kimi-abc"}`,  // missing workspace_id
+	}
+	for _, body := range cases {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(
+			http.MethodPost,
+			"/internal/v1/bots/create-for-agent",
+			strings.NewReader(body),
+		)
+		c.Request.Header.Set("Content-Type", "application/json")
+		(&Server{}).handleInternalBotForAgent(c)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status got %d want 400", body, w.Code)
+		}
+	}
+}
+
+func TestHashHostID_DeterministicWithSalt(t *testing.T) {
+	// hashHostID is the security-critical part: same raw uuid + same
+	// salt → same host_id; same raw uuid + different salt → different
+	// host_id. We can't easily test the env-var case without process
+	// isolation, so we exercise the helper's stability via the fallback
+	// path (env unset → dev sentinel).
+	a, err := hashHostID("12345678-90AB-CDEF-1234-567890ABCDEF")
+	if err != nil {
+		t.Fatalf("hashHostID: %v", err)
+	}
+	b, err := hashHostID("12345678-90AB-CDEF-1234-567890ABCDEF")
+	if err != nil {
+		t.Fatalf("hashHostID 2: %v", err)
+	}
+	if a != b {
+		t.Fatalf("hashHostID not deterministic: %q vs %q", a, b)
+	}
+	if len(a) != 32 {
+		t.Fatalf("host_id length = %d, want 32 hex chars", len(a))
+	}
+	c, _ := hashHostID("00000000-0000-0000-0000-000000000000")
+	if a == c {
+		t.Fatal("different inputs hashed to same host_id")
+	}
+}
+
+func TestHashHostID_RejectsEmpty(t *testing.T) {
+	if _, err := hashHostID(""); err == nil {
+		t.Fatal("expected error for empty raw uuid")
+	}
+	if _, err := hashHostID("   "); err == nil {
+		t.Fatal("expected error for whitespace raw uuid")
+	}
+}
+
+func TestNewAgentID_Format(t *testing.T) {
+	id, err := newAgentID()
+	if err != nil {
+		t.Fatalf("newAgentID: %v", err)
+	}
+	if !strings.HasPrefix(id, "ag_") {
+		t.Fatalf("agent id should start with ag_: got %q", id)
+	}
+	if len(id) != 3+32 {
+		t.Fatalf("agent id len = %d, want 35 (ag_ + 32 hex)", len(id))
+	}
+}
+
+func TestAgentHub_AgentIDPreservesMultiAgentOnSameBot(t *testing.T) {
+	// Two conns with same botUserID but different agentIDs MUST both
+	// stay in the hub (v4: one bot can host N agents). The legacy
+	// "register kicks any same-bot prev off" path only fires when both
+	// conns have empty agentID (true v3 attaches).
+	hub := newAgentHub()
+	c1 := &agentConn{agentID: "ag_aaa", botUserID: "bot_shared", close: make(chan struct{})}
+	c2 := &agentConn{agentID: "ag_bbb", botUserID: "bot_shared", close: make(chan struct{})}
+	if prev := hub.register(c1); prev != nil {
+		t.Fatalf("first register: got displaced %+v", prev)
+	}
+	if prev := hub.register(c2); prev != nil {
+		t.Fatalf("second register (diff agent_id): got displaced %+v, want nil", prev)
+	}
+	if got := hub.lookupByAgentID("ag_aaa"); got != c1 {
+		t.Errorf("ag_aaa lookup = %p, want %p", got, c1)
+	}
+	if got := hub.lookupByAgentID("ag_bbb"); got != c2 {
+		t.Errorf("ag_bbb lookup = %p, want %p", got, c2)
+	}
+	// Bot lookup wins by last-write (legacy fallback).
+	if got := hub.lookup("bot_shared"); got != c2 {
+		t.Errorf("bot fallback lookup = %p, want %p (last-write)", got, c2)
+	}
+}
+
+func TestAgentHub_EmptyAgentIDFallsBackToBotKey(t *testing.T) {
+	// v3 conn with empty agentID — register MUST kick prev off
+	// (preserves the old "one bot, one conn" semantics for legacy
+	// agents that haven't been migrated to agent_id yet).
+	hub := newAgentHub()
+	c1 := &agentConn{botUserID: "bot_legacy", close: make(chan struct{})}
+	c2 := &agentConn{botUserID: "bot_legacy", close: make(chan struct{})}
+	hub.register(c1)
+	if prev := hub.register(c2); prev != c1 {
+		t.Fatalf("legacy second register: prev = %p, want %p", prev, c1)
+	}
+}
