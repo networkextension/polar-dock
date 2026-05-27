@@ -177,14 +177,21 @@ func (s *Server) LogAdminAction(c *gin.Context, in AdminAuditIn) {
 		log.Printf("LogAdminAction: no user_id on context for action=%s — skipping (anonymous mutation?)", in.Action)
 		return
 	}
-	roleAny, _ := c.Get("role")
-	role, _ := roleAny.(string)
+	// P1: AdminMiddleware stamps `gate_via` so we know which predicate
+	// let the request through. Fall back to inspecting `role` if the
+	// stamp is missing (e.g. an admin endpoint that doesn't use
+	// AdminMiddleware but still calls LogAdminAction directly).
 	actorRole := ActorRoleSiteAdmin
-	// Bridge during P0: if AuthMiddleware set role='admin' (legacy
-	// users.role gate), tag the row so the audit log makes it obvious
-	// which gate let the action through.
-	if role == "admin" {
-		actorRole = ActorRoleLegacyAdmin
+	if gateViaAny, ok := c.Get("gate_via"); ok {
+		if g, _ := gateViaAny.(string); g == "users.role=admin" {
+			actorRole = ActorRoleLegacyAdmin
+		}
+	} else {
+		// No gate stamp — old behavior: infer from session role.
+		roleAny, _ := c.Get("role")
+		if role, _ := roleAny.(string); role == "admin" {
+			actorRole = ActorRoleLegacyAdmin
+		}
 	}
 
 	payload := in.Payload

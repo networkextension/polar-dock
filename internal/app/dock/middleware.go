@@ -1,7 +1,9 @@
 package dock
 
 import (
+	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -191,14 +193,57 @@ func (s *Server) resolveActiveWorkspace(c *gin.Context, userID string) {
 	c.Set("workspace_role", TeamRoleOwner)
 }
 
+// AdminMiddleware — P1 of doc/arch/permission-model.md.
+//
+// The predicate switched from `users.role == 'admin'` to "is this user
+// a member of the root team with role IN ('owner','admin')" — i.e.
+// IsSiteAdmin(user_id). The two definitions agree today because the
+// bootstrap rule (P0) auto-promoted the sole non-system admin into
+// the root team as owner; future site admins are managed through
+// team_members, never users.role.
+//
+// Rollback: set POLAR_LEGACY_ADMIN_ROLE=1 to revert to the old
+// users.role check. Read once at process start so a hot toggle needs
+// a restart — fine for a behavior cutover that should be rare.
+//
+// On success, sets `gate_via` on the context so LogAdminAction can
+// stamp the audit row's actor_role correctly: "site_admin" when
+// IsSiteAdmin passed, "users.role=admin" when the legacy fallback
+// passed.
 func (s *Server) AdminMiddleware() gin.HandlerFunc {
+	legacy := strings.TrimSpace(os.Getenv("POLAR_LEGACY_ADMIN_ROLE")) == "1"
 	return func(c *gin.Context) {
-		role, _ := c.Get("role")
-		if roleStr, ok := role.(string); !ok || roleStr != "admin" {
+		if legacy {
+			role, _ := c.Get("role")
+			if roleStr, ok := role.(string); !ok || roleStr != "admin" {
+				jsonError(c, http.StatusForbidden, "auth.forbidden")
+				c.Abort()
+				return
+			}
+			c.Set("gate_via", "users.role=admin")
+			c.Next()
+			return
+		}
+		userIDAny, _ := c.Get("user_id")
+		userID, _ := userIDAny.(string)
+		if userID == "" {
 			jsonError(c, http.StatusForbidden, "auth.forbidden")
 			c.Abort()
 			return
 		}
+		ok, err := s.IsSiteAdmin(userID)
+		if err != nil {
+			log.Printf("perm: AdminMiddleware IsSiteAdmin(%s) lookup failed: %v — denying", userID, err)
+			jsonError(c, http.StatusForbidden, "auth.forbidden")
+			c.Abort()
+			return
+		}
+		if !ok {
+			jsonError(c, http.StatusForbidden, "auth.forbidden")
+			c.Abort()
+			return
+		}
+		c.Set("gate_via", "site_admin")
 		c.Next()
 	}
 }
