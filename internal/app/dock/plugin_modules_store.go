@@ -214,9 +214,12 @@ func (s *Server) updatePluginHeartbeat(name, version, endpoint string, uiRoutes 
 	// to []), so a plugin that doesn't yet declare routes leaves the
 	// existing column alone. Plugins that DO declare routes
 	// authoritatively replace the column on every heartbeat.
+	// lib/pq sends []byte as bytea, which can't cast to jsonb. Pass
+	// as string so it lands on the text wire format the $5::jsonb cast
+	// can decode. Matches the pattern in host_skill_runs_store.go.
 	var routes interface{}
 	if len(uiRoutes) > 0 {
-		routes = uiRoutes
+		routes = string(uiRoutes)
 	}
 	_, err := s.db.Exec(`
 		UPDATE plugin_modules
