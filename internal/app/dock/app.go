@@ -151,6 +151,11 @@ type Server struct {
 	// Read by /internal/v1/wg-peer-status (polar-wg) and the host
 	// detail SSE in dock-ui.
 	wgPeerCache *wgPeerCache
+
+	// Permission-model P0 (doc/arch/permission-model.md): cache for
+	// IsSiteAdmin(userID) lookups. Lazily initialised on first call;
+	// 30s TTL, invalidated on root-team membership mutations.
+	siteAdminCache *siteAdminCache
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -334,6 +339,13 @@ func NewServer(cfg Config) (*Server, error) {
 	if err := server.backfillPersonalTeams(); err != nil {
 		log.Printf("teams: personal team backfill failed: %v", err)
 	}
+
+	// Permission-model P0 bootstrap (doc/arch/permission-model.md §3.3):
+	// auto-promote the sole non-system admin's personal team to root
+	// on fresh installs. No-op when root team already exists.
+	// Runs AFTER backfillPersonalTeams so the lone-admin's personal
+	// team is guaranteed to exist before the lookup.
+	server.bootstrapRootTeam()
 
 	// T6-A: populate workspace_id on legacy resource rows from each
 	// owner's personal team. Idempotent. Must run after the personal
@@ -656,6 +668,12 @@ func (s *Server) registerRoutes() {
 		// wg iface locally (polar-wg-svc on the hub box). Same cache
 		// as the agent-WS path, no schema difference downstream.
 		internal.POST("/wg-peer-status", s.handleInternalWGPeerStatusPush)
+
+		// Permission-model P0: plugins can ask "is this user a site
+		// admin?" without re-implementing the team_members query.
+		// Used by P1 to let site admins bypass the
+		// workspace_plugin_access gate.
+		internal.GET("/site-admin/check", s.handleInternalSiteAdminCheck)
 
 		// F1 — Phase 2 handler-migration prereqs. See
 		// doc/arch/internal-api-v1.md §v1.1.

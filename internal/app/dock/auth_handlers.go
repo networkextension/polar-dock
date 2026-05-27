@@ -227,10 +227,22 @@ func (s *Server) handleMe(c *gin.Context) {
 		user, _ = s.getUserByID(userIDStr)
 	}
 
+	// Permission-model P0: surface site-admin status so the UI can
+	// gate root-team-only pages (admin-plugins, audit log, …) without
+	// loading-then-403. Computed independently of users.role — see
+	// permission-model.md §0 for why.
+	isSiteAdmin := false
+	if userIDStr != "" {
+		if ok, err := s.IsSiteAdmin(userIDStr); err == nil {
+			isSiteAdmin = ok
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"user_id":  userID,
-		"username": username,
-		"role":     role,
+		"user_id":    userID,
+		"username":   username,
+		"role":       role,
+		"site_admin": isSiteAdmin,
 		"email": func() string {
 			if user != nil {
 				return user.Email
