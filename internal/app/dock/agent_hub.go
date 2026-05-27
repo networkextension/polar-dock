@@ -108,6 +108,19 @@ type agentConn struct {
 	// counter rather than blocking the WS read pump.
 	skillStdoutMu      sync.Mutex
 	skillStdoutPending map[int64]chan []byte
+
+	// lastHostInfoSHA — sha256 of the most recent host_info payload
+	// we forwarded to polar-hosts /internal/v1/hosts/hello. polar-dock#351.
+	// A flapping agent reconnect would otherwise pummel the endpoint
+	// with re-POSTs of identical static facts. Compared in
+	// forwardHostInfoToPolarHosts; the forwarder writes through to here
+	// on a successful POST. nil = nothing forwarded yet this conn.
+	// Lifetime is the agentConn itself — when the WS closes the cache
+	// is GC'd, so a brand-new conn always re-sends on first hello (we
+	// can't trust a polar-hosts restart to remember). Per-conn rather
+	// than per-host so two concurrent agents on the same host token
+	// (rare but possible during a restart race) each refresh polar-hosts.
+	lastHostInfoSHA []byte
 }
 
 func (c *agentConn) hasCapability(name string) bool {
