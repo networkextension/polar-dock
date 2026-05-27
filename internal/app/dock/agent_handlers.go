@@ -477,6 +477,33 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 				}
 				continue
 			}
+			// Issue #344: metric frames are side-channel — they don't
+			// belong on the per-run lifecycle channel and they have to
+			// land in the cache even when no dispatcher is waiting
+			// (e.g. the wireguard skill polls forever, nobody waits
+			// for an exit). Route metrics first; still let the
+			// per-run channel see them so future skills that want a
+			// metric→reply path keep working.
+			if ev.EventKind == "metric" && s.wgPeerCache != nil {
+				if kind, _ := ev.Data["kind"].(string); kind == "wg_peer_status" {
+					iface, _ := ev.Data["iface"].(string)
+					ifacePubKey, _ := ev.Data["iface_public_key"].(string)
+					s.wgPeerCache.upsert(wgPeerSample{
+						HostID:         ac.hostID,
+						Iface:          iface,
+						IfacePublicKey: ifacePubKey,
+						RunID:          ev.RunID,
+						RecordedAt:     time.Now().UTC(),
+						Data:           ev.Data,
+					})
+				}
+			}
+			// Issue #344: drop matching cache entries when the
+			// underlying wireguard run exits — otherwise a stopped
+			// skill keeps reporting "fresh" peers until TTL.
+			if ev.EventKind == "exit" && s.wgPeerCache != nil {
+				s.wgPeerCache.evictByRun(ev.RunID)
+			}
 			ac.deliverSkillEvent(ev)
 		default:
 			log.Printf("[agent ws] unknown kind=%s bot=%s", head.Kind, ac.botUserID)

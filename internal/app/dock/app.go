@@ -145,6 +145,12 @@ type Server struct {
 	// Per-token monthly cost tracker (P4). 60s in-memory cache of
 	// SUM(cost_usd) for the current UTC month.
 	llmProxyQuota *llmProxyQuotaTracker
+
+	// Issue #344: per-(host_id, iface) snapshot of the most recent
+	// wg_peer_status sample reported by polar-agent's wireguard skill.
+	// Read by /internal/v1/wg-peer-status (polar-wg) and the host
+	// detail SSE in dock-ui.
+	wgPeerCache *wgPeerCache
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -303,6 +309,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.passkeySessions = make(map[string]passkeySession)
 	server.wsHub = newWSHub()
 	server.agentHub = newAgentHub()
+	server.wgPeerCache = newWGPeerCache()
 	server.wsHub.onPresenceChanged = server.handlePresenceChange
 	server.wsHub.onThreadViewChanged = server.handleThreadViewChange
 	server.wsHub.onConnectionTouched = server.handleConnectionTouch
@@ -640,6 +647,11 @@ func (s *Server) registerRoutes() {
 		internal.POST("/llm/chat-completion", s.handleInternalLLMChatCompletion)
 		internal.POST("/notify", s.handleInternalNotify)
 		internal.POST("/plugin-registry/heartbeat", s.handleInternalHeartbeat)
+
+		// Issue #344: read-only view of the wg_peer_status samples
+		// the agent reports via skill.event{metric}. polar-wg polls
+		// this every ~30s to populate the per-hub status table.
+		internal.GET("/wg-peer-status", s.handleInternalWGPeerStatus)
 
 		// F1 — Phase 2 handler-migration prereqs. See
 		// doc/arch/internal-api-v1.md §v1.1.
