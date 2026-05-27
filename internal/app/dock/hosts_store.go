@@ -111,15 +111,42 @@ func (s *Server) createHost(workspaceID, name, agentTokenID, hostOS, hostArch st
 		v := strings.TrimSpace(agentTokenID)
 		host.AgentTokenID = &v
 	}
-	if _, err := s.db.Exec(
-		`INSERT INTO hosts (id, workspace_id, slug, name, agent_token_id, os, arch, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		host.ID, host.WorkspaceID, host.Slug, host.Name,
-		host.AgentTokenID, host.OS, host.Arch, host.CreatedAt,
-	); err != nil {
+	if _, err := s.insertHostRow(host.ID, host.WorkspaceID, host.Slug, host.Name, host.AgentTokenID, host.OS, host.Arch, host.CreatedAt); err != nil {
 		return nil, err
 	}
 	return host, nil
+}
+
+// insertHostRow is the shared INSERT used by createHost (dock-side mint)
+// and handleInternalHostIssue (plugin dual-write via SDK). Idempotent on
+// id: ON CONFLICT DO NOTHING returns inserted=false so a retry from a
+// plugin's transient-failure path is safe. agentTokenID may be nil
+// (host pre-registered without a token) but in the plugin dual-write
+// path it's always set.
+func (s *Server) insertHostRow(id, workspaceID, slug, name string, agentTokenID *string, os, arch string, createdAt time.Time) (inserted bool, err error) {
+	if strings.TrimSpace(id) == "" {
+		return false, errors.New("id is empty")
+	}
+	if strings.TrimSpace(workspaceID) == "" {
+		return false, errors.New("workspace_id is empty")
+	}
+	if strings.TrimSpace(slug) == "" {
+		return false, errors.New("slug is empty")
+	}
+	if strings.TrimSpace(name) == "" {
+		return false, errors.New("name is empty")
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO hosts (id, workspace_id, slug, name, agent_token_id, os, arch, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (id) DO NOTHING`,
+		id, workspaceID, slug, name, agentTokenID, os, arch, createdAt,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (s *Server) getHostByID(id string) (*Host, error) {

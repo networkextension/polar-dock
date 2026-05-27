@@ -561,6 +561,90 @@ func (s *Server) handleInternalLLMCallRecord(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"recorded": true})
 }
 
+// ── 15. POST /internal/v1/agent-tokens/issue ────────────────────────
+// Plugin dual-write surface: polar-hosts (and any future plugin that
+// mints agent_tokens locally) calls this right after its own local
+// INSERT so the canonical row lands in ideamesh.agent_tokens too.
+// Without this, dock's /ws/agent auth (resolveAgentToken) 401s on
+// every newly-registered agent. See task #216 (polar-hosts split-brain).
+//
+// ID is caller-supplied — the plugin already generated it locally and
+// we honor that so the two copies share the same primary key. TokenHash
+// is sha256-hex of the raw bearer; raw never crosses this wire.
+// CoderConfigJSON is the JSON literal the plugin wrote into its own
+// row (pending-enrollment marker or "{}") so dock's consume path sees
+// the same shape.
+//
+// Idempotent: ON CONFLICT (id) DO NOTHING returns 200 with
+// {deduped: true} rather than 409 so the plugin's transient-failure
+// retry path is a no-op rather than an error to log.
+
+type internalAgentTokenIssueReq struct {
+	ID              string `json:"id" binding:"required"`
+	UserID          string `json:"user_id" binding:"required"`
+	Name            string `json:"name"`
+	TokenHash       string `json:"token_hash" binding:"required"`
+	CoderConfigJSON string `json:"coder_config_json"`
+}
+
+func (s *Server) handleInternalAgentTokenIssue(c *gin.Context) {
+	var req internalAgentTokenIssueReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		internalErr(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	inserted, err := s.insertAgentTokenRow(
+		req.ID, req.UserID, req.Name, req.TokenHash, req.CoderConfigJSON, time.Now().UTC(),
+	)
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "agent_token insert failed: "+err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":      req.ID,
+		"deduped": !inserted,
+	})
+}
+
+// ── 16. POST /internal/v1/hosts/issue ───────────────────────────────
+// Companion to agent-tokens/issue. Plugin already generated id + slug
+// locally; dock just records the canonical hosts row so its
+// getHostByAgentToken (called on every /ws/agent message) resolves.
+// Same idempotent + caller-id contract.
+
+type internalHostIssueReq struct {
+	ID           string `json:"id" binding:"required"`
+	WorkspaceID  string `json:"workspace_id" binding:"required"`
+	Slug         string `json:"slug" binding:"required"`
+	Name         string `json:"name" binding:"required"`
+	AgentTokenID string `json:"agent_token_id"`
+	OS           string `json:"os"`
+	Arch         string `json:"arch"`
+}
+
+func (s *Server) handleInternalHostIssue(c *gin.Context) {
+	var req internalHostIssueReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		internalErr(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	var agentTokenID *string
+	if v := strings.TrimSpace(req.AgentTokenID); v != "" {
+		agentTokenID = &v
+	}
+	inserted, err := s.insertHostRow(
+		req.ID, req.WorkspaceID, req.Slug, req.Name, agentTokenID, req.OS, req.Arch, time.Now().UTC(),
+	)
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "host insert failed: "+err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":      req.ID,
+		"deduped": !inserted,
+	})
+}
+
 func (s *Server) handleInternalHeartbeat(c *gin.Context) {
 	plugin, _ := c.Get("plugin_name")
 	pluginStr, _ := plugin.(string)

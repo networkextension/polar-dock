@@ -120,3 +120,89 @@ func TestHandleInternalLLMConfigGet_MissingParams(t *testing.T) {
 		t.Fatalf("status: got %d want 400", w.Code)
 	}
 }
+
+// Task #216 — internal token/host issue endpoints. Validation-only
+// tests (DB rows exercised via the polar-hosts integration smoke step).
+
+func TestHandleInternalAgentTokenIssue_BadJSON(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/internal/v1/agent-tokens/issue",
+		strings.NewReader(`not json`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	(&Server{}).handleInternalAgentTokenIssue(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 400", w.Code)
+	}
+}
+
+func TestHandleInternalAgentTokenIssue_MissingRequired(t *testing.T) {
+	// id, user_id, token_hash are required — missing any should 400.
+	cases := []string{
+		`{}`,
+		`{"id":"tok_x"}`,
+		`{"id":"tok_x","user_id":"u_x"}`,
+		`{"user_id":"u_x","token_hash":"h"}`,
+		`{"id":"tok_x","token_hash":"h"}`,
+	}
+	for _, body := range cases {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(
+			http.MethodPost,
+			"/internal/v1/agent-tokens/issue",
+			strings.NewReader(body),
+		)
+		c.Request.Header.Set("Content-Type", "application/json")
+		(&Server{}).handleInternalAgentTokenIssue(c)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status got %d want 400", body, w.Code)
+		}
+	}
+}
+
+func TestHandleInternalHostIssue_BadJSON(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/internal/v1/hosts/issue",
+		strings.NewReader(`not json`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	(&Server{}).handleInternalHostIssue(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 400", w.Code)
+	}
+}
+
+func TestHandleInternalHostIssue_MissingRequired(t *testing.T) {
+	cases := []string{
+		`{}`,
+		`{"id":"h_x"}`,
+		`{"id":"h_x","workspace_id":"t_x"}`,
+		`{"id":"h_x","workspace_id":"t_x","slug":"s"}`, // missing name
+		`{"workspace_id":"t_x","slug":"s","name":"n"}`, // missing id
+	}
+	for _, body := range cases {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(
+			http.MethodPost,
+			"/internal/v1/hosts/issue",
+			strings.NewReader(body),
+		)
+		c.Request.Header.Set("Content-Type", "application/json")
+		(&Server{}).handleInternalHostIssue(c)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status got %d want 400", body, w.Code)
+		}
+	}
+}
