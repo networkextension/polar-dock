@@ -375,13 +375,18 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 			ac.deliverChatReply(r)
 		case "hello":
 			var h struct {
-				Kind         string   `json:"kind"`
-				Version      string   `json:"version"`
-				Capabilities []string `json:"capabilities"`
-				Tool         string   `json:"tool"`
-				HostOS       string   `json:"host_os"`
-				HostArch     string   `json:"host_arch"`
-				HostName     string   `json:"host_name"`
+				Kind         string          `json:"kind"`
+				Version      string          `json:"version"`
+				Capabilities []string        `json:"capabilities"`
+				Tool         string          `json:"tool"`
+				HostOS       string          `json:"host_os"`
+				HostArch     string          `json:"host_arch"`
+				HostName     string          `json:"host_name"`
+				// polar-dock#351: static host facts the agent learns at
+				// attach time (virt, memory_bytes, cpu_model, kernel, …).
+				// Shape is agent-owned — we pass it through to polar-hosts
+				// without inspecting the inner JSON.
+				HostInfo json.RawMessage `json:"host_info,omitempty"`
 			}
 			if err := json.Unmarshal(raw, &h); err == nil {
 				ac.capabilities = h.Capabilities
@@ -393,6 +398,23 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 					hostIP := remoteIPForRequest(ac.requestRemoteAddr)
 					if err := s.updateAgentTokenHostInfo(ac.tokenID, h.HostOS, h.HostArch, h.HostName, hostIP); err != nil {
 						log.Printf("[agent ws] update host info token=%s: %v", ac.tokenID, err)
+					}
+				}
+				// Forward the static host_info blob to polar-hosts on a
+				// separate channel from skill.advertise touch. Resolve
+				// hostID lazily if we haven't already (an agent might
+				// send hello before any skill.advertise). Per-conn sha
+				// dedupe lives in the forwarder so a flapping reconnect
+				// doesn't spam the endpoint with identical payloads.
+				if len(h.HostInfo) > 0 && s.polarHostsTouchURL != "" {
+					if ac.hostID == "" {
+						if host, herr := s.getHostByAgentToken(ac.tokenID); herr == nil && host != nil {
+							ac.hostID = host.ID
+						}
+					}
+					if ac.hostID != "" {
+						now := time.Now().UTC()
+						go s.forwardHostInfoToPolarHosts(ac, ac.hostID, h.HostInfo, now)
 					}
 				}
 			}
