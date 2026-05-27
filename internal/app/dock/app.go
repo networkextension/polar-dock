@@ -803,6 +803,16 @@ func (s *Server) registerRoutes() {
 		// plugin access. See [[project-llm-billing-state]].
 		api.GET("/admin/workspace-plugin-access", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWorkspacePluginAccessList)
 		api.PUT("/admin/workspace-plugin-access", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWorkspacePluginAccessUpsert)
+
+		// Permission-model P2a: site-admin viewer over admin_audit_log.
+		// Reading is itself logged (action=audit_log.read) so the trail
+		// of "who looked at the audit trail" is closed.
+		api.GET("/admin/audit-log", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminAuditLog)
+
+		// P2a tenant-side: a team member can see every admin_audit_log
+		// row that targeted their team. Any role (viewer+) — the row
+		// content is metadata of provisioning actions, not tenant data.
+		api.GET("/teams/:id/admin-actions", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamAdminActions)
 		// Dynamic sidebar source for polar-dock-ui. Each plugin
 		// pushes its routes via heartbeat → dock aggregates +
 		// filters by workspace_plugin_access for non-root tenants.
