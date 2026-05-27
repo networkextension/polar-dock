@@ -1,7 +1,10 @@
 package dock
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +14,28 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// applePushCertSHA256Prefix reads the saved cert file from disk and
+// returns the first 16 hex chars of its sha256. Used by the audit log
+// so future investigations can match a leaked cert to an upload event
+// without ever storing the cert bytes themselves. Returns "" on any
+// IO error — audit is best-effort.
+func applePushCertSHA256Prefix(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	full := hex.EncodeToString(h.Sum(nil))
+	if len(full) > 16 {
+		return full[:16]
+	}
+	return full
+}
 
 func normalizeApplePushEnvironment(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -76,7 +101,8 @@ func (s *Server) handleSiteSettingsUpdate(c *gin.Context) {
 		return
 	}
 
-	if err := s.updateSiteSettings(name, strings.TrimSpace(req.Description), req.RegistrationRequiresInvite); err != nil {
+	description := strings.TrimSpace(req.Description)
+	if err := s.updateSiteSettings(name, description, req.RegistrationRequiresInvite); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
 	}
@@ -86,6 +112,20 @@ func (s *Server) handleSiteSettingsUpdate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatConfig,
+		Action:     "site_settings.update",
+		TargetKind: "site_setting",
+		TargetID:   "site",
+		Payload: map[string]any{
+			"after": map[string]any{
+				"name":                         name,
+				"description":                  description,
+				"registration_requires_invite": req.RegistrationRequiresInvite,
+			},
+		},
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "保存成功",
@@ -114,6 +154,36 @@ func (s *Server) handleInviteCodeGenerate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "邀请码生成失败"})
 		return
 	}
+
+	// Audit: log per-code prefix/suffix ONLY — full invite codes are
+	// secrets (single-use, redeemable by any anonymous client) so they
+	// must never land in the audit log.
+	prefixes := make([]string, 0, len(codes))
+	for _, ic := range codes {
+		code := ic.Code
+		var head, tail string
+		switch {
+		case len(code) <= 4:
+			head = code
+		case len(code) <= 8:
+			head = code[:2]
+			tail = code[len(code)-2:]
+		default:
+			head = code[:4]
+			tail = code[len(code)-2:]
+		}
+		prefixes = append(prefixes, head+"…"+tail)
+	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatProvisioning,
+		Action:     "invite_code.generate",
+		TargetKind: "site_setting",
+		TargetID:   "invite_codes",
+		Payload: map[string]any{
+			"count":             len(codes),
+			"code_hint_prefixes": prefixes,
+		},
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "邀请码已生成",
@@ -204,6 +274,20 @@ func (s *Server) handleSiteIconUpload(c *gin.Context) {
 		return
 	}
 
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatConfig,
+		Action:     "site_settings.icon_upload",
+		TargetKind: "site_setting",
+		TargetID:   "site_icon",
+		Payload: map[string]any{
+			"after": map[string]any{
+				"filename":  file.Filename,
+				"size":      file.Size,
+				"icon_url":  iconURL,
+			},
+		},
+	})
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "更新成功",
 		"icon_url": iconURL,
@@ -270,6 +354,24 @@ func (s *Server) handleApplePushCertificateUpload(c *gin.Context) {
 		return
 	}
 
+	// Audit: compute a fingerprint of the saved cert bytes (NOT the file
+	// contents themselves — never log raw cert material). Best-effort; if
+	// the file can't be re-read we still log filename + env so the trail
+	// shows an upload happened.
+	fingerprint := applePushCertSHA256Prefix(dstPath)
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatConfig,
+		Action:     "site_settings.apns_cert_upload",
+		TargetKind: "site_setting",
+		TargetID:   "apns_cert_" + environment,
+		Payload: map[string]any{
+			"env":                  environment,
+			"filename":             file.Filename,
+			"size":                 file.Size,
+			"sha256_prefix":        fingerprint,
+		},
+	})
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":     "APNs Key / .p8 已上传",
 		"environment": environment,
@@ -310,6 +412,16 @@ func (s *Server) handleApplePushCertificateDelete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatConfig,
+		Action:     "site_settings.apns_cert_delete",
+		TargetKind: "site_setting",
+		TargetID:   "apns_cert_" + environment,
+		Payload: map[string]any{
+			"env": environment,
+		},
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":     "APNs Key / .p8 已删除",

@@ -229,6 +229,7 @@ func (s *Server) handleAdminLLMConfigPricingUpdate(c *gin.Context) {
 		jsonError(c, http.StatusBadRequest, "invalid_json")
 		return
 	}
+	before, _ := s.getLLMConfigPricing(id)
 	if err := s.setLLMConfigPricing(id, req.PricePerMillionInputUSD, req.PricePerMillionOutputUSD); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			jsonError(c, http.StatusNotFound, "llm_config.not_found")
@@ -238,6 +239,16 @@ func (s *Server) handleAdminLLMConfigPricingUpdate(c *gin.Context) {
 		return
 	}
 	p, _ := s.getLLMConfigPricing(id)
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatConfig,
+		Action:     "llm_config.pricing_update",
+		TargetKind: "llm_config",
+		TargetID:   strconv.FormatInt(id, 10),
+		Payload: map[string]any{
+			"before": before,
+			"after":  p,
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"pricing": p})
 }
 
@@ -277,11 +288,25 @@ func (s *Server) handleAdminLLMConfigTeamQuotaUpsert(c *gin.Context) {
 		jsonError(c, http.StatusBadRequest, "llm_config_id_or_workspace_id.required")
 		return
 	}
-	q, err := s.upsertLLMConfigTeamQuota(req.LLMConfigID, req.WorkspaceID, req.MonthlyBudgetUSD)
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	q, err := s.upsertLLMConfigTeamQuota(req.LLMConfigID, workspaceID, req.MonthlyBudgetUSD)
 	if err != nil {
 		jsonError(c, http.StatusInternalServerError, "llm_team_quota.upsert_failed")
 		return
 	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:     AuditCatProvisioning,
+		Action:       "llm_config_team_quota.set",
+		TargetTeamID: workspaceID,
+		TargetKind:   "team",
+		TargetID:     workspaceID,
+		Payload: map[string]any{
+			"after": map[string]any{
+				"llm_config_id":      req.LLMConfigID,
+				"monthly_budget_usd": req.MonthlyBudgetUSD,
+			},
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"quota": q})
 }
 
@@ -330,12 +355,26 @@ func (s *Server) handleAdminLLMConfigTeamRecharge(c *gin.Context) {
 		jsonError(c, http.StatusBadRequest, "amount_usd.nonzero")
 		return
 	}
-	r, err := s.createLLMConfigTeamRecharge(req.LLMConfigID, req.WorkspaceID, req.Note, userID, req.AmountUSD)
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	r, err := s.createLLMConfigTeamRecharge(req.LLMConfigID, workspaceID, req.Note, userID, req.AmountUSD)
 	if err != nil {
 		jsonError(c, http.StatusInternalServerError, "recharge.create_failed")
 		return
 	}
-	balance, _ := s.teamLLMConfigBalance(req.WorkspaceID, req.LLMConfigID)
+	balance, _ := s.teamLLMConfigBalance(workspaceID, req.LLMConfigID)
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:     AuditCatReconciliation,
+		Action:       "llm_config_team_quota.recharge",
+		TargetTeamID: workspaceID,
+		TargetKind:   "team",
+		TargetID:     workspaceID,
+		Payload: map[string]any{
+			"llm_config_id":   req.LLMConfigID,
+			"amount_usd":      req.AmountUSD,
+			"note":            req.Note,
+			"new_balance_usd": balance,
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"recharge": r, "new_balance_usd": balance})
 }
 

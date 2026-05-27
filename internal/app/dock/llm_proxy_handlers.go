@@ -70,6 +70,27 @@ func (s *Server) handleLLMProxyTokenCreate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	// Audit: NEVER log the plaintext token. Token id + prefix (already a
+	// publicly-displayed truncation) is enough to correlate the audit
+	// row with the listed token in the admin UI.
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:     AuditCatProvisioning,
+		Action:       "llm_proxy_token.create",
+		TargetTeamID: workspaceID,
+		TargetKind:   "llm_proxy_token",
+		TargetID:     strconv.FormatInt(tok.ID, 10),
+		Payload: map[string]any{
+			"after": map[string]any{
+				"id":                    tok.ID,
+				"name":                  tok.Name,
+				"prefix":                tok.Prefix,
+				"default_llm_config_id": tok.DefaultLLMConfigID,
+				"rate_limit_rpm":        tok.RateLimitRPM,
+				"monthly_quota_usd":     tok.MonthlyQuotaUSD,
+				"scopes":                tok.Scopes,
+			},
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{
 		"token":   tok,
 		"warning": "plaintext 只显示一次，关闭后无法找回。请立即复制保存。",
@@ -301,5 +322,22 @@ func (s *Server) handleLLMProxyTokenRevoke(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "token 不存在"})
 		return
 	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:     AuditCatProvisioning,
+		Action:       "llm_proxy_token.revoke",
+		TargetTeamID: workspaceID,
+		TargetKind:   "llm_proxy_token",
+		TargetID:     idStr,
+		Payload: map[string]any{
+			"before": map[string]any{
+				"id":     tok.ID,
+				"name":   tok.Name,
+				"prefix": tok.Prefix,
+			},
+			"after": map[string]any{
+				"revoked_at": tok.RevokedAt,
+			},
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"token": tok})
 }
