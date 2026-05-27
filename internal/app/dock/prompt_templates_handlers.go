@@ -52,6 +52,7 @@ func (s *Server) handlePromptTemplateUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
 		return
 	}
+	before, _ := s.getPromptTemplate(slug)
 	if err := s.updatePromptTemplateContent(slug, req.Content); err != nil {
 		if err.Error() == "prompt slug not found" {
 			c.JSON(http.StatusNotFound, gin.H{"error": "prompt 不存在"})
@@ -61,5 +62,26 @@ func (s *Server) handlePromptTemplateUpdate(c *gin.Context) {
 		return
 	}
 	updated, _ := s.getPromptTemplate(slug)
+	// Audit: log slug + content size, not the full prompt body. Prompt
+	// templates are operator-authored config but can run long; the size
+	// delta is enough to spot tampering, the full body is in DB anyway.
+	var beforeLen int
+	if before != nil {
+		beforeLen = len(before.Content)
+	}
+	var afterLen int
+	if updated != nil {
+		afterLen = len(updated.Content)
+	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatConfig,
+		Action:     "prompt_template.update",
+		TargetKind: "site_setting",
+		TargetID:   slug,
+		Payload: map[string]any{
+			"before": map[string]any{"content_len": beforeLen},
+			"after":  map[string]any{"content_len": afterLen},
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"prompt": updated})
 }

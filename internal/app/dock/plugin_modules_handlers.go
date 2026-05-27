@@ -8,6 +8,7 @@ package dock
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -53,6 +54,23 @@ func (s *Server) handleAdminPluginModuleCreate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "plugin_modules.create_failed"})
 		return
 	}
+	// Audit: redact plaintext token before logging the row. The plaintext
+	// is only on the response struct for the admin to copy once.
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatProvisioning,
+		Action:     "plugin_module.create",
+		TargetKind: "plugin_module",
+		TargetID:   item.Name,
+		Payload: map[string]any{
+			"after": map[string]any{
+				"name":         item.Name,
+				"display_name": item.DisplayName,
+				"enabled":      item.Enabled,
+				"endpoint":     item.Endpoint,
+				"created_at":   item.CreatedAt,
+			},
+		},
+	})
 	c.JSON(http.StatusCreated, gin.H{"plugin": item})
 }
 
@@ -72,6 +90,15 @@ func (s *Server) handleAdminPluginModuleEnable(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not found"})
 		return
 	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatProvisioning,
+		Action:     "plugin_module.enable",
+		TargetKind: "plugin_module",
+		TargetID:   name,
+		Payload: map[string]any{
+			"after": map[string]any{"enabled": true},
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -91,6 +118,15 @@ func (s *Server) handleAdminPluginModuleDisable(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not found"})
 		return
 	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatProvisioning,
+		Action:     "plugin_module.disable",
+		TargetKind: "plugin_module",
+		TargetID:   name,
+		Payload: map[string]any{
+			"after": map[string]any{"enabled": false},
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -111,6 +147,24 @@ func (s *Server) handleAdminPluginModuleRotateKey(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not found"})
 		return
 	}
+	// Audit: NEVER log the plaintext. Store the sha256 prefix of the new
+	// key so a future leak investigation can pin the rotation event, plus
+	// the rotation timestamp.
+	newHash := hashPluginToken(plaintext)
+	hashPrefix := newHash
+	if len(hashPrefix) > 12 {
+		hashPrefix = hashPrefix[:12]
+	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatConfig,
+		Action:     "plugin_module.rotate_key",
+		TargetKind: "plugin_module",
+		TargetID:   name,
+		Payload: map[string]any{
+			"new_key_sha256_prefix": hashPrefix,
+			"rotated_at":            time.Now().UTC(),
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"plaintext": plaintext})
 }
 
@@ -130,5 +184,14 @@ func (s *Server) handleAdminPluginModuleDelete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not found"})
 		return
 	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatProvisioning,
+		Action:     "plugin_module.delete",
+		TargetKind: "plugin_module",
+		TargetID:   name,
+		Payload: map[string]any{
+			"before": map[string]any{"name": name},
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

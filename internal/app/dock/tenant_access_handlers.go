@@ -45,9 +45,11 @@ func (s *Server) handleAdminWorkspacePluginAccessUpsert(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
 		return
 	}
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	plugin := strings.TrimSpace(req.Plugin)
 	out, err := s.upsertWorkspacePluginAccess(
-		strings.TrimSpace(req.WorkspaceID),
-		strings.TrimSpace(req.Plugin),
+		workspaceID,
+		plugin,
 		req.Enabled,
 		userIDStr,
 	)
@@ -55,5 +57,18 @@ func (s *Server) handleAdminWorkspacePluginAccessUpsert(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
 	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:     AuditCatProvisioning,
+		Action:       "workspace_plugin_access.set",
+		TargetTeamID: workspaceID,
+		TargetKind:   "team",
+		TargetID:     workspaceID,
+		Payload: map[string]any{
+			"after": map[string]any{
+				"plugin":  plugin,
+				"enabled": req.Enabled,
+			},
+		},
+	})
 	c.JSON(http.StatusOK, gin.H{"row": out})
 }
