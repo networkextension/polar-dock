@@ -84,25 +84,56 @@ func (s *Server) createAgentToken(userID, name string, coders AgentCoderConfig) 
 	if err != nil {
 		return "", nil, err
 	}
-	tok := &AgentToken{
-		ID:          generateResourceID(),
-		UserID:      userID,
-		Name:        strings.TrimSpace(name),
-		CoderConfig: coders,
-		CreatedAt:   time.Now().UTC(),
-	}
 	codersJSON, err := json.Marshal(coders)
 	if err != nil {
 		return "", nil, err
 	}
-	if _, err := s.db.Exec(
-		`INSERT INTO agent_tokens (id, user_id, name, token_hash, coder_config, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		tok.ID, tok.UserID, tok.Name, hashHex, string(codersJSON), tok.CreatedAt,
-	); err != nil {
+	id := generateResourceID()
+	createdAt := time.Now().UTC()
+	if _, err := s.insertAgentTokenRow(id, userID, strings.TrimSpace(name), hashHex, string(codersJSON), createdAt); err != nil {
 		return "", nil, err
 	}
+	tok := &AgentToken{
+		ID:          id,
+		UserID:      userID,
+		Name:        strings.TrimSpace(name),
+		CoderConfig: coders,
+		CreatedAt:   createdAt,
+	}
 	return raw, tok, nil
+}
+
+// insertAgentTokenRow is the shared INSERT used by createAgentToken
+// (dock-side mint) and handleInternalAgentTokenIssue (plugin dual-write
+// via SDK). Idempotent on id: ON CONFLICT DO NOTHING returns
+// inserted=false so a retry from a plugin's transient-failure path
+// doesn't 23505. coderConfigJSON must be a valid JSON literal (caller's
+// responsibility — pass "{}" if no marker).
+func (s *Server) insertAgentTokenRow(id, userID, name, tokenHash, coderConfigJSON string, createdAt time.Time) (inserted bool, err error) {
+	if strings.TrimSpace(id) == "" {
+		return false, errors.New("id is empty")
+	}
+	if strings.TrimSpace(userID) == "" {
+		return false, errors.New("userID is empty")
+	}
+	if strings.TrimSpace(tokenHash) == "" {
+		return false, errors.New("tokenHash is empty")
+	}
+	cfg := strings.TrimSpace(coderConfigJSON)
+	if cfg == "" {
+		cfg = "{}"
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO agent_tokens (id, user_id, name, token_hash, coder_config, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (id) DO NOTHING`,
+		id, userID, name, tokenHash, cfg, createdAt,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (s *Server) listAgentTokensForUser(userID string) ([]AgentToken, error) {

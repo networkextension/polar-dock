@@ -684,6 +684,13 @@ func (s *Server) registerRoutes() {
 		internal.POST("/agent/llm-call-record", s.handleInternalLLMCallRecord)
 		internal.POST("/billing/video-shots", s.handleInternalVideoShotCall)
 		internal.GET("/workspace-plugin-access", s.handleInternalWorkspacePluginAccess)
+
+		// #216 — plugin dual-write surface for agent_tokens + hosts.
+		// polar-hosts calls these after its local INSERT so the canonical
+		// row lands in ideamesh too; without this, /ws/agent 401s on every
+		// newly-registered host.
+		internal.POST("/agent-tokens/issue", s.handleInternalAgentTokenIssue)
+		internal.POST("/hosts/issue", s.handleInternalHostIssue)
 	}
 
 	// iOS distribution OTA endpoints + public share/plaza/install pages
