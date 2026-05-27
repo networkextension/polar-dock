@@ -2839,6 +2839,43 @@ CREATE TABLE IF NOT EXISTS workspace_plugin_access (
 CREATE INDEX IF NOT EXISTS idx_workspace_plugin_access_plugin
     ON workspace_plugin_access(plugin_name);
 
+-- ============================================================
+-- admin_audit_log — every mutating site-admin action writes one row.
+-- See doc/arch/permission-model.md §3.4. P0 of the permission-model
+-- proposal: schema lands here; LogAdminAction helper + bucket-1 wire-up
+-- in follow-up. Tenants get a read-only view at
+-- GET /api/teams/:id/admin-actions filtered by target_team_id.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id              BIGSERIAL PRIMARY KEY,
+    actor_user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    -- Role at time of action, denormalised so revoking privilege
+    -- later doesn't blank the audit trail.
+    actor_role      TEXT NOT NULL,
+    -- §0.1 bucket so the table is grep-able by category.
+    action_category TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    target_team_id  TEXT REFERENCES teams(id) ON DELETE SET NULL,
+    target_kind     TEXT NOT NULL DEFAULT '',
+    target_id       TEXT NOT NULL DEFAULT '',
+    -- Before/after delta + free-form note. Tenant content stays OUT —
+    -- only metadata of the business action.
+    payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    note            TEXT NOT NULL DEFAULT '',
+    source_ip       TEXT NOT NULL DEFAULT '',
+    user_agent      TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_actor
+    ON admin_audit_log(actor_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_target
+    ON admin_audit_log(target_team_id, created_at DESC)
+    WHERE target_team_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_admin_audit_category
+    ON admin_audit_log(action_category, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_action
+    ON admin_audit_log(action, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS video_shot_calls (
     id BIGSERIAL PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
