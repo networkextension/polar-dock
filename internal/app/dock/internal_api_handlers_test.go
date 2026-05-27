@@ -206,3 +206,39 @@ func TestHandleInternalHostIssue_MissingRequired(t *testing.T) {
 		}
 	}
 }
+
+func TestInternalHostIssueReq_MachineUUIDFieldDecodes(t *testing.T) {
+	// Lock the wire shape so the polar-sdk side and the dock handler
+	// agree on the JSON tag for machine_uuid. A bad refactor that
+	// renamed the field would silently drop the dedup payload — this
+	// test catches it without needing the DB / a live plugin.
+	body := `{
+	  "id":"h_xyz","workspace_id":"t_root","slug":"emei","name":"emei",
+	  "agent_token_id":"tok_abc","os":"darwin","arch":"arm64",
+	  "machine_uuid":"12345678-90AB-CDEF-1234-567890ABCDEF"
+	}`
+	var req internalHostIssueReq
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if req.MachineUUID != "12345678-90AB-CDEF-1234-567890ABCDEF" {
+		t.Errorf("MachineUUID = %q, want round-trip value", req.MachineUUID)
+	}
+	if req.ID != "h_xyz" || req.WorkspaceID != "t_root" || req.Name != "emei" {
+		t.Errorf("required fields lost: %+v", req)
+	}
+}
+
+func TestInternalHostIssueReq_MissingMachineUUIDIsOK(t *testing.T) {
+	// Legacy / collector-failed agents omit machine_uuid entirely.
+	// The handler must NOT require it (no binding tag) — empty value
+	// signals "use the legacy id-conflict path" downstream.
+	body := `{"id":"h_legacy","workspace_id":"t_root","slug":"old","name":"old"}`
+	var req internalHostIssueReq
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if req.MachineUUID != "" {
+		t.Errorf("MachineUUID should default to empty, got %q", req.MachineUUID)
+	}
+}
