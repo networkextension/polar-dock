@@ -198,12 +198,12 @@ func (s *Server) registerAgent(_ context.Context, req internalAgentRegisterReq) 
 			_, _ = s.db.Exec(`UPDATE agents SET host_id = $2 WHERE id = $1`, existingID, hostID)
 		}
 		return map[string]any{
-			"agent_id":    existingID,
-			"host_id":     hostID,
-			"bot_user_id": existingBot,
-			"token":       "",
-			"server":      s.canonicalServerURL(),
-			"idempotent":  true,
+			"agent_id":        existingID,
+			"host_id":         hostID,
+			"bot_user_id":     existingBot,
+			"agent_token_raw": "",
+			"server":          s.canonicalServerURL(),
+			"idempotent":      true,
 		}, nil
 	} else if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 		return nil, fmt.Errorf("agent lookup: %w", lookupErr)
@@ -251,11 +251,11 @@ func (s *Server) registerAgent(_ context.Context, req internalAgentRegisterReq) 
 	}
 
 	return map[string]any{
-		"agent_id":    agentID,
-		"host_id":     hostID,
-		"bot_user_id": botUserID,
-		"token":       rawToken,
-		"server":      s.canonicalServerURL(),
+		"agent_id":        agentID,
+		"host_id":         hostID,
+		"bot_user_id":     botUserID,
+		"agent_token_raw": rawToken,
+		"server":          s.canonicalServerURL(),
 	}, nil
 }
 
