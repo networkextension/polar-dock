@@ -33,6 +33,11 @@ import (
 )
 
 // Host is the API + DB representation of a registered remote machine.
+//
+// v4 (doc/arch/agent-identity-v4.md): the MachineUUID field is gone.
+// New rows' ID is sha256(salt + raw_machine_uuid)[:32] hex computed
+// server-side by registerAgent. Legacy rows keep their h_<random>
+// primary key — both ID formats coexist; PK is opaque to readers.
 type Host struct {
 	ID                   string          `json:"id"`
 	WorkspaceID          string          `json:"workspace_id"`
@@ -45,10 +50,6 @@ type Host struct {
 	AdvertisedSkillsJSON json.RawMessage `json:"advertised_skills,omitempty"`
 	LastSeenAt           *time.Time      `json:"last_seen_at,omitempty"`
 	CreatedAt            time.Time       `json:"created_at"`
-	// MachineUUID — stable per-machine fingerprint; see polar-agent
-	// hostinfo. Drives the dedup branch in insertHostRow so re-registers
-	// from the same physical box land on the same hosts.id.
-	MachineUUID string `json:"machine_uuid,omitempty"`
 }
 
 // AdvertisedSkill mirrors the agent-side skill descriptor the WS
@@ -115,32 +116,22 @@ func (s *Server) createHost(workspaceID, name, agentTokenID, hostOS, hostArch st
 		v := strings.TrimSpace(agentTokenID)
 		host.AgentTokenID = &v
 	}
-	if _, _, err := s.insertHostRow(host.ID, host.WorkspaceID, host.Slug, host.Name, host.AgentTokenID, host.OS, host.Arch, "", host.CreatedAt); err != nil {
+	if _, _, err := s.insertHostRow(host.ID, host.WorkspaceID, host.Slug, host.Name, host.AgentTokenID, host.OS, host.Arch, host.CreatedAt); err != nil {
 		return nil, err
 	}
 	return host, nil
 }
 
 // insertHostRow is the shared INSERT used by createHost (dock-side mint)
-// and handleInternalHostIssue (plugin dual-write via SDK).
+// and handleInternalHostIssue (plugin dual-write via SDK). v4 removed
+// the (workspace_id, machine_uuid) dedup path — registerAgent owns host
+// identity now (UPSERT keyed on id = sha256(salt + raw_uuid)). This
+// helper is kept for the legacy id-only conflict semantics that
+// /internal/v1/hosts/issue still relies on while v3 callers exist.
 //
-// Returns (insertedID, deduped, err). Two modes:
-//
-//  1. machineUUID == "": legacy behavior. INSERT … ON CONFLICT (id) DO
-//     NOTHING. insertedID == id; deduped == true on conflict.
-//
-//  2. machineUUID != "": dedup mode. Before inserting we probe the
-//     partial unique index on (workspace_id, machine_uuid). On hit we
-//     UPDATE the existing row (slug stays, name + agent_token + os +
-//     arch refresh) and return the EXISTING id so the caller (and the
-//     plugin's local DB) can converge on the same key. On miss we
-//     INSERT with the machine_uuid column populated; concurrent racers
-//     hit the partial unique index and fall through to UPDATE on the
-//     retry. ON CONFLICT (id) DO NOTHING still wins on plain-id retry.
-//
-// agentTokenID may be nil (pre-registered host); in the plugin
-// dual-write path it's always set.
-func (s *Server) insertHostRow(id, workspaceID, slug, name string, agentTokenID *string, os, arch, machineUUID string, createdAt time.Time) (insertedID string, deduped bool, err error) {
+// Returns (id, deduped, err). deduped == true means the row already
+// existed at this id.
+func (s *Server) insertHostRow(id, workspaceID, slug, name string, agentTokenID *string, os, arch string, createdAt time.Time) (insertedID string, deduped bool, err error) {
 	if strings.TrimSpace(id) == "" {
 		return "", false, errors.New("id is empty")
 	}
@@ -153,54 +144,11 @@ func (s *Server) insertHostRow(id, workspaceID, slug, name string, agentTokenID 
 	if strings.TrimSpace(name) == "" {
 		return "", false, errors.New("name is empty")
 	}
-
-	mu := strings.TrimSpace(machineUUID)
-
-	// Dedup mode: probe + UPDATE-or-INSERT. Empty mu skips this and
-	// falls through to the legacy id-conflict path.
-	if mu != "" {
-		var existingID string
-		err := s.db.QueryRow(
-			`SELECT id FROM hosts WHERE workspace_id = $1 AND machine_uuid = $2 LIMIT 1`,
-			workspaceID, mu,
-		).Scan(&existingID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return "", false, fmt.Errorf("lookup by machine_uuid: %w", err)
-		}
-		if err == nil && existingID != "" {
-			// UPDATE the existing row in place. Slug intentionally NOT
-			// refreshed (it's a URL component; the plugin caller has
-			// already committed to the existing slug via its own dedup
-			// SELECT). machine_uuid is a no-op here but kept explicit
-			// in case a future migration touches the column.
-			if _, uerr := s.db.Exec(
-				`UPDATE hosts
-				 SET name           = $1,
-				     agent_token_id = $2,
-				     os             = $3,
-				     arch           = $4,
-				     machine_uuid   = $5
-				 WHERE id = $6`,
-				name, agentTokenID, os, arch, mu, existingID,
-			); uerr != nil {
-				return "", false, fmt.Errorf("update existing host by machine_uuid: %w", uerr)
-			}
-			return existingID, true, nil
-		}
-	}
-
-	// Plain insert path (legacy mu=="" + dedup-miss both land here).
-	// nilable machine_uuid: empty TEXT vs NULL distinction doesn't
-	// matter because the partial unique index excludes both.
-	var muVal any
-	if mu != "" {
-		muVal = mu
-	}
 	res, err := s.db.Exec(
-		`INSERT INTO hosts (id, workspace_id, slug, name, agent_token_id, os, arch, machine_uuid, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO hosts (id, workspace_id, slug, name, agent_token_id, os, arch, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (id) DO NOTHING`,
-		id, workspaceID, slug, name, agentTokenID, os, arch, muVal, createdAt,
+		id, workspaceID, slug, name, agentTokenID, os, arch, createdAt,
 	)
 	if err != nil {
 		return "", false, err
@@ -209,7 +157,6 @@ func (s *Server) insertHostRow(id, workspaceID, slug, name string, agentTokenID 
 	if n > 0 {
 		return id, false, nil
 	}
-	// Hit on (id) — caller's previous attempt already landed this row.
 	return id, true, nil
 }
 
@@ -562,8 +509,7 @@ const hostSelectColumns = `SELECT id, workspace_id, slug, name,
 	    agent_token_id, COALESCE(os, ''), COALESCE(arch, ''),
 	    COALESCE(last_seen_ip, ''),
 	    COALESCE(advertised_skills_json::text, '[]'),
-	    last_seen_at, created_at,
-	    COALESCE(machine_uuid, '')
+	    last_seen_at, created_at
 	  FROM hosts`
 
 // scanHost handles both QueryRow + Query results via the io.Reader-ish
@@ -589,15 +535,13 @@ func scanHostInto(row rowScanner) (*Host, error) {
 	var agentTokenID sql.NullString
 	var lastSeenAt sql.NullTime
 	var skillsText string
-	var machineUUID string
 	if err := row.Scan(
 		&h.ID, &h.WorkspaceID, &h.Slug, &h.Name,
 		&agentTokenID, &h.OS, &h.Arch, &h.LastSeenIP,
-		&skillsText, &lastSeenAt, &h.CreatedAt, &machineUUID,
+		&skillsText, &lastSeenAt, &h.CreatedAt,
 	); err != nil {
 		return nil, err
 	}
-	h.MachineUUID = machineUUID
 	if agentTokenID.Valid {
 		v := agentTokenID.String
 		h.AgentTokenID = &v

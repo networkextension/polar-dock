@@ -2383,20 +2383,46 @@ CREATE INDEX IF NOT EXISTS idx_hosts_last_seen ON hosts(last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_hosts_agent_token
 	ON hosts(agent_token_id) WHERE agent_token_id IS NOT NULL;
 
--- machine_uuid — stable per-machine fingerprint the agent reports in
--- hostinfo (IOPlatformUUID / machine-id / smbios). When non-empty,
--- insertHostRow (used by /internal/v1/hosts/issue) upserts on
--- (workspace_id, machine_uuid) so a re-register from the same
--- physical box reuses the existing dock row instead of producing a
--- duplicate. NULL / '' = legacy agent or collector failure — falls
--- back to the legacy ON CONFLICT (id) path.
-ALTER TABLE hosts
-	ADD COLUMN IF NOT EXISTS machine_uuid TEXT;
--- Partial unique guards the upsert; NULL/'' excluded so legacy rows
--- that predate the column don't collide on the empty value.
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_hosts_workspace_machine_uuid
-	ON hosts(workspace_id, machine_uuid)
-	WHERE machine_uuid IS NOT NULL AND machine_uuid <> '';
+-- ============================================================
+-- Agent Identity v4 (doc/arch/agent-identity-v4.md, 2026-05-27).
+--
+-- v3 conflated physical machine with logical agent via the
+-- machine_uuid column + UNIQUE(workspace_id, machine_uuid) — that
+-- broke "one machine, N agents" at scale. v4 splits:
+--   hosts  = physical asset; PK is sha256(salt + raw_machine_uuid)
+--            computed server-side from the register frame, never
+--            persisted raw. Capacity peaks tracked here.
+--   agents = logical instance; PK = ag_<random32hex> minted on
+--            register. One host : N agents via host_id FK.
+-- ============================================================
+
+-- Drop the v3 surface. IF EXISTS keeps fresh boots happy.
+DROP INDEX IF EXISTS uniq_hosts_workspace_machine_uuid;
+ALTER TABLE hosts DROP COLUMN IF EXISTS machine_uuid;
+
+-- v4 host capacity tracking. Agents sample these and the hello path
+-- carries the per-sample max; the dock UPDATE uses GREATEST() so the
+-- columns only ratchet up.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS mem_peak_bytes BIGINT;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS cpu_peak_pct   REAL;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS first_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS agents (
+    id             TEXT PRIMARY KEY,
+    workspace_id   TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    host_id        TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    bot_user_id    TEXT,
+    agent_token_id TEXT NOT NULL REFERENCES agent_tokens(id) ON DELETE CASCADE,
+    os             TEXT,
+    arch           TEXT,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_hello_at  TIMESTAMPTZ,
+    UNIQUE (workspace_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_agents_host      ON agents(host_id);
+CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id, last_hello_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agents_bot       ON agents(bot_user_id) WHERE bot_user_id IS NOT NULL;
 
 -- host_skills: operator-enabled skill on a host. Schema exists in P0
 -- so future phase migrations don't need to add the table; nothing
