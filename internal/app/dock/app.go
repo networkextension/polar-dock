@@ -652,6 +652,10 @@ func (s *Server) registerRoutes() {
 		// the agent reports via skill.event{metric}. polar-wg polls
 		// this every ~30s to populate the per-hub status table.
 		internal.GET("/wg-peer-status", s.handleInternalWGPeerStatus)
+		// Sibling-plugin push path for hubs that observe their own
+		// wg iface locally (polar-wg-svc on the hub box). Same cache
+		// as the agent-WS path, no schema difference downstream.
+		internal.POST("/wg-peer-status", s.handleInternalWGPeerStatusPush)
 
 		// F1 — Phase 2 handler-migration prereqs. See
 		// doc/arch/internal-api-v1.md §v1.1.

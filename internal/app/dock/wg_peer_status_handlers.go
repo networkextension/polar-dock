@@ -19,6 +19,8 @@ package dock
 
 import (
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -53,4 +55,56 @@ func (s *Server) handleInternalWGPeerStatus(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"samples": out})
+}
+
+// internalWGPeerStatusPushReq — POST body. Mirrors the wire shape of
+// the agent's `skill.event{metric, wg_peer_status}` Data payload, plus
+// the routing keys (host_id, iface) that the cache is indexed by.
+//
+// Used by sibling plugins running on the wireguard host itself (e.g.
+// polar-wg-svc on a hub box) to push their local `wg show <iface>
+// dump` snapshot directly to the cache, bypassing the per-host
+// polar-agent. Same cache, same readers — the only difference is the
+// transport (HMAC plugin POST vs agent WS).
+type internalWGPeerStatusPushReq struct {
+	HostID         string         `json:"host_id"` // "" => synthesise from plugin name
+	Iface          string         `json:"iface"`
+	IfacePublicKey string         `json:"iface_public_key"`
+	Data           map[string]any `json:"data"` // same shape as agent's data payload
+}
+
+func (s *Server) handleInternalWGPeerStatusPush(c *gin.Context) {
+	if s.wgPeerCache == nil {
+		internalErr(c, http.StatusServiceUnavailable, "wg_peer_cache not initialised")
+		return
+	}
+	var req internalWGPeerStatusPushReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		internalErr(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	if strings.TrimSpace(req.Iface) == "" || strings.TrimSpace(req.IfacePublicKey) == "" {
+		internalErr(c, http.StatusBadRequest, "iface + iface_public_key required")
+		return
+	}
+	hostID := strings.TrimSpace(req.HostID)
+	if hostID == "" {
+		// Synthesise a stable id from the plugin name so the cache row
+		// is identifiable and won't collide with agent-sourced entries
+		// (which always carry a real host_id).
+		plugin, _ := c.Get("plugin_name")
+		if pluginStr, _ := plugin.(string); pluginStr != "" {
+			hostID = "plugin:" + pluginStr
+		} else {
+			hostID = "plugin:unknown"
+		}
+	}
+	s.wgPeerCache.upsert(wgPeerSample{
+		HostID:         hostID,
+		Iface:          strings.TrimSpace(req.Iface),
+		IfacePublicKey: strings.TrimSpace(req.IfacePublicKey),
+		RecordedAt:     time.Now().UTC(),
+		Data:           req.Data,
+	})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
