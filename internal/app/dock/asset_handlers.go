@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -82,6 +83,13 @@ func (s *Server) handleAssetUpload(c *gin.Context) {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
 			"error": fmt.Sprintf("文件超过 %d GiB 上限 (v1)", assetMaxUploadBytes/(1<<30)),
 		})
+		return
+	}
+
+	// Quota gate (workspace cap + root cap). Checked BEFORE we touch
+	// the disk so a rejected upload doesn't leave staging cruft.
+	if code, msg := s.checkAssetUploadAllowed(workspaceID, file.Size); code != http.StatusOK {
+		c.JSON(code, gin.H{"error": msg})
 		return
 	}
 
@@ -195,6 +203,11 @@ func (s *Server) handleAssetUpload(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
+	}
+	// Bump cached usage_bytes. Best-effort: a recompute sweep will
+	// reconcile any drift every 6h, so logging the error is enough.
+	if err := s.bumpAssetUsage(workspaceID, size); err != nil {
+		log.Printf("assets: bumpAssetUsage (+%d) workspace=%s failed: %v", size, workspaceID, err)
 	}
 	c.JSON(http.StatusCreated, gin.H{"asset": asset})
 }
@@ -359,6 +372,13 @@ func (s *Server) handleAssetDelete(c *gin.Context) {
 	// (dedup), it'll re-upload-and-write on next access; we don't
 	// reference-count here because P3 owns blob storage.
 	_ = os.Remove(assetBlobPath(s.uploadDir, a.WorkspaceID, a.SHA256))
+	// Bump cached usage_bytes downward. Same best-effort posture
+	// as the upload bump.
+	if a.WorkspaceID != nil {
+		if err := s.bumpAssetUsage(*a.WorkspaceID, -a.SizeBytes); err != nil {
+			log.Printf("assets: bumpAssetUsage (-%d) workspace=%s failed: %v", a.SizeBytes, *a.WorkspaceID, err)
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
