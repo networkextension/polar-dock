@@ -12,11 +12,15 @@ import (
 var shortCodeRE = regexp.MustCompile(`^[0-9A-Za-z]{8,12}$`)
 
 func TestAssetShareCodeFormat(t *testing.T) {
-	t.Skip("generateAssetShareCode lands in P1c; placeholder test")
-	// for _, n := range []int{8, 10, 12} {
-	// 	code := generateAssetShareCode(n)
-	// 	if !shortCodeRE.MatchString(code) {
-	// 		t.Errorf("code %q (n=%d) doesn't match %s", code, n, shortCodeRE)
-	// 	}
-	// }
+	for _, n := range []int{8, 10, 12} {
+		for i := 0; i < 100; i++ {
+			code, err := generateAssetShareCode(n)
+			if err != nil {
+				t.Fatalf("generateAssetShareCode(%d): %v", n, err)
+			}
+			if !shortCodeRE.MatchString(code) {
+				t.Errorf("code %q (n=%d) doesn't match %s", code, n, shortCodeRE)
+			}
+		}
+	}
 }

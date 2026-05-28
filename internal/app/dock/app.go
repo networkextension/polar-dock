@@ -463,6 +463,11 @@ func NewServer(cfg Config) (*Server, error) {
 	if server.uploadDir != "" {
 		server.router.Static("/uploads", server.uploadDir)
 	}
+	// P1c: public WeTransfer-style share-link download route. Lives
+	// at the top level (no /api prefix, no AuthMiddleware) so the
+	// public URL stays short and unauthenticated downloads work for
+	// anyone holding the short_code.
+	server.router.GET("/s/:short_code", server.handleAssetSharePublicDownload)
 	server.registerRoutes()
 
 	return server, nil
@@ -979,6 +984,12 @@ func (s *Server) registerRoutes() {
 		api.GET("/asset-quota", s.AuthMiddleware(), s.handleAssetQuotaSelf)
 		api.GET("/admin/asset-quotas", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetQuotaAdminList)
 		api.PATCH("/admin/asset-quotas/:ws", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetQuotaAdminSet)
+		// P1c: WeTransfer-style share links. Tenant creates a share
+		// for own asset; recipients pull via the public /s/:code
+		// route (registered at top level below).
+		api.POST("/assets/:id/share", s.AuthMiddleware(), s.handleAssetShareCreate)
+		api.GET("/share-links", s.AuthMiddleware(), s.handleAssetShareList)
+		api.DELETE("/share-links/:id", s.AuthMiddleware(), s.handleAssetShareDelete)
 		api.POST("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenCreate)
 		api.GET("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenList)
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
