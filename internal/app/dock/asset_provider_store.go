@@ -168,22 +168,27 @@ func (s *Server) deleteAssetProvider(id int64) error {
 	return nil
 }
 
-// touchAssetProviderLastSeen updates last_seen_at = NOW() on the row
-// matching slug. Called by the heartbeat handler. Idempotent; no-op
-// if no row matches.
+// touchAssetProviderLastSeen was the v1 heartbeat hook. Health is
+// now derived from plugin_modules.last_heartbeat instead (see
+// pickProviderForAsset). Kept as a no-op so older callers that may
+// still try it don't crash; will be removed once the column drops
+// in the v2 schema migration.
 func (s *Server) touchAssetProviderLastSeen(slug string) error {
-	_, err := s.db.Exec(
-		`UPDATE asset_providers SET last_seen_at = NOW() WHERE slug = $1`,
-		slug,
-	)
-	return err
+	_ = slug
+	return nil
 }
 
 // pickProviderForAsset picks the best provider to serve a download
 // of the given asset. v1 logic: any provider with status='ready' in
-// asset_locations AND last_seen_at < 5min ago. If multiple match,
-// prefer same region as a caller hint (caller passes "" if unknown).
+// asset_locations AND a fresh heartbeat. If multiple match, prefer
+// same region as a caller hint (caller passes "" if unknown).
 // Returns (nil, nil) when no candidate.
+//
+// Health signal: plugin_modules.last_heartbeat for plugin name='assets'
+// (the polar-assets-svc plugin runs every provider as a single
+// process today). We do NOT use asset_providers.last_seen_at — that
+// column was a P3a design artifact that no code path updates;
+// removing it is a v2 migration.
 //
 // Future: weighting by capacity_gb, latency probes, sticky-by-IP.
 func (s *Server) pickProviderForAsset(assetID int64, callerRegion string) (*AssetProvider, error) {
@@ -191,10 +196,12 @@ func (s *Server) pickProviderForAsset(assetID int64, callerRegion string) (*Asse
 		`SELECT p.`+strings.ReplaceAll(assetProviderColumns, "\n", " ")+`
 		   FROM asset_providers p
 		   JOIN asset_locations loc ON loc.provider_id = p.id
+		   JOIN plugin_modules pm ON pm.name = 'assets'
 		  WHERE loc.asset_id = $1
 		    AND loc.status = 'ready'
-		    AND p.last_seen_at IS NOT NULL
-		    AND p.last_seen_at > NOW() - INTERVAL '5 minutes'`,
+		    AND pm.enabled = true
+		    AND pm.last_heartbeat IS NOT NULL
+		    AND pm.last_heartbeat > NOW() - INTERVAL '5 minutes'`,
 		assetID,
 	)
 	if err != nil {
@@ -229,13 +236,16 @@ func (s *Server) pickProviderForAsset(assetID int64, callerRegion string) (*Asse
 
 // pickAnyHealthyProvider — for the upload path where we need *a*
 // provider to receive the new blob (the locations row doesn't exist
-// yet). v1 picks any healthy provider, prefer same region.
+// yet). v1 picks any healthy provider, prefer same region. Same
+// heartbeat-via-plugin_modules signal as pickProviderForAsset.
 func (s *Server) pickAnyHealthyProvider(callerRegion string) (*AssetProvider, error) {
 	rows, err := s.db.Query(
-		`SELECT ` + assetProviderColumns + `
-		   FROM asset_providers
-		  WHERE last_seen_at IS NOT NULL
-		    AND last_seen_at > NOW() - INTERVAL '5 minutes'`,
+		`SELECT p.` + strings.ReplaceAll(assetProviderColumns, "\n", " ") + `
+		   FROM asset_providers p
+		   JOIN plugin_modules pm ON pm.name = 'assets'
+		  WHERE pm.enabled = true
+		    AND pm.last_heartbeat IS NOT NULL
+		    AND pm.last_heartbeat > NOW() - INTERVAL '5 minutes'`,
 	)
 	if err != nil {
 		return nil, err
