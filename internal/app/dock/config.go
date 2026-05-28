@@ -138,6 +138,18 @@ type Config struct {
 	// across all hosts. Per-host cap is hard-coded at 2. Default 16.
 	PolarMaxVNCSessions int
 
+	// PolarAssetsUseProvider: feature flag for the P3 integration
+	// milestone. When false (default) the assets module keeps its P1
+	// behavior of writing/reading blob bytes through dock's local
+	// uploadDir filesystem stub. When true, dock streams uploads to a
+	// polar-assets-svc provider via POST /v1/receive and 302-redirects
+	// downloads to GET /v1/blob/<sha>?token=<signed>. The flag stays
+	// off in prod until the operator has registered at least one
+	// provider via /api/admin/asset-providers AND deployed
+	// polar-assets-svc with the matching POLAR_ASSETS_DOCK_HMAC_SECRET.
+	// Set via POLAR_ASSETS_USE_PROVIDER=true on the dock launch env.
+	PolarAssetsUseProvider bool
+
 	// MetricsToken gates GET /metrics. When unset the endpoint returns
 	// 404 (fail-closed); when set, the request must carry
 	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's

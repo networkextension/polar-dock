@@ -108,6 +108,12 @@ func main() {
 		PolarDisableVNCSkill: os.Getenv("POLAR_DISABLE_VNC_SKILL") == "true",
 		PolarMaxVNCSessions:  parseEnvInt("POLAR_MAX_VNC_SESSIONS", 16),
 
+		// Assets module P3 integration flag — see config.go for
+		// semantics. Default off; flip after at least one provider is
+		// registered + polar-assets-svc is reachable with the matching
+		// HMAC secret.
+		PolarAssetsUseProvider: os.Getenv("POLAR_ASSETS_USE_PROVIDER") == "true",
+
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 
