@@ -678,12 +678,6 @@ func (s *Server) registerRoutes() {
 		internal.POST("/notify", s.handleInternalNotify)
 		internal.POST("/plugin-registry/heartbeat", s.handleInternalHeartbeat)
 
-		// Assets P3 — polar-assets-svc heartbeat. Separate from the
-		// plugin-registry one because providers identify by `slug`
-		// (asset_providers row), not by plugin name (one process can
-		// serve multiple provider slugs).
-		internal.POST("/assets/provider-heartbeat", s.handleInternalAssetProviderHeartbeat)
-
 		// Issue #344: read-only view of the wg_peer_status samples
 		// the agent reports via skill.event{metric}. polar-wg polls
 		// this every ~30s to populate the per-hub status table.
