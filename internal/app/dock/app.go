@@ -100,6 +100,12 @@ type Server struct {
 	polarDisableVNCSkill bool
 	vncSessions          *vncSessionRegistry
 
+	// Assets module P3 integration flag. When true, asset uploads
+	// stream to a polar-assets-svc provider and downloads 302 to the
+	// same. When false (default), blob bytes live in uploadDir (P1
+	// stub). See config.go: PolarAssetsUseProvider.
+	polarAssetsUseProvider bool
+
 	// iosdistZsignPath is the resolved path to the zsign binary, set
 	// once at server boot via exec.LookPath. When empty, the sign
 	// endpoint returns a 503 with a helpful "install zsign" message
@@ -223,6 +229,12 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// P2 Shell: kill-switch + concurrency cap (per-host hard-coded 4;
 	// per-dock from env, default 32).
+	server.polarAssetsUseProvider = cfg.PolarAssetsUseProvider
+	if cfg.PolarAssetsUseProvider {
+		log.Printf("assets: provider 302 path ENABLED (POLAR_ASSETS_USE_PROVIDER=true)")
+	} else {
+		log.Printf("assets: provider 302 path disabled; using uploadDir stub")
+	}
 	server.polarDisableShellSkill = cfg.PolarDisableShellSkill
 	globalShellMax := cfg.PolarMaxShellSessions
 	if globalShellMax <= 0 {
@@ -666,6 +678,12 @@ func (s *Server) registerRoutes() {
 		internal.POST("/notify", s.handleInternalNotify)
 		internal.POST("/plugin-registry/heartbeat", s.handleInternalHeartbeat)
 
+		// Assets P3 — polar-assets-svc heartbeat. Separate from the
+		// plugin-registry one because providers identify by `slug`
+		// (asset_providers row), not by plugin name (one process can
+		// serve multiple provider slugs).
+		internal.POST("/assets/provider-heartbeat", s.handleInternalAssetProviderHeartbeat)
+
 		// Issue #344: read-only view of the wg_peer_status samples
 		// the agent reports via skill.event{metric}. polar-wg polls
 		// this every ~30s to populate the per-hub status table.
@@ -990,6 +1008,11 @@ func (s *Server) registerRoutes() {
 		api.POST("/assets/:id/share", s.AuthMiddleware(), s.handleAssetShareCreate)
 		api.GET("/share-links", s.AuthMiddleware(), s.handleAssetShareList)
 		api.DELETE("/share-links/:id", s.AuthMiddleware(), s.handleAssetShareDelete)
+		// P3: asset_providers registry — admin CRUD. Heartbeat lives
+		// on the /internal/v1 group below (HMAC plugin auth).
+		api.POST("/admin/asset-providers", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetProviderAdminCreate)
+		api.GET("/admin/asset-providers", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetProviderAdminList)
+		api.DELETE("/admin/asset-providers/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetProviderAdminDelete)
 		api.POST("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenCreate)
 		api.GET("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenList)
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)

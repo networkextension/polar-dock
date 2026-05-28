@@ -178,6 +178,14 @@ func (s *Server) handleAssetSharePublicDownload(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
+	// Same branch as handleAssetBlob: provider 302 when the flag is
+	// on; local-FS stream otherwise. The signed URL for the public
+	// download is identical to the auth'd download — the recipient
+	// just doesn't see /api/assets/:id/blob in their URL bar.
+	if s.polarAssetsUseProvider {
+		s.redirectToProviderBlob(c, asset)
+		return
+	}
 	path := assetBlobPath(s.uploadDir, asset.WorkspaceID, asset.SHA256)
 	f, err := os.Open(path)
 	if err != nil {

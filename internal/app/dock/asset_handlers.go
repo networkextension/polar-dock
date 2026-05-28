@@ -162,20 +162,49 @@ func (s *Server) handleAssetUpload(c *gin.Context) {
 		return
 	}
 
-	// Move to canonical path. If it already exists (same sha somewhere
-	// else uploaded), it's fine to reuse; the file content is identical.
-	dstPath := assetBlobPath(s.uploadDir, &workspaceID, sha)
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0o700); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
-		return
-	}
-	if _, err := os.Stat(dstPath); errors.Is(err, os.ErrNotExist) {
-		if err := os.Rename(stagePath, dstPath); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "写入失败"})
+	// Persist the blob. Two paths gated by the integration flag:
+	//
+	//   POLAR_ASSETS_USE_PROVIDER=true  → POST to a polar-assets-svc
+	//                                     provider's /v1/receive; on
+	//                                     success, write asset_locations.
+	//   POLAR_ASSETS_USE_PROVIDER=false → keep the P1 local-FS stub
+	//                                     (move stage → canonical path
+	//                                     under uploadDir).
+	//
+	// The flag is the only difference; everything before (staging,
+	// hashing) and after (asset row insert, quota bump) is identical.
+	var provider *AssetProvider
+	if s.polarAssetsUseProvider {
+		provider, err = s.pickAnyHealthyProvider("")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "provider lookup failed"})
 			return
 		}
+		if provider == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no healthy asset provider registered"})
+			return
+		}
+		if err := s.uploadAssetToProvider(provider, sha, stagePath, file.Filename); err != nil {
+			log.Printf("assets: uploadAssetToProvider provider=%s sha=%s err=%v", provider.Slug, sha, err)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream provider rejected upload"})
+			return
+		}
+	} else {
+		// Move to canonical local path. If it already exists (same
+		// sha somewhere else uploaded), reuse; identical content.
+		dstPath := assetBlobPath(s.uploadDir, &workspaceID, sha)
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0o700); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if _, err := os.Stat(dstPath); errors.Is(err, os.ErrNotExist) {
+			if err := os.Rename(stagePath, dstPath); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "写入失败"})
+				return
+			}
+		}
+		// else: dedup hit; keep existing file, drop stage via defer.
 	}
-	// else: dedup hit; keep existing file, drop stage via defer.
 
 	asset := &Asset{
 		WorkspaceID: &workspaceID,
@@ -208,6 +237,12 @@ func (s *Server) handleAssetUpload(c *gin.Context) {
 	// reconcile any drift every 6h, so logging the error is enough.
 	if err := s.bumpAssetUsage(workspaceID, size); err != nil {
 		log.Printf("assets: bumpAssetUsage (+%d) workspace=%s failed: %v", size, workspaceID, err)
+	}
+	// Record provider location so the picker can route future downloads.
+	if provider != nil {
+		if err := s.markAssetLocationReady(asset.ID, provider.ID); err != nil {
+			log.Printf("assets: markAssetLocationReady asset=%d provider=%d failed: %v", asset.ID, provider.ID, err)
+		}
 	}
 	c.JSON(http.StatusCreated, gin.H{"asset": asset})
 }
@@ -295,8 +330,10 @@ func (s *Server) handleAssetGetByName(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"asset": a})
 }
 
-// handleAssetBlob streams the blob from the local stub dir. P3 replaces
-// the body with a 302 to a provider-signed URL.
+// handleAssetBlob serves the blob. With POLAR_ASSETS_USE_PROVIDER=true
+// it issues a 302 to a polar-assets-svc provider's /v1/blob endpoint
+// with a short-lived HMAC-signed token. With the flag off (default)
+// it streams from the local uploadDir stub (the P1 behavior).
 func (s *Server) handleAssetBlob(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
@@ -316,6 +353,10 @@ func (s *Server) handleAssetBlob(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
+	if s.polarAssetsUseProvider {
+		s.redirectToProviderBlob(c, a)
+		return
+	}
 	path := assetBlobPath(s.uploadDir, a.WorkspaceID, a.SHA256)
 	f, err := os.Open(path)
 	if err != nil {
@@ -328,6 +369,30 @@ func (s *Server) handleAssetBlob(c *gin.Context) {
 	c.Header("X-Asset-SHA256", a.SHA256)
 	c.Status(http.StatusOK)
 	_, _ = io.Copy(c.Writer, f)
+}
+
+// redirectToProviderBlob picks a provider holding the asset, mints a
+// signed URL, and 302s the caller. Used by both /api/assets/:id/blob
+// and the public /s/:code paths. On lookup miss → 503; on signing
+// failure → 500.
+func (s *Server) redirectToProviderBlob(c *gin.Context, a *Asset) {
+	provider, err := s.pickProviderForAsset(a.ID, "")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "provider lookup failed"})
+		return
+	}
+	if provider == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no provider has this asset (yet)"})
+		return
+	}
+	url, err := buildSignedBlobURL(provider.BaseURL, a.SHA256, defaultAssetSignedURLTTL, []byte(provider.HMACToken))
+	if err != nil {
+		log.Printf("assets: signed URL build failed asset=%d: %v", a.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.Header("X-Asset-SHA256", a.SHA256)
+	c.Redirect(http.StatusFound, url)
 }
 
 func (s *Server) handleAssetDelete(c *gin.Context) {
