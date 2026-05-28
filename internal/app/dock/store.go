@@ -2839,6 +2839,114 @@ CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_created
     WHERE cost_usd IS NOT NULL;
 
 -- ============================================================
+-- Asset management: per-workspace file storage + quotas.
+-- Unified store backing platform internals (LLM weights,
+-- polar-agent binaries) AND tenant workloads (S3-style backing
+-- store, link-share, team-share, media migration target).
+-- Dock = catalog + 302 router; bytes live on polar-assets-svc
+-- provider plugins (one per region). See doc/arch/assets-module.md.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS assets (
+    id           BIGSERIAL PRIMARY KEY,
+    workspace_id TEXT REFERENCES teams(id) ON DELETE CASCADE,   -- NULL = platform asset
+    kind         TEXT NOT NULL,                                  -- model|package|lib|media|app_data
+    name         TEXT NOT NULL,                                  -- path-like: "video/sources/proj/clip.mp4"
+    version      TEXT NOT NULL DEFAULT 'v1',
+    sha256       TEXT NOT NULL,
+    size_bytes   BIGINT NOT NULL,
+    mime         TEXT NOT NULL DEFAULT 'application/octet-stream',
+    visibility   TEXT NOT NULL DEFAULT 'private',                -- private|workspace|link|public
+    source_url   TEXT,                                           -- provenance, never auto-fetched
+    uploaded_by  TEXT NOT NULL,                                  -- user_id or 'system'
+    pinned       BOOLEAN NOT NULL DEFAULT FALSE,
+    metadata     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uniq_asset_ws_kind_name_version
+        UNIQUE NULLS NOT DISTINCT (workspace_id, kind, name, version)
+);
+CREATE INDEX IF NOT EXISTS idx_assets_sha256
+    ON assets(sha256);
+CREATE INDEX IF NOT EXISTS idx_assets_workspace_kind
+    ON assets(workspace_id, kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_assets_platform_kind
+    ON assets(kind, created_at DESC) WHERE workspace_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_assets_workspace_name_prefix
+    ON assets(workspace_id, name text_pattern_ops);
+
+CREATE TABLE IF NOT EXISTS asset_providers (
+    id            BIGSERIAL PRIMARY KEY,
+    slug          TEXT NOT NULL UNIQUE,
+    base_url      TEXT NOT NULL,
+    region        TEXT NOT NULL,
+    capacity_gb   INT NOT NULL,
+    hmac_token    TEXT NOT NULL,
+    last_seen_at  TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS asset_locations (
+    asset_id     BIGINT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    provider_id  BIGINT NOT NULL REFERENCES asset_providers(id) ON DELETE CASCADE,
+    status       TEXT NOT NULL,                                  -- ready|fetching|missing
+    last_used_at TIMESTAMPTZ,
+    bytes_served BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (asset_id, provider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_asset_loc_provider_used
+    ON asset_locations(provider_id, last_used_at DESC);
+
+CREATE TABLE IF NOT EXISTS asset_share_links (
+    id             BIGSERIAL PRIMARY KEY,
+    asset_id       BIGINT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    short_code     TEXT NOT NULL UNIQUE,
+    created_by     TEXT NOT NULL,                                -- user_id
+    expires_at     TIMESTAMPTZ,
+    max_downloads  INT,
+    download_count INT NOT NULL DEFAULT 0,
+    require_login  BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_share_links_asset
+    ON asset_share_links(asset_id);
+
+CREATE TABLE IF NOT EXISTS asset_quotas (
+    workspace_id      TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    quota_bytes       BIGINT NOT NULL,
+    usage_bytes       BIGINT NOT NULL DEFAULT 0,
+    usage_computed_at TIMESTAMPTZ,
+    over_quota        BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS asset_usage_events (
+    id            BIGSERIAL PRIMARY KEY,
+    workspace_id  TEXT,                                          -- NULL = platform op
+    asset_id      BIGINT REFERENCES assets(id) ON DELETE SET NULL,
+    op            TEXT NOT NULL,                                 -- upload|download|delete|share_create
+    bytes         BIGINT NOT NULL DEFAULT 0,
+    user_id       TEXT,                                          -- NULL for anonymous link-share
+    share_link_id BIGINT REFERENCES asset_share_links(id) ON DELETE SET NULL,
+    ip            TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_asset_usage_ws_created
+    ON asset_usage_events(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_asset_usage_op_created
+    ON asset_usage_events(op, created_at DESC);
+
+-- Root quota config — added to existing site_settings singleton row.
+-- Mode 'absolute': value is bytes. Mode 'partition_pct': value is 0–100.
+-- Workspace default applied on first upload that has no asset_quotas row.
+ALTER TABLE site_settings
+    ADD COLUMN IF NOT EXISTS asset_root_quota_mode TEXT NOT NULL DEFAULT 'absolute';
+ALTER TABLE site_settings
+    ADD COLUMN IF NOT EXISTS asset_root_quota_value BIGINT NOT NULL DEFAULT 429496729600;  -- 400 GB
+ALTER TABLE site_settings
+    ADD COLUMN IF NOT EXISTS asset_workspace_default_quota_bytes BIGINT NOT NULL DEFAULT 53687091200;  -- 50 GB
+
+-- ============================================================
 -- video_shot_calls: per-shot ledger written by polar-video plugin
 -- via /internal/v1/billing/video-shots. Workspace-scoped roll-up
 -- for "this team spent $X on video gen this month" style queries;
@@ -3480,6 +3588,10 @@ ALTER TABLE plugin_modules
 		_ = db.Close()
 		return nil, err
 	}
+
+	// Boot-time sanity check for newly-added schema sections. Logged-only
+	// so a half-migrated DB surfaces in the log instead of failing boot.
+	assetsSchemaPresent(db)
 
 	return db, nil
 }
