@@ -961,6 +961,18 @@ func (s *Server) registerRoutes() {
 		api.GET("/attachments/:id", s.AuthMiddleware(), s.handleAttachmentGet)
 		api.GET("/attachments/:id/download", s.AuthMiddleware(), s.handleAttachmentDownload)
 		api.DELETE("/attachments/:id", s.AuthMiddleware(), s.handleAttachmentDelete)
+		// assets: P1a unified blob catalog. Workspace-scoped tenant
+		// uploads + public-platform reads. Blob storage is a local-FS
+		// stub here (uploadDir/assets/...); P3 swaps the :id/blob
+		// handler for a 302 to a polar-assets-svc provider.
+		// Quota gate ships in P1b, share links in P1c.
+		api.POST("/assets", s.AuthMiddleware(), s.handleAssetUpload)
+		api.GET("/assets", s.AuthMiddleware(), s.handleAssetList)
+		api.GET("/assets/folders", s.AuthMiddleware(), s.handleAssetFolders)
+		api.GET("/assets/by-name/:kind/*name", s.AuthMiddleware(), s.handleAssetGetByName)
+		api.GET("/assets/:id", s.AuthMiddleware(), s.handleAssetGet)
+		api.GET("/assets/:id/blob", s.AuthMiddleware(), s.handleAssetBlob)
+		api.DELETE("/assets/:id", s.AuthMiddleware(), s.handleAssetDelete)
 		api.POST("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenCreate)
 		api.GET("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenList)
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
