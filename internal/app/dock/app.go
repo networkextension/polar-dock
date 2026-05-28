@@ -321,6 +321,7 @@ func NewServer(cfg Config) (*Server, error) {
 	go server.wsHub.run()
 	go server.runChatEventSubscriber(server.backgroundCtx)
 	go server.runPushDeliveryWorker(server.backgroundCtx)
+	go server.runAssetQuotaRecompute(server.backgroundCtx)
 	// Qunliao P3 — autonomous bot idle loop. Driver ticks every 30s,
 	// fans per-(room, bot) decisions out into ephemeral goroutines.
 	// Default-off per row, billing-gated, hourly capped — see
@@ -973,6 +974,11 @@ func (s *Server) registerRoutes() {
 		api.GET("/assets/:id", s.AuthMiddleware(), s.handleAssetGet)
 		api.GET("/assets/:id/blob", s.AuthMiddleware(), s.handleAssetBlob)
 		api.DELETE("/assets/:id", s.AuthMiddleware(), s.handleAssetDelete)
+		// P1b: per-workspace asset quota — tenant gets own; admin
+		// sees + tunes all. Root quota config lives on site_settings.
+		api.GET("/asset-quota", s.AuthMiddleware(), s.handleAssetQuotaSelf)
+		api.GET("/admin/asset-quotas", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetQuotaAdminList)
+		api.PATCH("/admin/asset-quotas/:ws", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetQuotaAdminSet)
 		api.POST("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenCreate)
 		api.GET("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenList)
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
