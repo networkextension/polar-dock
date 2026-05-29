@@ -1562,16 +1562,10 @@ ALTER TABLE post_images
 ALTER TABLE post_images
 	ADD COLUMN IF NOT EXISTS medium_url TEXT NOT NULL DEFAULT '';
 
--- asset_id: P8 forward reference into the assets module. NULL on
--- pre-migration rows; populated by the dual-write goroutine in
--- post upload when POLAR_ASSETS_POSTS_DUAL_WRITE=true. Read path
--- still pulls bytes from file_url (legacy /uploads/ path) — the
--- column is for inventorying which post images have been
--- replicated into the assets catalog so a future cutover PR can
--- flip the read path.
-ALTER TABLE post_images
-	ADD COLUMN IF NOT EXISTS asset_id BIGINT REFERENCES assets(id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS idx_post_images_asset_id ON post_images(asset_id);
+-- NOTE: the post_images.asset_id forward reference into the assets
+-- module is defined in the assets schema block below, NOT here. It FKs
+-- assets(id), which this schema string does not CREATE until much later,
+-- so on a fresh database the ALTER must run after that CREATE TABLE.
 
 CREATE TABLE IF NOT EXISTS post_videos (
 	id BIGSERIAL PRIMARY KEY,
@@ -2892,6 +2886,19 @@ CREATE INDEX IF NOT EXISTS idx_assets_platform_kind
     ON assets(kind, created_at DESC) WHERE workspace_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_assets_workspace_name_prefix
     ON assets(workspace_id, name text_pattern_ops);
+
+-- post_images.asset_id: P8 forward reference into the assets module.
+-- NULL on pre-migration rows; populated by the dual-write goroutine in
+-- post upload when POLAR_ASSETS_POSTS_DUAL_WRITE=true. Read path still
+-- pulls bytes from file_url (legacy /uploads/ path) — the column just
+-- inventories which post images have been replicated into the assets
+-- catalog so a future cutover PR can flip the read path. Defined here
+-- (not in the post_images block) because it FKs assets(id), which is
+-- only created just above; on a fresh DB the original placement failed
+-- with a relation-assets-does-not-exist error.
+ALTER TABLE post_images
+    ADD COLUMN IF NOT EXISTS asset_id BIGINT REFERENCES assets(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_post_images_asset_id ON post_images(asset_id);
 
 CREATE TABLE IF NOT EXISTS asset_providers (
     id            BIGSERIAL PRIMARY KEY,
