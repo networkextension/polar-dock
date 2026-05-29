@@ -183,6 +183,28 @@ func (s *Server) execPluginModuleFlag(query, name string, val bool) (bool, error
 	return n > 0, nil
 }
 
+// pluginModulePublishState returns a module's request-gating flags.
+// found=false when there is no such module. Used by the tenant request
+// handler to enforce: request only a published module that accepts
+// applications.
+func (s *Server) pluginModulePublishState(name string) (published, acceptsApps, found bool, err error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, false, false, nil
+	}
+	err = s.db.QueryRow(
+		`SELECT published, accepts_applications FROM plugin_modules WHERE name = $1`,
+		name,
+	).Scan(&published, &acceptsApps)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, false, nil
+	}
+	if err != nil {
+		return false, false, false, err
+	}
+	return published, acceptsApps, true, nil
+}
+
 // nullTimePtr scans a nullable TIMESTAMPTZ into a **time.Time, leaving it
 // nil on SQL NULL. Avoids threading sql.NullTime through every Scan.
 type nullTimePtr struct{ dst **time.Time }

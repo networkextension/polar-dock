@@ -829,6 +829,12 @@ func (s *Server) registerRoutes() {
 		api.PATCH("/admin/plugin-modules/:name/disable", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleDisable)
 		api.POST("/admin/plugin-modules/:name/rotate-key", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleRotateKey)
 		api.DELETE("/admin/plugin-modules/:name", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleDelete)
+		// R3 marketplace: publish flags + the tenant request approval queue.
+		api.PATCH("/admin/plugin-modules/:name/publish", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleSetPublished)
+		api.PATCH("/admin/plugin-modules/:name/accepts-applications", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleSetAcceptsApplications)
+		api.GET("/admin/plugin-access-requests", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginAccessRequestList)
+		api.POST("/admin/plugin-access-requests/:id/approve", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginAccessRequestApprove)
+		api.POST("/admin/plugin-access-requests/:id/deny", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginAccessRequestDeny)
 		// LLM proxy — admin-gated token CRUD. The plaintext is shown
 		// once at create-time and never returnable again.
 		api.GET("/llm-proxy/dashboard-stats", s.AuthMiddleware(), s.AdminMiddleware(), s.handleLLMProxyDashboardStats)
@@ -1090,6 +1096,10 @@ func (s *Server) registerRoutes() {
 		api.POST("/teams/:id/invitations", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamInvitationCreate)
 		api.GET("/teams/:id/invitations", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamInvitationList)
 		api.DELETE("/teams/:id/invitations/:inv_id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamInvitationRevoke)
+		// R3 marketplace: team-admin requests a published module; any
+		// member can view the team's own request history.
+		api.POST("/teams/:id/plugin-requests", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamPluginRequestCreate)
+		api.GET("/teams/:id/plugin-requests", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleMember), s.handleTeamPluginRequestList)
 		api.GET("/invitations/:token", s.handleInvitationPublicPreview)
 		api.POST("/invitations/:token/accept", s.AuthMiddleware(), s.handleInvitationAccept)
 		api.POST("/invitations/:token/decline", s.handleInvitationDecline)
