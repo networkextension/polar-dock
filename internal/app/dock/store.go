@@ -1057,6 +1057,13 @@ CREATE TABLE IF NOT EXISTS teams (
 -- below (search "teams_default_llm_config_id_fkey").
 ALTER TABLE teams
 	ADD COLUMN IF NOT EXISTS default_llm_config_id BIGINT;
+-- region: workspace's preferred asset-provider region, used by P4c
+-- auto warm-pull. Empty string means "unknown / no preference" — the
+-- asset picker treats those callers as any-region (no warm-pull
+-- trigger). Operators set this manually for now (no UI); maps to
+-- asset_providers.region values like 'zen', 'dev'.
+ALTER TABLE teams
+	ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_teams_owner ON teams(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_teams_kind ON teams(kind);
 

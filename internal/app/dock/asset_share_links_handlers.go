@@ -183,7 +183,10 @@ func (s *Server) handleAssetSharePublicDownload(c *gin.Context) {
 	// download is identical to the auth'd download — the recipient
 	// just doesn't see /api/assets/:id/blob in their URL bar.
 	if s.polarAssetsUseProvider {
-		s.redirectToProviderBlob(c, asset)
+		// Public share recipients aren't a workspace member, so we
+		// can't infer a region. Pass "" — the picker treats it as
+		// any-region and skips the warm-pull signal.
+		s.redirectToProviderBlob(c, asset, "")
 		return
 	}
 	path := assetBlobPath(s.uploadDir, asset.WorkspaceID, asset.SHA256)

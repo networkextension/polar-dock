@@ -106,6 +106,11 @@ type Server struct {
 	// stub). See config.go: PolarAssetsUseProvider.
 	polarAssetsUseProvider bool
 
+	// assetWarmupInFlight dedups concurrent P4c warm-pull triggers.
+	// Keyed by warmupKey{AssetID, ProviderID}; value is struct{}.
+	// Cleared when the goroutine finishes. See asset_warmup.go.
+	assetWarmupInFlight sync.Map
+
 	// iosdistZsignPath is the resolved path to the zsign binary, set
 	// once at server boot via exec.LookPath. When empty, the sign
 	// endpoint returns a 503 with a helpful "install zsign" message

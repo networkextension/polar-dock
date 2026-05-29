@@ -66,7 +66,10 @@ func (s *Server) replicateAssetToProvider(assetID, targetProviderID int64) (int6
 	if target == nil {
 		return 0, errors.New("target provider not found")
 	}
-	origin, err := s.pickProviderForAsset(assetID, "")
+	// Replicate orchestrator picks an origin to copy FROM; the
+	// needsWarmPull signal is for cache-miss downloads, not this
+	// admin-driven path — discard it.
+	origin, _, err := s.pickProviderForAsset(assetID, "")
 	if err != nil {
 		return 0, fmt.Errorf("pick origin: %w", err)
 	}

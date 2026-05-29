@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -189,7 +190,16 @@ func (s *Server) touchAssetProviderLastSeen(slug string) error {
 // of the given asset. v1 logic: any provider with status='ready' in
 // asset_locations AND a fresh heartbeat. If multiple match, prefer
 // same region as a caller hint (caller passes "" if unknown).
-// Returns (nil, nil) when no candidate.
+//
+// Returns:
+//   - (provider, false, nil)  same-region provider found (or caller
+//                             region unknown so any provider is fine)
+//   - (provider, true,  nil)  cross-region fallback — caller is in a
+//                             known region but no in-region provider
+//                             has this asset yet; needsWarmPull tells
+//                             the handler to fire-and-forget a P4c
+//                             warm-pull onto an in-region target
+//   - (nil,      false, nil)  no candidate at all (download 503)
 //
 // Health signal: plugin_modules.last_heartbeat for plugin name='assets'
 // (the polar-assets-svc plugin runs every provider as a single
@@ -198,7 +208,7 @@ func (s *Server) touchAssetProviderLastSeen(slug string) error {
 // removing it is a v2 migration.
 //
 // Future: weighting by capacity_gb, latency probes, sticky-by-IP.
-func (s *Server) pickProviderForAsset(assetID int64, callerRegion string) (*AssetProvider, error) {
+func (s *Server) pickProviderForAsset(assetID int64, callerRegion string) (provider *AssetProvider, needsWarmPull bool, err error) {
 	rows, err := s.db.Query(
 		`SELECT `+assetProviderColumnsP+`
 		   FROM asset_providers p
@@ -212,33 +222,87 @@ func (s *Server) pickProviderForAsset(assetID int64, callerRegion string) (*Asse
 		assetID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	var candidates []AssetProvider
 	for rows.Next() {
 		p, err := scanAssetProvider(rows)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		candidates = append(candidates, *p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if len(candidates) == 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 	if callerRegion != "" {
 		for _, c := range candidates {
 			if c.Region == callerRegion {
 				v := c
-				return &v, nil
+				return &v, false, nil
 			}
 		}
+		// Caller region known but nothing in-region holds it →
+		// cross-region 302 + signal warm-pull.
+		v := candidates[0]
+		return &v, true, nil
 	}
 	v := candidates[0]
-	return &v, nil
+	return &v, false, nil
+}
+
+// regionOfWorkspace looks up teams.region for the given workspace,
+// returning "" when the row is missing or the column is empty. Used
+// by the asset blob handler to feed callerRegion into the picker.
+func (s *Server) regionOfWorkspace(workspaceID string) string {
+	if workspaceID == "" {
+		return ""
+	}
+	var r sql.NullString
+	_ = s.db.QueryRow(`SELECT region FROM teams WHERE id = $1`, workspaceID).Scan(&r)
+	if r.Valid {
+		return r.String
+	}
+	return ""
+}
+
+// pickHealthyProviderInRegionWithoutAsset — P4c target picker. Picks
+// a healthy provider in `region` that does NOT yet have a 'ready'
+// location for `assetID`. Used to choose where to warm-pull on
+// cross-region cache miss.
+func (s *Server) pickHealthyProviderInRegionWithoutAsset(region string, assetID int64) (*AssetProvider, error) {
+	if strings.TrimSpace(region) == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query(
+		`SELECT `+assetProviderColumnsP+`
+		   FROM asset_providers p
+		   JOIN plugin_modules pm ON pm.name = 'assets'
+		  WHERE p.region = $1
+		    AND pm.enabled = true
+		    AND pm.last_heartbeat IS NOT NULL
+		    AND pm.last_heartbeat > NOW() - INTERVAL '5 minutes'
+		    AND NOT EXISTS (
+		      SELECT 1 FROM asset_locations loc
+		       WHERE loc.asset_id = $2
+		         AND loc.provider_id = p.id
+		         AND loc.status = 'ready'
+		    )
+		  LIMIT 1`,
+		region, assetID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	return scanAssetProvider(rows)
 }
 
 // pickAnyHealthyProvider — for the upload path where we need *a*

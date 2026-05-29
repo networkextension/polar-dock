@@ -354,7 +354,7 @@ func (s *Server) handleAssetBlob(c *gin.Context) {
 		return
 	}
 	if s.polarAssetsUseProvider {
-		s.redirectToProviderBlob(c, a)
+		s.redirectToProviderBlob(c, a, s.regionOfWorkspace(workspaceID))
 		return
 	}
 	path := assetBlobPath(s.uploadDir, a.WorkspaceID, a.SHA256)
@@ -375,8 +375,15 @@ func (s *Server) handleAssetBlob(c *gin.Context) {
 // signed URL, and 302s the caller. Used by both /api/assets/:id/blob
 // and the public /s/:code paths. On lookup miss → 503; on signing
 // failure → 500.
-func (s *Server) redirectToProviderBlob(c *gin.Context, a *Asset) {
-	provider, err := s.pickProviderForAsset(a.ID, "")
+//
+// callerRegion is plumbed from teams.region (via regionOfWorkspace).
+// Empty string means "unknown" — picker treats as any-region; no
+// warm-pull. When callerRegion is set but no in-region provider has
+// the asset, the picker signals needsWarmPull and we fire-and-forget
+// a P4c warm-pull onto a same-region target so the next request is
+// local.
+func (s *Server) redirectToProviderBlob(c *gin.Context, a *Asset, callerRegion string) {
+	provider, needsWarmPull, err := s.pickProviderForAsset(a.ID, callerRegion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "provider lookup failed"})
 		return
@@ -393,6 +400,9 @@ func (s *Server) redirectToProviderBlob(c *gin.Context, a *Asset) {
 	}
 	c.Header("X-Asset-SHA256", a.SHA256)
 	c.Redirect(http.StatusFound, url)
+	if needsWarmPull {
+		s.triggerAssetWarmPullBackground(a.ID, callerRegion)
+	}
 }
 
 func (s *Server) handleAssetDelete(c *gin.Context) {
