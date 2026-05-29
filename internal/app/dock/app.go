@@ -357,19 +357,19 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	// Every user must have a personal team. Cheap and idempotent: scans
-	// users without one and creates them. Failure is logged but not fatal
-	// — the server can still come up; missing personal teams will get
-	// created on demand by handlers that touch teams.
+	// Every user must have a home team. Cheap and idempotent: ensures
+	// one (keyed on the deterministic slug) for each user. Failure is
+	// logged but not fatal — the server can still come up; a missing
+	// home team gets created on demand by handlers that touch teams.
 	if err := server.backfillPersonalTeams(); err != nil {
-		log.Printf("teams: personal team backfill failed: %v", err)
+		log.Printf("teams: home team backfill failed: %v", err)
 	}
 
 	// Permission-model P0 bootstrap (doc/arch/permission-model.md §3.3):
-	// auto-promote the sole non-system admin's personal team to root
-	// on fresh installs. No-op when root team already exists.
-	// Runs AFTER backfillPersonalTeams so the lone-admin's personal
-	// team is guaranteed to exist before the lookup.
+	// auto-promote the sole non-system admin's home team to root on
+	// fresh installs. No-op when root team already exists. Runs AFTER
+	// backfillPersonalTeams so the lone-admin's home team is guaranteed
+	// to exist before the lookup.
 	server.bootstrapRootTeam()
 
 	// T6-A: populate workspace_id on legacy resource rows from each
@@ -377,6 +377,15 @@ func NewServer(cfg Config) (*Server, error) {
 	// team backfill above so the lookup never misses.
 	if err := server.backfillResourceWorkspaceIDs(); err != nil {
 		log.Printf("teams: resource workspace_id backfill failed: %v", err)
+	}
+
+	// R1c / Plan B: in-place convert every kind='personal' team to
+	// kind='team'. MUST run after backfillResourceWorkspaceIDs (whose
+	// legacy NULL backfill still keys on kind='personal') and before
+	// the NOT NULL enforcement. Idempotent. Home teams stay identified
+	// by their deterministic slug, not by kind.
+	if err := server.convertLegacyPersonalTeams(); err != nil {
+		log.Printf("teams: R1c personal→team conversion failed: %v", err)
 	}
 
 	// attachments-refactor: migrate legacy chat_messages.attachment

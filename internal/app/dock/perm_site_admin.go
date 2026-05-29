@@ -277,11 +277,15 @@ func (s *Server) bootstrapRootTeam() {
 	}
 	adminID := candidates[0]
 
-	// Find that user's personal team (one of kind='personal' rows).
+	// Find that user's home team by its deterministic slug. R1c: was a
+	// kind='personal' lookup; keyed on slug now so it survives the
+	// in-place conversion of personal teams to kind='team' (and works
+	// on a fresh install where ensurePersonalTeam already creates
+	// kind='team' home teams).
 	var personalTeamID string
-	err = s.db.QueryRow(`SELECT id FROM teams WHERE owner_user_id = $1 AND kind = 'personal' ORDER BY created_at LIMIT 1`, adminID).Scan(&personalTeamID)
+	err = s.db.QueryRow(`SELECT id FROM teams WHERE slug = $1 AND owner_user_id = $2 LIMIT 1`, personalTeamSlug(adminID), adminID).Scan(&personalTeamID)
 	if err != nil {
-		log.Printf("perm: bootstrap: lone admin %s has no personal team yet — skipping; will retry on next boot", adminID)
+		log.Printf("perm: bootstrap: lone admin %s has no home team yet — skipping; will retry on next boot", adminID)
 		return
 	}
 

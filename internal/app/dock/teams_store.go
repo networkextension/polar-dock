@@ -4,9 +4,11 @@ package dock
 // Tables (teams, team_members, team_invitations) are declared in
 // store.go's openDB() schema block.
 //
-// Every user has exactly one team with kind='personal' (auto-created
-// at user signup or via backfillPersonalTeams() at startup). Explicit
-// collaboration teams have kind='team'. Resources across modules
+// Every user has exactly one "home" team (auto-created on demand or via
+// backfillPersonalTeams() at startup), identified by its deterministic
+// slug (see personalTeamSlug / isHomeTeam). R1c / Plan B: home teams are
+// kind='team' like any other — the kind='personal' label was retired by
+// convertLegacyPersonalTeams(). Resources across modules
 // (iosdist, macapp, ascpool, ...) reference teams.id for ownership.
 
 import (
@@ -14,6 +16,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"log"
 	"strings"
 	"time"
 )
@@ -81,6 +84,16 @@ type TeamInvitation struct {
 func personalTeamSlug(userID string) string {
 	sum := sha256.Sum256([]byte("personal-team-slug:" + userID))
 	return "personal-" + hex.EncodeToString(sum[:])[:12]
+}
+
+// isHomeTeam reports whether t is its owner's auto-provisioned "home"
+// team — the one ensurePersonalTeam creates. Plan B (R1c) flips these
+// from kind='personal' to kind='team', so kind no longer identifies
+// them; the deterministic slug does. The home team inherits the
+// protections the old kind='personal' rows had (can't be deleted,
+// left, transferred, etc.) so a user can never orphan their own data.
+func isHomeTeam(t *Team) bool {
+	return t != nil && t.OwnerUserID != "" && t.Slug == personalTeamSlug(t.OwnerUserID)
 }
 
 // generateUniqueTeamSlug picks a slug for an explicit (kind='team') team.
@@ -196,8 +209,8 @@ func (s *Server) listTeamsForUser(userID string) ([]Team, map[string]string, err
 		 FROM teams t
 		 JOIN team_members tm ON tm.team_id = t.id
 		 WHERE tm.user_id = $1
-		 ORDER BY (t.kind = 'personal') DESC, t.name ASC`,
-		userID,
+		 ORDER BY (t.slug = $2) DESC, t.name ASC`,
+		userID, personalTeamSlug(userID),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -235,10 +248,15 @@ func (s *Server) getTeamMember(teamID, userID string) (*TeamMember, error) {
 	return &m, nil
 }
 
-// ensurePersonalTeam returns the user's personal team, creating it
+// ensurePersonalTeam returns the user's "home" team, creating it
 // (and the matching team_members owner row) if missing. Idempotent.
 // Slug is deterministic so a partially-failed previous run can resume
 // without producing duplicate-but-different rows.
+//
+// R1c / Plan B: the home team is a normal team (kind='team'); it is no
+// longer special-cased by kind. It is still identified by its
+// deterministic slug (see isHomeTeam) and retains the home-team
+// protections. Name kept ("ensurePersonalTeam") to minimise churn.
 func (s *Server) ensurePersonalTeam(userID string) (*Team, error) {
 	if userID == "" {
 		return nil, errors.New("userID is empty")
@@ -266,7 +284,7 @@ func (s *Server) ensurePersonalTeam(userID string) (*Team, error) {
 	team := &Team{
 		Slug:        slug,
 		Name:        "我的工作区",
-		Kind:        TeamKindPersonal,
+		Kind:        TeamKindTeam,
 		OwnerUserID: userID,
 	}
 	if err := s.createTeam(team); err != nil {
@@ -295,18 +313,21 @@ func (s *Server) transferTeamOwnership(teamID, newOwnerUserID string) error {
 	}
 	defer tx.Rollback()
 
-	var oldOwnerUserID, kind string
+	var oldOwnerUserID, slug string
 	if err := tx.QueryRow(
-		`SELECT owner_user_id, kind FROM teams WHERE id = $1 FOR UPDATE`,
+		`SELECT owner_user_id, slug FROM teams WHERE id = $1 FOR UPDATE`,
 		teamID,
-	).Scan(&oldOwnerUserID, &kind); err != nil {
+	).Scan(&oldOwnerUserID, &slug); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("team not found")
 		}
 		return err
 	}
-	if kind == TeamKindPersonal {
-		return errors.New("personal team ownership cannot be transferred")
+	// A user's home team (slug == personalTeamSlug(owner)) is intrinsic
+	// to that user — its ownership can't be handed off. (R1c: was a
+	// kind='personal' check before the in-place conversion.)
+	if slug == personalTeamSlug(oldOwnerUserID) {
+		return errors.New("home team ownership cannot be transferred")
 	}
 	if oldOwnerUserID == newOwnerUserID {
 		// No-op: caller's already the owner.
@@ -660,15 +681,15 @@ func (s *Server) systemWorkspaceID() (string, error) {
 	return team.ID, nil
 }
 
-// backfillPersonalTeams ensures every user has a personal team. Called
-// at server startup; idempotent. Runs in batches so an outage mid-loop
-// doesn't lock the table for long.
+// backfillPersonalTeams ensures every user has a home team. Called at
+// server startup; idempotent. ensurePersonalTeam is keyed on the
+// deterministic slug, so calling it for a user who already has a home
+// team is a cheap indexed no-op — we therefore iterate all users
+// rather than trying to express "lacks a home team" in SQL (the home
+// team is identified by a Go-side slug hash, not by kind anymore;
+// see R1c / isHomeTeam).
 func (s *Server) backfillPersonalTeams() error {
-	rows, err := s.db.Query(
-		`SELECT u.id FROM users u
-		 LEFT JOIN teams t ON t.owner_user_id = u.id AND t.kind = 'personal'
-		 WHERE t.id IS NULL`,
-	)
+	rows, err := s.db.Query(`SELECT id FROM users`)
 	if err != nil {
 		return err
 	}
@@ -689,6 +710,28 @@ func (s *Server) backfillPersonalTeams() error {
 		if _, err := s.ensurePersonalTeam(id); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// convertLegacyPersonalTeams flips every remaining kind='personal' team
+// to kind='team' (R1c / Plan B locked decision B: in-place conversion).
+// Existing users keep all their data inside what is now their first
+// real team. Idempotent — a no-op once no kind='personal' rows remain.
+//
+// Ordering: this MUST run AFTER backfillResourceWorkspaceIDs, whose
+// legacy NULL→workspace_id backfill subqueries still match on
+// kind='personal'. After this conversion those subqueries match
+// nothing, but by then every covered table is NOT NULL (enforced) so
+// there are no NULL rows left to backfill. Home teams stay identified
+// by their deterministic slug (isHomeTeam), not by kind.
+func (s *Server) convertLegacyPersonalTeams() error {
+	res, err := s.db.Exec(`UPDATE teams SET kind = 'team', updated_at = NOW() WHERE kind = 'personal'`)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("teams: R1c converted %d legacy personal team(s) to kind='team'", n)
 	}
 	return nil
 }
