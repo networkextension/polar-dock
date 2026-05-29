@@ -4,10 +4,17 @@ Status: PLAN (2026-05-29). Two parallel tracks driven by two product goals:
 
 - **Track R — RBAC / ownership:** the root (site-admin) team owns the
   platform. It publishes modules, approves new teams, and enables
-  modules per-team on demand. Personal resources go away — every
-  resource belongs to a team.
+  modules per-team on demand. **There are no personal resources and no
+  personal teams** — every resource belongs to a real (approved) team,
+  and **every team ships with one AI-driven team bot as its minimum
+  configuration.**
 - **Track C — Environments + CI/CD:** dev → stage → prod with automatic
   build, test, and release/deploy.
+
+> **Decisions locked 2026-05-29:** Plan **B** — eliminate personal
+> teams/resources entirely (not the softer "keep a default personal
+> team" Plan A). Plus: a team is not usable without an AI team bot, so
+> bot provisioning is part of team creation, not an add-on.
 
 This doc inventories what already exists, names the gaps, and sequences
 the work into shippable phases. It does not change code; each phase
@@ -59,56 +66,96 @@ below becomes its own PR series.
 
 ---
 
-## Open product decisions (resolve before R1/C3)
+## Decisions — locked & open
 
-1. **Fate of the personal team.** "没有个人资源,资源必须进入 team."
-   Two readings:
-   - **(A) Recommended — keep a per-user *default* team, drop user_id-only ownership.** Every resource gets `workspace_id NOT NULL`; the personal team (`kind='personal'`) stays as the user's private default workspace so a solo user can still own things. "No personal resources" = no resource is owned by a bare `user_id`; they're all workspace-scoped. Lowest disruption, finishes the T6 migration already underway.
-   - **(B) Stricter — eliminate personal teams entirely.** New users own nothing until they belong to an approved real team. Requires the approval flow (R2) to gate *all* resource creation and a story for "user with no team". Bigger UX change.
-   The plan below assumes **(A)** unless you choose (B).
-2. **Team-creation approval granularity.** Per-team manual approval by
-   site admin, or auto-approve with quota + post-hoc review? (Plan: request→pending→approve.)
-3. **Module enablement model.** Tenant *requests* a module (admin
-   approves), or site admin *pushes* enablement with no request? (Plan: support both — request queue + direct grant.)
-4. **Where staging lives.** A third box, or a second DB + vhost on an
-   existing box (.69)? Pull-based deploy assumed (boxes behind NAT).
+**Locked (2026-05-29):**
+1. **Plan B — no personal teams, no personal resources.** The
+   `kind='personal'` workspace concept is removed. Every user belongs to
+   one or more real (approved) teams; every resource is owned by a team
+   (`workspace_id NOT NULL`, no `user_id`-only ownership). A brand-new
+   user with no team can do nothing except create/join one (which goes
+   through approval, R2).
+2. **Every team has one AI-driven "team bot" as minimum config.** Team
+   provisioning is not complete until a default team bot exists. The bot
+   is bound to an LLM config (platform-default to start) and is the
+   baseline the team can extend with more bots. A team without its team
+   bot is not "active".
+
+**Still open (pick before R2/C3):**
+- **A. Approval granularity** — per-team manual approval by site admin,
+  or auto-approve with a quota + post-hoc review? (Plan assumes
+  request→pending→approve.)
+- **B. Migrating existing personal-team data** — current users each have
+  a `kind='personal'` team with real data (markdown, posts, assets…).
+  On cutover: **convert each personal team in place to `kind='team'`**
+  (preserves all data, becomes that user's first real team; recommended)
+  vs. force-migrate into a brand-new team. Recommend in-place convert +
+  auto-approve those grandfathered teams.
+- **C. Module enablement model** — tenant *requests* a module (admin
+  approves) vs. site admin *pushes* enablement. (Plan: support both.)
+- **D. Where staging lives** — third box vs. second DB + vhost on .69.
+  Pull-based deploy assumed (boxes behind NAT).
+- **E. Team bot identity** — does the team bot get its own LLM config
+  (billable to the team) or share the platform-default Kimi until the
+  team adds credit? (Plan: platform-default at provision, team can
+  rebind; ties into existing team LLM quotas/billing.)
 
 ---
 
 ## Track R — RBAC / team ownership
 
-### R1 — Finish team-scoping ("个人资源移走")  *(foundational, do first)*
-Complete the in-flight T6 migration so every user resource is
-workspace-scoped.
+### R1 — Eliminate personal scope ("个人资源移走")  *(foundational, do first)*
+Plan B: finish the T6 migration AND retire the personal-team concept so
+every resource is owned by a real team.
 - **R1a Backfill + enforce hybrids:** for each hybrid table (llm_configs,
   bot_users, packtunnel_*, video_projects, iosdist_*), backfill
-  `workspace_id` from owner's personal team, then `SET NOT NULL`
-  (guarded migration: count NULLs → 0 before the constraint flips).
-- **R1b markdown_entries:** add the same backfill (user → personal team)
-  + NOT NULL; update read/write/list handlers to be workspace-scoped
+  `workspace_id` from the owner's (soon ex-personal) team, then
+  `SET NOT NULL` (guarded migration: assert NULLs → 0 before the
+  constraint flips).
+- **R1b markdown_entries + remaining personal-only:** same backfill +
+  NOT NULL; rewrite read/write/list handlers to be workspace-scoped
   (mirror the assets/posts pattern). Pairs with the just-shipped
   markdown editor-link fix.
-- **R1c Write-path audit:** grep every `INSERT ... owner_user_id` that
-  lacks a workspace_id and route it through the active workspace
-  (`requireWorkspaceID` / `personalWorkspaceForUser`). Remove the "NULL =
-  personal" branches once backfilled.
-- **R1d agent_tokens decision:** keep per-user (device auth crosses
-  teams) OR add `workspace_id`. Recommend keep per-user but document why
-  it's the one intentional exception.
-- Deliverable: a single "ownership = workspace" invariant; a startup
-  assertion that fails loudly if any covered table has a NULL
-  workspace_id.
+- **R1c Convert personal teams in place:** flip every `kind='personal'`
+  team to `kind='team'` (per locked decision B), so existing users keep
+  their data inside what is now their first real team. Grandfather them
+  to `status='active'` (skip approval for pre-existing teams). Stop
+  auto-creating a personal team on signup.
+- **R1d Write-path audit + invariant:** grep every
+  `INSERT ... owner_user_id` lacking a workspace_id, route through the
+  active workspace (`requireWorkspaceID`), and delete the "NULL =
+  personal" branches. Add a startup assertion that fails loudly if any
+  covered table has a NULL workspace_id, and remove
+  `personalWorkspaceForUser` / personal-team helpers.
+- **R1e agent_tokens:** the one intentional exception — device auth is
+  per-user and crosses teams. Keep `user_id`-scoped; document why.
+- Deliverable: single invariant "ownership = team"; no `kind='personal'`
+  rows; new users land in a "create or join a team" gate.
 
-### R2 — Team-creation approval
-- Schema: `teams.status` (`pending|active|suspended`) or a
-  `team_creation_requests` table. New teams created via the public
-  endpoint land `pending`.
-- Site-admin endpoints: list pending, approve/reject (writes
-  `admin_audit_log`, category `provisioning`). Approved → `active`.
-- Gate resource access on `status='active'`. Pending team owner sees a
-  "waiting for approval" state.
-- UI: site-admin "Team approvals" queue on a new `/admin-teams.html`
-  (or extend an existing admin page); requester-side pending banner.
+### R2 — Team creation approval + default team-bot provisioning
+- Schema: `teams.status` (`pending|active|suspended`). New teams from the
+  public endpoint land `pending`; grandfathered (ex-personal) teams are
+  `active`.
+- Site-admin endpoints: list pending, approve/reject → writes
+  `admin_audit_log` (category `provisioning`). Resource access gated on
+  `status='active'`; pending owner sees a "waiting for approval" state.
+- **Team-bot provisioning (minimum config):** on a team reaching
+  `active`, atomically provision its default AI team bot —
+  - create a `bot_users` row (`workspace_id = team`, system-owned,
+    name e.g. "<team> 助手"),
+  - bind it to an LLM config (platform-default Kimi to start; see open
+    decision E),
+  - seat it in the team's default chat room so it's @mention-able / can
+    run the qunliao idle-loop.
+  Reuse the existing `ensureAutoRegisteredCoder/ResearchBot` +
+  chat-room/bot-fanout machinery rather than inventing a new path. Make
+  it idempotent (re-running provisioning is a no-op).
+- Invariant: an `active` team always has ≥1 bot; the team bot can't be
+  deleted (only replaced/rebound). A backfill provisions the team bot
+  for every grandfathered team.
+- UI: site-admin "Team approvals" queue on `/admin-teams.html`;
+  requester-side pending banner; team settings shows + lets you rebind
+  the team bot's model.
 
 ### R3 — Module publishing + per-team enablement UX (marketplace)
 Reuse the existing `plugin_modules` + `workspace_plugin_access` infra;
@@ -201,12 +248,12 @@ C4 (deploy needs env targets + config). C5 after C4.
 ## Suggested sequencing
 
 ```
-Now ─┬─ R1  finish team-scoping        (foundational; also the "移走个人资源" ask)
-     ├─ C1  normalize CI               (cheap, parallel)
-     └─ C2  release automation         (cheap, parallel)
+Now ─┬─ R1  eliminate personal scope    (foundational; the "移走个人资源" ask, Plan B)
+     ├─ C1  normalize CI                (cheap, parallel)
+     └─ C2  release automation          (cheap, parallel)
 
-Then ┬─ R2  team approval  ┐ parallel after R1
-     ├─ R3  module marketplace ┘
+Then ┬─ R2  team approval + team-bot provisioning  ┐ parallel after R1
+     ├─ R3  module marketplace                      ┘
      └─ C3  env model (dev/stage/prod)
 
 Then ┬─ C4  deploy automation (pull agent + promotion)   ← biggest pain-killer
@@ -227,9 +274,17 @@ surface and reuse infra that already exists.
   a zero-NULL assertion; do it per-table behind a guarded migration with
   a rollback path, exactly like the permission-model `POLAR_LEGACY_*`
   flag pattern.
-- **Decision (B) blast radius:** killing personal teams touches signup,
-  every resource list, and the default-workspace assumption across the
-  whole UI. Prefer (A) unless there's a hard product reason.
+- **Plan B blast radius (now the chosen path):** killing personal teams
+  touches signup, every resource list, and the default-workspace
+  assumption across the whole UI. Mitigate by converting personal teams
+  in place (R1c) — data is preserved, only the `kind` + signup flow
+  change — and by gating behind a flag so the old personal path can be
+  re-enabled if the cutover regresses. Ship R1 to dev/stage first.
+- **Team-bot provisioning failure:** if the team bot can't be created
+  (LLM config missing, quota), team approval must not half-complete.
+  Provision the bot in the same transaction/flow as activation and make
+  it idempotent + retryable; surface a clear admin error rather than an
+  active-but-botless team.
 - **C4 deploy agent is itself prod software** behind NAT — it needs the
   same signed-artifact + checksum discipline the assets module already
   has; dogfood the assets signed-URL flow for artifact delivery.
