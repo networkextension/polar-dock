@@ -1562,6 +1562,17 @@ ALTER TABLE post_images
 ALTER TABLE post_images
 	ADD COLUMN IF NOT EXISTS medium_url TEXT NOT NULL DEFAULT '';
 
+-- asset_id: P8 forward reference into the assets module. NULL on
+-- pre-migration rows; populated by the dual-write goroutine in
+-- post upload when POLAR_ASSETS_POSTS_DUAL_WRITE=true. Read path
+-- still pulls bytes from file_url (legacy /uploads/ path) — the
+-- column is for inventorying which post images have been
+-- replicated into the assets catalog so a future cutover PR can
+-- flip the read path.
+ALTER TABLE post_images
+	ADD COLUMN IF NOT EXISTS asset_id BIGINT REFERENCES assets(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_post_images_asset_id ON post_images(asset_id);
+
 CREATE TABLE IF NOT EXISTS post_videos (
 	id BIGSERIAL PRIMARY KEY,
 	post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

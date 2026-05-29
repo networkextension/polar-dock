@@ -114,6 +114,11 @@ func main() {
 		// HMAC secret.
 		PolarAssetsUseProvider: os.Getenv("POLAR_ASSETS_USE_PROVIDER") == "true",
 
+		// P8 post-image dual-write to assets module. Flag-gated;
+		// rolls forward when the operator is ready to start
+		// building the post-image asset inventory.
+		PolarAssetsPostsDualWrite: os.Getenv("POLAR_ASSETS_POSTS_DUAL_WRITE") == "true",
+
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 

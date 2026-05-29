@@ -150,6 +150,17 @@ type Config struct {
 	// Set via POLAR_ASSETS_USE_PROVIDER=true on the dock launch env.
 	PolarAssetsUseProvider bool
 
+	// PolarAssetsPostsDualWrite: P8 flag. When true, each new post-image
+	// upload that succeeds through the legacy /uploads/ path ALSO
+	// gets registered as an asset (kind=post-image) in the assets
+	// catalog via a fire-and-forget background goroutine. Read path
+	// stays on the legacy /uploads/<file> URL — this flag only
+	// builds the inventory so a future cutover PR can flip reads.
+	// Failures are logged + skipped; user's post still succeeds.
+	// Default OFF until the operator opts in via
+	// POLAR_ASSETS_POSTS_DUAL_WRITE=true.
+	PolarAssetsPostsDualWrite bool
+
 	// MetricsToken gates GET /metrics. When unset the endpoint returns
 	// 404 (fail-closed); when set, the request must carry
 	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's

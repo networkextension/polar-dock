@@ -208,6 +208,17 @@ func (s *Server) handlePostCreate(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 			return
 		}
+		// P8 dual-write: register the post image as an asset too.
+		// Fire-and-forget — never blocks the upload response. Read
+		// path still serves bytes from publicURL (legacy /uploads/).
+		// Only mirrors the original variant; resized derivatives can
+		// be regenerated from the asset later when the read path
+		// flips. Original filename for asset name keeps the catalog
+		// readable; the actual blob is content-addressed by sha256.
+		if s.polarAssetsPostsDualWrite {
+			origFilename := file.Filename
+			go s.dualWritePostImageToAssets(postID, dstPath, origFilename, imageItem.OriginalURL, workspaceID, userIDStr)
+		}
 		savedFiles = append(savedFiles, dstPath)
 		savedFiles = append(savedFiles, derivedPaths...)
 		imageItems = append(imageItems, imageItem)
