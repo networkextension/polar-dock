@@ -16,6 +16,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -76,6 +77,60 @@ func (s *Server) handleAssetProviderAdminList(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"providers": rows})
+}
+
+// handleAssetReplicateToProvider — admin-triggered warm-pull.
+// POST /api/admin/assets/:id/replicate/:provider_id
+//
+// Picks an origin provider that already has the asset, mints a
+// signed URL to its /v1/blob/<sha>, calls the target provider's
+// /v1/pull with HMAC. On success the asset_locations row for the
+// target lands in 'ready'.
+//
+// Idempotent: if the target already holds it (locations row in
+// 'ready'), returns 200 noop.
+func (s *Server) handleAssetReplicateToProvider(c *gin.Context) {
+	assetID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || assetID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "asset id invalid"})
+		return
+	}
+	providerID, err := strconv.ParseInt(c.Param("provider_id"), 10, 64)
+	if err != nil || providerID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "provider id invalid"})
+		return
+	}
+	gotSize, err := s.replicateAssetToProvider(assetID, providerID)
+	if err != nil {
+		// "no origin" → 503; "not found" → 404; everything else 502
+		// since the failure is upstream (provider rejected, network).
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "not found"):
+			c.JSON(http.StatusNotFound, gin.H{"error": msg})
+		case strings.Contains(msg, "no origin"):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": msg})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"error": msg})
+		}
+		return
+	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category:   AuditCatProvisioning,
+		Action:     "asset_replicate",
+		TargetKind: "asset",
+		TargetID:   strconv.FormatInt(assetID, 10),
+		Payload: map[string]any{
+			"target_provider_id": providerID,
+			"size_bytes":         gotSize,
+		},
+	})
+	c.JSON(http.StatusOK, gin.H{
+		"ok":                 true,
+		"asset_id":           assetID,
+		"target_provider_id": providerID,
+		"size_bytes":         gotSize,
+	})
 }
 
 func (s *Server) handleAssetProviderAdminDelete(c *gin.Context) {
