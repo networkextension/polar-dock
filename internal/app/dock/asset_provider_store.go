@@ -21,7 +21,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -41,6 +40,14 @@ type AssetProvider struct {
 const assetProviderColumns = `
 	id, slug, base_url, region, capacity_gb, hmac_token,
 	last_seen_at, created_at
+`
+
+// assetProviderColumnsP is the same list with each column prefixed by
+// `p.`, for use in joined queries where bare column names (notably
+// created_at) would be ambiguous against plugin_modules.
+const assetProviderColumnsP = `
+	p.id, p.slug, p.base_url, p.region, p.capacity_gb, p.hmac_token,
+	p.last_seen_at, p.created_at
 `
 
 func scanAssetProvider(r interface{ Scan(...any) error }) (*AssetProvider, error) {
@@ -193,7 +200,7 @@ func (s *Server) touchAssetProviderLastSeen(slug string) error {
 // Future: weighting by capacity_gb, latency probes, sticky-by-IP.
 func (s *Server) pickProviderForAsset(assetID int64, callerRegion string) (*AssetProvider, error) {
 	rows, err := s.db.Query(
-		`SELECT p.`+strings.ReplaceAll(assetProviderColumns, "\n", " ")+`
+		`SELECT `+assetProviderColumnsP+`
 		   FROM asset_providers p
 		   JOIN asset_locations loc ON loc.provider_id = p.id
 		   JOIN plugin_modules pm ON pm.name = 'assets'
@@ -240,7 +247,7 @@ func (s *Server) pickProviderForAsset(assetID int64, callerRegion string) (*Asse
 // heartbeat-via-plugin_modules signal as pickProviderForAsset.
 func (s *Server) pickAnyHealthyProvider(callerRegion string) (*AssetProvider, error) {
 	rows, err := s.db.Query(
-		`SELECT p.` + strings.ReplaceAll(assetProviderColumns, "\n", " ") + `
+		`SELECT ` + assetProviderColumnsP + `
 		   FROM asset_providers p
 		   JOIN plugin_modules pm ON pm.name = 'assets'
 		  WHERE pm.enabled = true
