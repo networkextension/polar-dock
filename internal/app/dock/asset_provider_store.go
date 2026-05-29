@@ -297,3 +297,29 @@ func (s *Server) markAssetLocationReady(assetID, providerID int64) error {
 	)
 	return err
 }
+
+// markAssetLocationFetching upserts the row to status='fetching'.
+// Used by warm-pull before calling the target provider's /v1/pull
+// so the picker won't route reads to a half-populated blob.
+func (s *Server) markAssetLocationFetching(assetID, providerID int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO asset_locations
+			(asset_id, provider_id, status, last_used_at, bytes_served)
+		 VALUES ($1, $2, 'fetching', NOW(), 0)
+		 ON CONFLICT (asset_id, provider_id) DO UPDATE
+		   SET status = 'fetching', last_used_at = NOW()`,
+		assetID, providerID,
+	)
+	return err
+}
+
+// deleteAssetLocation removes the row for (asset, provider). Used
+// by warm-pull rollback when the target provider rejects the pull
+// — leaves the catalog clean so a retry starts fresh.
+func (s *Server) deleteAssetLocation(assetID, providerID int64) error {
+	_, err := s.db.Exec(
+		`DELETE FROM asset_locations WHERE asset_id = $1 AND provider_id = $2`,
+		assetID, providerID,
+	)
+	return err
+}

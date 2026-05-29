@@ -1007,6 +1007,9 @@ func (s *Server) registerRoutes() {
 		api.POST("/admin/asset-providers", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetProviderAdminCreate)
 		api.GET("/admin/asset-providers", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetProviderAdminList)
 		api.DELETE("/admin/asset-providers/:id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetProviderAdminDelete)
+		// P4: admin-triggered warm-pull. Tells provider_id to fetch
+		// asset id from an origin provider that already has it.
+		api.POST("/admin/assets/:id/replicate/:provider_id", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAssetReplicateToProvider)
 		api.POST("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenCreate)
 		api.GET("/agent/tokens", s.AuthMiddleware(), s.handleAgentTokenList)
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
