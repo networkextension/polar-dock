@@ -380,6 +380,11 @@ type internalHeartbeatReq struct {
 	// missing = preserve current value in the column (don't blank
 	// existing routes on plugins that haven't yet been updated).
 	UIRoutes json.RawMessage `json:"ui_routes,omitempty"`
+	// APIRoutes: optional; raw JSON array of the plugin's API surface
+	// (the marketplace "manifest" — see plugin_modules.api_routes / R3).
+	// Same preserve-on-empty semantics as UIRoutes. Element:
+	// {"method":"GET","path":"/api/expense/items","label":"...","scope":"read"}.
+	APIRoutes json.RawMessage `json:"api_routes,omitempty"`
 }
 
 // ── F1 additions (Phase 2 handlers prep) ─────────────────────────
@@ -763,7 +768,7 @@ func (s *Server) handleInternalHeartbeat(c *gin.Context) {
 		internalErr(c, http.StatusForbidden, "heartbeat name does not match auth header")
 		return
 	}
-	if err := s.updatePluginHeartbeat(req.Name, req.Version, req.Endpoint, []byte(req.UIRoutes)); err != nil {
+	if err := s.updatePluginHeartbeat(req.Name, req.Version, req.Endpoint, []byte(req.UIRoutes), []byte(req.APIRoutes)); err != nil {
 		internalErr(c, http.StatusInternalServerError, "heartbeat write failed")
 		return
 	}

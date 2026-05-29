@@ -3608,6 +3608,49 @@ CREATE INDEX IF NOT EXISTS idx_plugin_modules_enabled
 -- Empty array / NULL = plugin has no UI surface (e.g. packtunnel).
 ALTER TABLE plugin_modules
     ADD COLUMN IF NOT EXISTS ui_routes JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- R3 marketplace publishing metadata on plugin_modules.
+--   published:             上架 flag — module shows in the marketplace
+--                          only when true.
+--   accepts_applications:  per-module toggle — may tenants *request*
+--                          this module, or is it admin-push-only?
+--   api_routes:            the module's full API surface (manifest),
+--                          same JSONB shape as ui_routes but for API
+--                          endpoints; pushed at heartbeat. Element:
+--   {"method":"GET","path":"/api/expense/items","label":"...","scope":"read"}
+ALTER TABLE plugin_modules
+    ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE plugin_modules
+    ADD COLUMN IF NOT EXISTS accepts_applications BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE plugin_modules
+    ADD COLUMN IF NOT EXISTS api_routes JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- plugin_access_requests — R3b tenant→admin module access requests.
+-- A team-admin requests a published module (whole module, scope='module')
+-- or a specific API route within it (scope='api', api_route set). A site
+-- admin approves → the workspace_plugin_access grant is written. teams /
+-- users created far earlier in this schema string, so the FKs resolve.
+CREATE TABLE IF NOT EXISTS plugin_access_requests (
+    id                   BIGSERIAL PRIMARY KEY,
+    workspace_id         TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    plugin_name          TEXT NOT NULL,
+    scope                TEXT NOT NULL DEFAULT 'module',   -- module | api
+    api_route            TEXT NOT NULL DEFAULT '',          -- '' for module scope
+    status               TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | denied
+    requested_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reviewed_by_user_id  TEXT NOT NULL DEFAULT '',
+    reason               TEXT NOT NULL DEFAULT '',
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reviewed_at          TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_plugin_access_requests_pending
+    ON plugin_access_requests(status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_plugin_access_requests_ws
+    ON plugin_access_requests(workspace_id);
+-- Dedup: at most one open (pending) request per (workspace, plugin, route).
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_plugin_access_requests_open
+    ON plugin_access_requests(workspace_id, plugin_name, scope, api_route)
+    WHERE status = 'pending';
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

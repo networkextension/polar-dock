@@ -203,32 +203,36 @@ func (s *Server) rotatePluginModuleKey(name string) (string, bool, error) {
 // /internal/v1/plugin-registry/heartbeat handler. Empty version /
 // endpoint don't clobber existing values — only refresh what the
 // plugin sent.
-func (s *Server) updatePluginHeartbeat(name, version, endpoint string, uiRoutes []byte) error {
+func (s *Server) updatePluginHeartbeat(name, version, endpoint string, uiRoutes, apiRoutes []byte) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("name required")
 	}
 	now := time.Now().UTC()
 	// Preserve current values when the plugin sent empty strings.
-	// uiRoutes: nil / empty = preserve current value (don't overwrite
-	// to []), so a plugin that doesn't yet declare routes leaves the
-	// existing column alone. Plugins that DO declare routes
+	// uiRoutes / apiRoutes: nil / empty = preserve current value (don't
+	// overwrite to []), so a plugin that doesn't yet declare routes
+	// leaves the existing column alone. Plugins that DO declare routes
 	// authoritatively replace the column on every heartbeat.
 	// lib/pq sends []byte as bytea, which can't cast to jsonb. Pass
-	// as string so it lands on the text wire format the $5::jsonb cast
+	// as string so it lands on the text wire format the ::jsonb cast
 	// can decode. Matches the pattern in host_skill_runs_store.go.
-	var routes interface{}
+	var uiR, apiR interface{}
 	if len(uiRoutes) > 0 {
-		routes = string(uiRoutes)
+		uiR = string(uiRoutes)
+	}
+	if len(apiRoutes) > 0 {
+		apiR = string(apiRoutes)
 	}
 	_, err := s.db.Exec(`
 		UPDATE plugin_modules
 		   SET last_heartbeat = $2,
 		       version  = CASE WHEN $3 = '' THEN version  ELSE $3 END,
 		       endpoint = CASE WHEN $4 = '' THEN endpoint ELSE $4 END,
-		       ui_routes = COALESCE($5::jsonb, ui_routes)
+		       ui_routes  = COALESCE($5::jsonb, ui_routes),
+		       api_routes = COALESCE($6::jsonb, api_routes)
 		 WHERE name = $1`,
-		name, now, strings.TrimSpace(version), strings.TrimSpace(endpoint), routes)
+		name, now, strings.TrimSpace(version), strings.TrimSpace(endpoint), uiR, apiR)
 	return err
 }
 
