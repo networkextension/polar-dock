@@ -107,9 +107,15 @@ type Server struct {
 	polarAssetsUseProvider bool
 
 	// assetWarmupInFlight dedups concurrent P4c warm-pull triggers.
-	// Keyed by warmupKey{AssetID, ProviderID}; value is struct{}.
+	// Keyed by warmupKey{AssetID, Region}; value is struct{}.
 	// Cleared when the goroutine finishes. See asset_warmup.go.
 	assetWarmupInFlight sync.Map
+
+	// P8 dual-write flag. When true, each new post-image upload that
+	// succeeds through the legacy /uploads/ path ALSO gets registered
+	// in the assets catalog in a background goroutine. Read path
+	// stays on legacy URL. See config.go: PolarAssetsPostsDualWrite.
+	polarAssetsPostsDualWrite bool
 
 	// iosdistZsignPath is the resolved path to the zsign binary, set
 	// once at server boot via exec.LookPath. When empty, the sign
@@ -235,6 +241,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// P2 Shell: kill-switch + concurrency cap (per-host hard-coded 4;
 	// per-dock from env, default 32).
 	server.polarAssetsUseProvider = cfg.PolarAssetsUseProvider
+	server.polarAssetsPostsDualWrite = cfg.PolarAssetsPostsDualWrite
 	if cfg.PolarAssetsUseProvider {
 		log.Printf("assets: provider 302 path ENABLED (POLAR_ASSETS_USE_PROVIDER=true)")
 	} else {
