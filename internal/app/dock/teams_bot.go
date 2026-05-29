@@ -12,6 +12,7 @@ package dock
 // this slice establishes the invariant that every active team owns a bot.
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log"
@@ -55,16 +56,19 @@ func (s *Server) provisionTeamBot(workspaceID string) (bool, error) {
 
 	// Probe for an existing team bot.
 	var botID int64
+	var botUserID string
 	var curLLM sql.NullInt64
 	probeErr := s.db.QueryRow(
-		`SELECT id, llm_config_id FROM bot_users WHERE workspace_id = $1 AND name = $2 LIMIT 1`,
+		`SELECT id, bot_user_id, llm_config_id FROM bot_users WHERE workspace_id = $1 AND name = $2 LIMIT 1`,
 		team.ID, name,
-	).Scan(&botID, &curLLM)
+	).Scan(&botID, &botUserID, &curLLM)
 	if probeErr != nil && !errors.Is(probeErr, sql.ErrNoRows) {
 		return false, probeErr
 	}
 
-	if botID != 0 {
+	created := false
+	switch {
+	case botID != 0:
 		// Exists. Heal a placeholder (no LLM) into a reply-capable
 		// classic bot once the workspace has a usable LLM.
 		if curLLM.Int64 <= 0 && llmID > 0 {
@@ -79,12 +83,8 @@ func (s *Server) provisionTeamBot(workspaceID string) (bool, error) {
 				return false, err
 			}
 		}
-		return false, nil
-	}
-
-	// Create. Classic (reply-capable) when an LLM is available, else a
-	// passthrough placeholder to establish the invariant.
-	if llmID > 0 {
+	case llmID > 0:
+		// Create classic (reply-capable) when an LLM is available.
 		bot, cerr := s.createBotUser(CreateBotUserInput{
 			WorkspaceID:  team.ID,
 			OwnerUserID:  team.OwnerUserID,
@@ -97,13 +97,64 @@ func (s *Server) provisionTeamBot(workspaceID string) (bool, error) {
 		if cerr != nil {
 			return false, cerr
 		}
-		return bot != nil, nil
+		if bot != nil {
+			botUserID, created = bot.BotUserID, true
+		}
+	default:
+		// No LLM yet — passthrough placeholder to establish the invariant.
+		id, didCreate, berr := s.ensureBotForAgent(
+			team.ID, team.OwnerUserID, name,
+			"团队默认 AI 助手（最低配置；待工作区配置模型后自动启用）", nil,
+		)
+		if berr != nil {
+			return false, berr
+		}
+		botUserID, created = id, didCreate
 	}
-	_, created, err := s.ensureBotForAgent(
-		team.ID, team.OwnerUserID, name,
-		"团队默认 AI 助手（最低配置；待工作区配置模型后自动启用）", nil,
-	)
-	return created, err
+
+	// R2-2c: seat the team bot in a default room for *explicit
+	// collaboration teams* only (home teams stay roomless to avoid a
+	// room-per-user). Non-fatal — a room hiccup must not fail the
+	// (already-done) bot provisioning.
+	if botUserID != "" && !isHomeTeam(team) {
+		if err := s.ensureTeamRoom(team, botUserID); err != nil {
+			log.Printf("teams: default room for team %s failed: %v", team.ID, err)
+		}
+	}
+	return created, nil
+}
+
+// teamRoomName is the deterministic name of a collaboration team's
+// default group room. Dedup key for ensureTeamRoom.
+func teamRoomName(team *Team) string {
+	return team.Name + " · 团队群"
+}
+
+// ensureTeamRoom (R2-2c) gives an explicit collaboration team a default
+// group chat room and seats its AI team bot, so the bot is
+// @-mentionable out of the box. Idempotent — dedups the room by
+// (workspace, name) and the membership via addChatRoomMember's upsert.
+// Caller restricts this to non-home teams.
+func (s *Server) ensureTeamRoom(team *Team, botUserID string) error {
+	ctx := context.Background()
+	name := teamRoomName(team)
+	var roomID int64
+	err := s.db.QueryRow(
+		`SELECT id FROM chat_rooms WHERE workspace_id = $1 AND name = $2 ORDER BY created_at LIMIT 1`,
+		team.ID, name,
+	).Scan(&roomID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if roomID == 0 {
+		room, cerr := s.createChatRoom(ctx, team.ID, ChatRoomKindRoom, name,
+			"团队默认群聊，@"+teamBotName(team)+" 即可与 AI 助手对话。", team.OwnerUserID)
+		if cerr != nil {
+			return cerr
+		}
+		roomID = room.ID
+	}
+	return s.addChatRoomMember(ctx, roomID, botUserID, ChatRoomRoleMember)
 }
 
 // backfillTeamBots provisions the default team bot for every active
