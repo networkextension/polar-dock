@@ -418,6 +418,12 @@ func NewServer(cfg Config) (*Server, error) {
 		log.Printf("iosdist: slug backfill failed: %v", err)
 	}
 
+	// R2-2: every active team has a default AI team bot (minimum config).
+	// Idempotent; provisions the missing ones for existing teams.
+	if err := server.backfillTeamBots(); err != nil {
+		log.Printf("teams: team-bot backfill failed: %v", err)
+	}
+
 	// zsign discovery — if the binary is on PATH, the sign worker can run.
 	// Otherwise the sign endpoint will refuse with a clear 503.
 	if zsignPath, lookErr := exec.LookPath("zsign"); lookErr == nil {
