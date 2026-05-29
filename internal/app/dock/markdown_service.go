@@ -37,8 +37,23 @@ func (s *Server) saveMarkdownDocument(userID, title, content, editorMode, visibi
 	if visibility == "" {
 		visibility = MarkdownVisibilityPrivate
 	}
-	if visibility != MarkdownVisibilityWorkspace {
-		workspaceID = nil
+	// R1 (Plan B): every markdown entry is team-owned — workspace_id is
+	// never NULL. `visibility` governs who can READ (private = author
+	// only, workspace = team members, public = anyone); `workspace_id`
+	// governs OWNERSHIP. Private/public entries are owned by the
+	// author's own team. For the workspace tier the caller already
+	// validated membership and passed the workspace_id through; for
+	// every other tier (and any caller that passed nil) fall back to
+	// the author's personal team so the row satisfies the NOT NULL
+	// invariant enforced by enforceWorkspaceIDNotNull().
+	if visibility != MarkdownVisibilityWorkspace || workspaceID == nil || strings.TrimSpace(*workspaceID) == "" {
+		pw, perr := s.ensurePersonalTeam(userID)
+		if perr != nil {
+			_ = os.Remove(path)
+			return nil, "", fmt.Errorf("resolve owner workspace: %w", perr)
+		}
+		wid := pw.ID
+		workspaceID = &wid
 	}
 	entryID, err := s.createMarkdownEntryReturningID(userID, title, path, summary, coverURL, mode, visibility, workspaceID, now)
 	if err != nil {
