@@ -184,15 +184,21 @@ func (s *Server) getHostByAgentToken(agentTokenID string) (*Host, error) {
 		return nil, nil
 	}
 	// v4: token → agents.agent_token_id → agents.host_id → hosts.id.
-	// hostSelectColumns ends with `FROM hosts` (unaliased), so we
-	// append the JOIN + WHERE in the same shape every other call site
-	// uses.
+	// We use a scalar subquery in WHERE rather than a JOIN: hosts and
+	// agents share column names (id, workspace_id, name, agent_token_id,
+	// os, arch, created_at), so a JOIN against the unqualified
+	// hostSelectColumns SELECT list throws "column reference is
+	// ambiguous". The subquery keeps the outer SELECT a plain
+	// `FROM hosts` and reuses hostSelectColumns verbatim — no parallel
+	// column list to maintain.
 	host, err := s.scanHost(s.db.QueryRow(
 		hostSelectColumns+`
-		  JOIN agents ag ON ag.host_id = hosts.id
-		 WHERE ag.agent_token_id = $1
-		 ORDER BY ag.created_at DESC
-		 LIMIT 1`, agentTokenID))
+		 WHERE id = (
+		   SELECT host_id FROM agents
+		    WHERE agent_token_id = $1
+		    ORDER BY created_at DESC
+		    LIMIT 1
+		 )`, agentTokenID))
 	if err == nil && host != nil {
 		return host, nil
 	}
