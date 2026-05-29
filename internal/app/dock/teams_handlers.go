@@ -180,6 +180,10 @@ func (s *Server) handleTeamCreate(c *gin.Context) {
 		Description: description,
 		AvatarURL:   avatarURL,
 		Kind:        TeamKindTeam,
+		// R2: explicitly-created collaboration teams require site-admin
+		// approval before they're active. (Home teams, created via
+		// ensurePersonalTeam, default to active.)
+		Status:      TeamStatusPending,
 		OwnerUserID: userID,
 	}
 	if err := s.createTeam(team); err != nil {
@@ -187,7 +191,7 @@ func (s *Server) handleTeamCreate(c *gin.Context) {
 		return
 	}
 	s.logTeamAudit(team.ID, userID, "team.create", "team", team.ID,
-		"创建工作区 "+team.Name, map[string]any{"slug": team.Slug, "kind": team.Kind})
+		"创建工作区 "+team.Name+"（待审批）", map[string]any{"slug": team.Slug, "kind": team.Kind, "status": team.Status})
 	c.JSON(http.StatusOK, gin.H{"team": team, "my_role": TeamRoleOwner})
 }
 

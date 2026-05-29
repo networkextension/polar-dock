@@ -1064,8 +1064,14 @@ ALTER TABLE teams
 -- asset_providers.region values like 'zen', 'dev'.
 ALTER TABLE teams
 	ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT '';
+-- R2 team lifecycle. DEFAULT 'active' so existing + home teams are
+-- grandfathered active; explicitly-created collaboration teams are
+-- inserted 'pending' by handleTeamCreate and need site-admin approval.
+ALTER TABLE teams
+	ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
 CREATE INDEX IF NOT EXISTS idx_teams_owner ON teams(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_teams_kind ON teams(kind);
+CREATE INDEX IF NOT EXISTS idx_teams_pending ON teams(status) WHERE status = 'pending';
 
 -- team_members: (team, user) -> role. role is 'owner'|'admin'|'member'|'viewer'.
 -- A team always has exactly one row with role='owner', matching teams.owner_user_id.
