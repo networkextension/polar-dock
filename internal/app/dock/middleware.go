@@ -177,9 +177,27 @@ func (s *Server) resolveActiveWorkspace(c *gin.Context, userID string) {
 	if requested != "" {
 		member, err := s.getTeamMember(requested, userID)
 		if err == nil && member != nil {
-			c.Set("workspace_id", requested)
-			c.Set("workspace_role", member.Role)
-			return
+			// R2-3 (flag-gated): refuse to make a non-active team the
+			// active workspace, so resources can't be operated inside a
+			// pending/rejected/suspended team. Soft gate — falls through
+			// to the always-active home team rather than 403-ing, so the
+			// user is never locked out. Stamps a marker the UI can read.
+			if s.enforceTeamStatus {
+				team, terr := s.getTeam(requested)
+				if terr == nil && team != nil && team.Status != TeamStatusActive {
+					c.Set("workspace_blocked_id", requested)
+					c.Set("workspace_blocked_status", team.Status)
+					// fall through to home team below
+				} else {
+					c.Set("workspace_id", requested)
+					c.Set("workspace_role", member.Role)
+					return
+				}
+			} else {
+				c.Set("workspace_id", requested)
+				c.Set("workspace_role", member.Role)
+				return
+			}
 		}
 		// Header present but invalid — fall through to personal team.
 		// This is what should happen if the user gets removed from a
