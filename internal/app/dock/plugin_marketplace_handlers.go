@@ -231,3 +231,19 @@ func (s *Server) handleTeamPluginRequestList(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"requests": reqs})
 }
+
+// handleTeamAvailableModules — GET /api/teams/:id/available-modules.
+// Member-gated discovery: every published module + this workspace's
+// enablement and pending-request state, for the tenant Modules page.
+func (s *Server) handleTeamAvailableModules(c *gin.Context) {
+	teamID, _, ok := requireTeamRoleFromCtx(c)
+	if !ok {
+		return
+	}
+	mods, err := s.listAvailableModulesForWorkspace(teamID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "available_modules.list_failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"modules": mods})
+}
