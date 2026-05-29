@@ -112,8 +112,8 @@ func (s *Server) handleTeamInvitationCreate(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "工作区不存在"})
 		return
 	}
-	if team.Kind == TeamKindPersonal {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "个人工作区不能邀请他人"})
+	if isHomeTeam(team) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "主工作区不能邀请他人"})
 		return
 	}
 	var req teamInvitationCreateRequest

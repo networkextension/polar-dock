@@ -81,18 +81,27 @@ below becomes its own PR series.
    baseline the team can extend with more bots. A team without its team
    bot is not "active".
 
-**Still open (pick before R2/C3):**
-- **A. Approval granularity** — per-team manual approval by site admin,
-  or auto-approve with a quota + post-hoc review? (Plan assumes
-  request→pending→approve.)
-- **B. Migrating existing personal-team data** — current users each have
-  a `kind='personal'` team with real data (markdown, posts, assets…).
-  On cutover: **convert each personal team in place to `kind='team'`**
-  (preserves all data, becomes that user's first real team; recommended)
-  vs. force-migrate into a brand-new team. Recommend in-place convert +
-  auto-approve those grandfathered teams.
-- **C. Module enablement model** — tenant *requests* a module (admin
-  approves) vs. site admin *pushes* enablement. (Plan: support both.)
+**Locked (2026-05-29, batch 2):**
+3. **B. Personal-team migration = in-place conversion.** Flip every
+   `kind='personal'` row to `kind='team'` (preserves all data; it becomes
+   the user's first real team). Grandfather to `status='active'` (skip
+   approval). The user's *home/default* workspace is no longer identified
+   by `kind` — it is the team whose `slug == personalTeamSlug(userID)`,
+   owned by that user. All default-workspace resolution keys on that slug,
+   not on `kind='personal'`, so it survives the conversion.
+4. **A. Approval flow = request → pending → approve.** Site admin approves;
+   no auto-approve quota for v1. The **requester must hold team-admin role**
+   (owner/admin in `team_members`) on the team the request is for — regular
+   members cannot request modules.
+5. **C. Module enablement = both, per-module gated.** Site admin can push
+   enablement directly; tenants can also *request* — but only for modules
+   the admin published with `accepts_applications = true`. Each published
+   module carries a manifest declaring its full **API-route list**
+   (`api_routes`) and **page-route list** (`ui_routes`, drives sidebar
+   injection on enable). Requests can be **module-level** (whole module)
+   or **api-level** (a specific API route within the module).
+
+**Still open (pick before C3):**
 - **D. Where staging lives** — third box vs. second DB + vhost on .69.
   Pull-based deploy assumed (boxes behind NAT).
 - **E. Team bot identity** — does the team bot get its own LLM config
@@ -159,16 +168,38 @@ every resource is owned by a real team.
 
 ### R3 — Module publishing + per-team enablement UX (marketplace)
 Reuse the existing `plugin_modules` + `workspace_plugin_access` infra;
-add the UX layer.
-- **R3a Publish:** site-admin module catalog UI (CRUD over
-  `plugin_modules`, key rotation, enable/disable, edit `ui_routes`).
-  "上架" = create + enable a module row. (API exists; this is the UI +
-  audit wiring.)
-- **R3b Enable per-team:** site-admin grid (team × module) toggling
-  `workspace_plugin_access`. Optional tenant-side "request this module"
-  → request queue → admin approve (writes the grant). Audit every flip.
-- **R3c Discovery:** tenant "Modules" page listing available vs enabled,
-  driven by the existing `/api/plugin-ui-routes` filter.
+add publishing metadata + the UX layer.
+- **Schema additions to `plugin_modules`:**
+  - `published BOOLEAN NOT NULL DEFAULT FALSE` — 上架 flag (visible in the
+    marketplace only when true).
+  - `accepts_applications BOOLEAN NOT NULL DEFAULT FALSE` — the per-module
+    toggle: can tenants *request* this module, or is it admin-push-only?
+  - `api_routes JSONB NOT NULL DEFAULT '[]'` — the module's full API
+    surface, mirroring the existing `ui_routes` shape. Pushed by the
+    plugin at heartbeat (like `ui_routes`) and/or edited by admin at
+    publish. Element: `{"method":"GET","path":"/api/expense/items","label":"列出账目","scope":"read"}`.
+    Drives api-level access requests + the per-route access gate.
+  - (`ui_routes` already exists — page-route list; enabling a module
+    injects these into the dynamic sidebar via `/api/plugin-ui-routes`.)
+- **R3a Publish ("上架"):** site-admin module catalog UI (CRUD over
+  `plugin_modules`: key rotation, enable/disable, `published` +
+  `accepts_applications` toggles, view/edit `ui_routes` + `api_routes`).
+  Publishing requires a non-empty manifest (both route lists present).
+  Audited.
+- **R3b Enable per-team + applications:**
+  - Site-admin grid (team × module) toggling `workspace_plugin_access`
+    directly (push model). Audit every flip.
+  - Tenant request path: a **team-admin** (owner/admin in `team_members`;
+    regular members get 403) requests a published, `accepts_applications`
+    module. New table `plugin_access_requests`:
+    `(id, workspace_id, plugin_name, scope ENUM('module','api'),
+    api_route TEXT NULL, requested_by_user_id, status
+    ('pending'|'approved'|'denied'), reviewed_by, reason, timestamps)`.
+    Site admin approves → writes the `workspace_plugin_access` grant
+    (module scope) or a finer api-level grant; audited as `provisioning`.
+- **R3c Discovery:** tenant "Modules" page listing published-available vs
+  enabled (driven by `/api/plugin-ui-routes` + the new catalog endpoint);
+  team-admins see an "Apply" button only on `accepts_applications` modules.
 
 ### R4 — Team lifecycle + hardening
 - Suspend / un-suspend / delete / transfer-ownership endpoints + UI,

@@ -260,8 +260,8 @@ func (s *Server) handleTeamDelete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "工作区不存在"})
 		return
 	}
-	if team.Kind == TeamKindPersonal {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "个人工作区不能删除"})
+	if isHomeTeam(team) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "主工作区不能删除"})
 		return
 	}
 	// T7: pre-delete check across the T6-migrated tables. Refuse
@@ -439,8 +439,8 @@ func (s *Server) handleTeamMemberRemove(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "工作区不存在"})
 		return
 	}
-	if team.Kind == TeamKindPersonal {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "个人工作区不能踢人 / 退出"})
+	if isHomeTeam(team) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "主工作区不能踢人 / 退出"})
 		return
 	}
 	target, err := s.getTeamMember(teamID, targetUserID)

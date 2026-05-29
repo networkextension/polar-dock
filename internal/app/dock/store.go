@@ -8893,16 +8893,18 @@ func (s *Server) createAttachmentChatMessage(threadID int64, senderID, preview s
 	return id, nil
 }
 
-// personalWorkspaceForUser returns the personal-team workspace id
-// for a given user. Used by call paths that need a workspace_id
-// for an attachment but don't have one threaded through (chat
-// uploads are the obvious case — the sender's personal team is
-// the natural owner).
+// personalWorkspaceForUser returns the user's home-team workspace id.
+// Used by call paths that need a workspace_id but don't have one
+// threaded through (chat uploads are the obvious case — the sender's
+// home team is the natural owner).
+//
+// R1c: keyed on the deterministic home-team slug, not kind='personal'
+// — survives the in-place conversion of personal teams to kind='team'.
 func (s *Server) personalWorkspaceForUser(userID string) (string, error) {
 	var id string
 	err := s.db.QueryRow(
-		`SELECT id FROM teams WHERE owner_user_id = $1 AND kind = 'personal' LIMIT 1`,
-		userID,
+		`SELECT id FROM teams WHERE slug = $1 AND owner_user_id = $2 LIMIT 1`,
+		personalTeamSlug(userID), userID,
 	).Scan(&id)
 	if err != nil {
 		return "", err
