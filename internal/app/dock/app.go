@@ -859,6 +859,10 @@ func (s *Server) registerRoutes() {
 		api.GET("/video-shot-calls", s.AuthMiddleware(), s.handleVideoShotCallsList)
 		api.GET("/video-burn", s.AuthMiddleware(), s.handleVideoBurn)
 		api.GET("/admin/video-burn", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminVideoBurn)
+		// R2 team-creation approval (site-admin).
+		api.GET("/admin/teams/pending", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminTeamPendingList)
+		api.POST("/admin/teams/:id/approve", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminTeamApprove)
+		api.POST("/admin/teams/:id/reject", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminTeamReject)
 		// Tenant access control — root team grants per-workspace
 		// plugin access. See [[project-llm-billing-state]].
 		api.GET("/admin/workspace-plugin-access", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminWorkspacePluginAccessList)

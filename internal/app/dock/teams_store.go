@@ -25,6 +25,12 @@ const (
 	TeamKindPersonal = "personal"
 	TeamKindTeam     = "team"
 
+	// R2 team lifecycle statuses.
+	TeamStatusActive    = "active"
+	TeamStatusPending   = "pending"
+	TeamStatusRejected  = "rejected"
+	TeamStatusSuspended = "suspended"
+
 	TeamRoleOwner  = "owner"
 	TeamRoleAdmin  = "admin"
 	TeamRoleMember = "member"
@@ -39,6 +45,10 @@ type Team struct {
 	AvatarURL   string    `json:"avatar_url"`
 	Kind        string    `json:"kind"`
 	OwnerUserID string    `json:"owner_user_id"`
+	// R2: lifecycle status. Home teams + grandfathered teams are
+	// 'active'; explicitly-created collaboration teams land 'pending'
+	// until a site admin approves (or 'rejected'). 'suspended' is R4.
+	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -138,6 +148,9 @@ func (s *Server) createTeam(team *Team) error {
 	if team.Kind == "" {
 		team.Kind = TeamKindTeam
 	}
+	if team.Status == "" {
+		team.Status = TeamStatusActive
+	}
 	now := time.Now().UTC()
 	team.CreatedAt = now
 	team.UpdatedAt = now
@@ -149,9 +162,9 @@ func (s *Server) createTeam(team *Team) error {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		`INSERT INTO teams (id, slug, name, description, avatar_url, kind, owner_user_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
-		team.ID, team.Slug, team.Name, team.Description, team.AvatarURL, team.Kind, team.OwnerUserID, now,
+		`INSERT INTO teams (id, slug, name, description, avatar_url, kind, status, owner_user_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+		team.ID, team.Slug, team.Name, team.Description, team.AvatarURL, team.Kind, team.Status, team.OwnerUserID, now,
 	); err != nil {
 		return err
 	}
@@ -170,10 +183,10 @@ func (s *Server) createTeam(team *Team) error {
 func (s *Server) getTeam(id string) (*Team, error) {
 	var t Team
 	err := s.db.QueryRow(
-		`SELECT id, slug, name, description, avatar_url, kind, owner_user_id, created_at, updated_at
+		`SELECT id, slug, name, description, avatar_url, kind, status, owner_user_id, created_at, updated_at
 		 FROM teams WHERE id = $1`,
 		id,
-	).Scan(&t.ID, &t.Slug, &t.Name, &t.Description, &t.AvatarURL, &t.Kind, &t.OwnerUserID, &t.CreatedAt, &t.UpdatedAt)
+	).Scan(&t.ID, &t.Slug, &t.Name, &t.Description, &t.AvatarURL, &t.Kind, &t.Status, &t.OwnerUserID, &t.CreatedAt, &t.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -186,10 +199,10 @@ func (s *Server) getTeam(id string) (*Team, error) {
 func (s *Server) getTeamBySlug(slug string) (*Team, error) {
 	var t Team
 	err := s.db.QueryRow(
-		`SELECT id, slug, name, description, avatar_url, kind, owner_user_id, created_at, updated_at
+		`SELECT id, slug, name, description, avatar_url, kind, status, owner_user_id, created_at, updated_at
 		 FROM teams WHERE slug = $1`,
 		slug,
-	).Scan(&t.ID, &t.Slug, &t.Name, &t.Description, &t.AvatarURL, &t.Kind, &t.OwnerUserID, &t.CreatedAt, &t.UpdatedAt)
+	).Scan(&t.ID, &t.Slug, &t.Name, &t.Description, &t.AvatarURL, &t.Kind, &t.Status, &t.OwnerUserID, &t.CreatedAt, &t.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -205,7 +218,7 @@ func (s *Server) getTeamBySlug(slug string) (*Team, error) {
 // to render.
 func (s *Server) listTeamsForUser(userID string) ([]Team, map[string]string, error) {
 	rows, err := s.db.Query(
-		`SELECT t.id, t.slug, t.name, t.description, t.avatar_url, t.kind, t.owner_user_id, t.created_at, t.updated_at, tm.role
+		`SELECT t.id, t.slug, t.name, t.description, t.avatar_url, t.kind, t.status, t.owner_user_id, t.created_at, t.updated_at, tm.role
 		 FROM teams t
 		 JOIN team_members tm ON tm.team_id = t.id
 		 WHERE tm.user_id = $1
@@ -222,13 +235,46 @@ func (s *Server) listTeamsForUser(userID string) ([]Team, map[string]string, err
 	for rows.Next() {
 		var t Team
 		var role string
-		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Description, &t.AvatarURL, &t.Kind, &t.OwnerUserID, &t.CreatedAt, &t.UpdatedAt, &role); err != nil {
+		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Description, &t.AvatarURL, &t.Kind, &t.Status, &t.OwnerUserID, &t.CreatedAt, &t.UpdatedAt, &role); err != nil {
 			return nil, nil, err
 		}
 		teams = append(teams, t)
 		roles[t.ID] = role
 	}
 	return teams, roles, rows.Err()
+}
+
+// listTeamsByStatus returns teams in a given lifecycle status (e.g.
+// 'pending'), newest first, for the site-admin approval queue.
+func (s *Server) listTeamsByStatus(status string) ([]Team, error) {
+	rows, err := s.db.Query(
+		`SELECT id, slug, name, description, avatar_url, kind, status, owner_user_id, created_at, updated_at
+		 FROM teams WHERE status = $1 ORDER BY created_at DESC`, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Team{}
+	for rows.Next() {
+		var t Team
+		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Description, &t.AvatarURL, &t.Kind, &t.Status, &t.OwnerUserID, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// setTeamStatus transitions a team's lifecycle status. Returns false if
+// no such team. R2 approval (pending→active / rejected) + R4 (suspended).
+func (s *Server) setTeamStatus(id, status string) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE teams SET status = $2, updated_at = NOW() WHERE id = $1`, id, status)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // getTeamMember returns the (team, user) membership row, or nil if the
