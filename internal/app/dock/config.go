@@ -150,6 +150,15 @@ type Config struct {
 	// Set via POLAR_ASSETS_USE_PROVIDER=true on the dock launch env.
 	PolarAssetsUseProvider bool
 
+	// PolarEnforceTeamStatus: R2-3 flag (default off). When true, a user
+	// who explicitly selects a non-active team (status != 'active', e.g.
+	// a pending team awaiting site-admin approval) via X-Workspace-Id
+	// does NOT get that workspace as their active context — resolution
+	// falls back to their always-active home team. Soft gate: blocks
+	// operating resources in a non-active team without ever locking the
+	// user out of the app. Set POLAR_ENFORCE_TEAM_STATUS=true to enable.
+	PolarEnforceTeamStatus bool
+
 	// PolarAssetsPostsDualWrite: P8 flag. When true, each new post-image
 	// upload that succeeds through the legacy /uploads/ path ALSO
 	// gets registered as an asset (kind=post-image) in the assets

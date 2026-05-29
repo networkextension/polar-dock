@@ -106,6 +106,10 @@ type Server struct {
 	// stub). See config.go: PolarAssetsUseProvider.
 	polarAssetsUseProvider bool
 
+	// R2-3 flag: enforce team status='active' for workspace selection.
+	// See config.go: PolarEnforceTeamStatus.
+	enforceTeamStatus bool
+
 	// assetWarmupInFlight dedups concurrent P4c warm-pull triggers.
 	// Keyed by warmupKey{AssetID, Region}; value is struct{}.
 	// Cleared when the goroutine finishes. See asset_warmup.go.
@@ -241,6 +245,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// P2 Shell: kill-switch + concurrency cap (per-host hard-coded 4;
 	// per-dock from env, default 32).
 	server.polarAssetsUseProvider = cfg.PolarAssetsUseProvider
+	server.enforceTeamStatus = cfg.PolarEnforceTeamStatus
 	server.polarAssetsPostsDualWrite = cfg.PolarAssetsPostsDualWrite
 	if cfg.PolarAssetsUseProvider {
 		log.Printf("assets: provider 302 path ENABLED (POLAR_ASSETS_USE_PROVIDER=true)")

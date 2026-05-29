@@ -114,6 +114,10 @@ func main() {
 		// HMAC secret.
 		PolarAssetsUseProvider: os.Getenv("POLAR_ASSETS_USE_PROVIDER") == "true",
 
+		// R2-3 team-status gate. Default off; flip on .57 after the
+		// pending-approvals queue has been eyeballed.
+		PolarEnforceTeamStatus: os.Getenv("POLAR_ENFORCE_TEAM_STATUS") == "true",
+
 		// P8 post-image dual-write to assets module. Flag-gated;
 		// rolls forward when the operator is ready to start
 		// building the post-image asset inventory.
