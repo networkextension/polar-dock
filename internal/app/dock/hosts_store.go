@@ -169,12 +169,34 @@ func (s *Server) getHostBySlug(workspaceID, slug string) (*Host, error) {
 }
 
 // getHostByAgentToken is on the hot path of every agent WS message
-// (called once at attach to cache host_id on agentConn). Backed by the
-// partial index idx_hosts_agent_token in the schema.
+// (called once at attach to cache host_id on agentConn). It tries
+// the v4 chain first (agent_tokens → agents.agent_token_id →
+// agents.host_id → hosts.id) and falls back to v3
+// (hosts.agent_token_id) for legacy rows not yet migrated.
+//
+// v4-first ordering matters: hosts.agent_token_id is NULL for every
+// v4-registered host (doc/arch/agent-identity-v4.md), so the v3-only
+// query silently dropped every v4 agent's skill.advertise frames and
+// surfaced as the misleading "has no host row (legacy agent)" log
+// line in agent_handlers.go.
 func (s *Server) getHostByAgentToken(agentTokenID string) (*Host, error) {
 	if strings.TrimSpace(agentTokenID) == "" {
 		return nil, nil
 	}
+	// v4: token → agents.agent_token_id → agents.host_id → hosts.id.
+	// hostSelectColumns ends with `FROM hosts` (unaliased), so we
+	// append the JOIN + WHERE in the same shape every other call site
+	// uses.
+	host, err := s.scanHost(s.db.QueryRow(
+		hostSelectColumns+`
+		  JOIN agents ag ON ag.host_id = hosts.id
+		 WHERE ag.agent_token_id = $1
+		 ORDER BY ag.created_at DESC
+		 LIMIT 1`, agentTokenID))
+	if err == nil && host != nil {
+		return host, nil
+	}
+	// v3 fallback: token → hosts.agent_token_id
 	return s.scanHost(s.db.QueryRow(hostSelectColumns+` WHERE agent_token_id = $1 LIMIT 1`, agentTokenID))
 }
 
