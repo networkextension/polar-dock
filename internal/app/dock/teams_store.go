@@ -555,6 +555,7 @@ func (s *Server) enforceWorkspaceIDNotNull() error {
 		"packtunnel_rule_files",
 		"video_projects",
 		"posts",
+		"markdown_entries",
 	}
 	for _, table := range tables {
 		if _, err := s.db.Exec(`ALTER TABLE ` + table + ` ALTER COLUMN workspace_id SET NOT NULL`); err != nil {
@@ -615,6 +616,20 @@ func (s *Server) backfillResourceWorkspaceIDs() error {
 			LIMIT 1
 		)
 		WHERE p.workspace_id IS NULL
+	`); err != nil {
+		return err
+	}
+	// markdown_entries also uses user_id (legacy private/public entries
+	// had NULL workspace_id; R1/Plan B makes every entry team-owned).
+	// Same user_id → personal-team mapping as posts.
+	if _, err := s.db.Exec(`
+		UPDATE markdown_entries AS m
+		SET workspace_id = (
+			SELECT t.id FROM teams t
+			WHERE t.owner_user_id = m.user_id AND t.kind = 'personal'
+			LIMIT 1
+		)
+		WHERE m.workspace_id IS NULL
 	`); err != nil {
 		return err
 	}
