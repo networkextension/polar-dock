@@ -9,6 +9,7 @@ package dock
 // (R2-2 will hook default AI team-bot provisioning onto approve.)
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -72,6 +73,13 @@ func (s *Server) reviewTeam(c *gin.Context, newStatus, action string) {
 			"name":   team.Name,
 		},
 	})
-	// R2-2 will provision the default AI team-bot here on approve.
+	// R2-2: on approval, provision the team's default AI team bot
+	// (minimum config). Idempotent; non-fatal — a provisioning hiccup
+	// must not fail the approval, and the startup backfill retries.
+	if newStatus == TeamStatusActive {
+		if _, err := s.provisionTeamBot(id); err != nil {
+			log.Printf("teams: team-bot provisioning for approved team %s failed: %v", id, err)
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": newStatus})
 }
