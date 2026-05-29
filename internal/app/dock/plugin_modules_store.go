@@ -39,6 +39,8 @@ type PluginModule struct {
 	Endpoint         string     `json:"endpoint,omitempty"`
 	LastHeartbeatAt  *time.Time `json:"last_heartbeat,omitempty"`
 	Version          string     `json:"version,omitempty"`
+	Published        bool       `json:"published"`            // R3 上架 flag
+	AcceptsApps      bool       `json:"accepts_applications"` // R3 per-module request toggle
 	Config           []byte     `json:"-"`               // raw jsonb bytes; handlers decide rendering
 	CreatedAt        time.Time  `json:"created_at"`
 	DerivedPlaintext string     `json:"plaintext,omitempty"` // set only on create / rotate
@@ -81,7 +83,7 @@ func hashPluginToken(plaintext string) string {
 func (s *Server) listPluginModules() ([]PluginModule, error) {
 	rows, err := s.db.Query(`
 		SELECT name, display_name, enabled, endpoint, last_heartbeat,
-		       version, config, created_at
+		       version, published, accepts_applications, config, created_at
 		  FROM plugin_modules
 		 ORDER BY created_at DESC`)
 	if err != nil {
@@ -93,7 +95,7 @@ func (s *Server) listPluginModules() ([]PluginModule, error) {
 		var m PluginModule
 		var lastHB sql.NullTime
 		if err := rows.Scan(&m.Name, &m.DisplayName, &m.Enabled, &m.Endpoint,
-			&lastHB, &m.Version, &m.Config, &m.CreatedAt); err != nil {
+			&lastHB, &m.Version, &m.Published, &m.AcceptsApps, &m.Config, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		if lastHB.Valid {
