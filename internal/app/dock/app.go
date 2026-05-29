@@ -1100,6 +1100,7 @@ func (s *Server) registerRoutes() {
 		// member can view the team's own request history.
 		api.POST("/teams/:id/plugin-requests", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamPluginRequestCreate)
 		api.GET("/teams/:id/plugin-requests", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleMember), s.handleTeamPluginRequestList)
+		api.GET("/teams/:id/available-modules", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleMember), s.handleTeamAvailableModules)
 		api.GET("/invitations/:token", s.handleInvitationPublicPreview)
 		api.POST("/invitations/:token/accept", s.AuthMiddleware(), s.handleInvitationAccept)
 		api.POST("/invitations/:token/decline", s.handleInvitationDecline)

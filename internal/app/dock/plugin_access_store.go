@@ -205,6 +205,52 @@ func (s *Server) pluginModulePublishState(name string) (published, acceptsApps, 
 	return published, acceptsApps, true, nil
 }
 
+// AvailableModule is one row of the tenant marketplace discovery view:
+// a published module plus this workspace's relationship to it.
+type AvailableModule struct {
+	Name               string `json:"name"`
+	DisplayName        string `json:"display_name"`
+	AcceptsApps        bool   `json:"accepts_applications"`
+	Enabled            bool   `json:"enabled"`         // workspace_plugin_access granted+enabled
+	PendingRequest     bool   `json:"pending_request"` // an open request already exists
+}
+
+// listAvailableModulesForWorkspace returns every published module with
+// this workspace's enablement + pending-request state, for the tenant
+// "Modules" page. Read-only; gated to team members by the route.
+func (s *Server) listAvailableModulesForWorkspace(workspaceID string) ([]AvailableModule, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, errors.New("workspace_id required")
+	}
+	rows, err := s.db.Query(`
+		SELECT m.name, m.display_name, m.accepts_applications,
+		       COALESCE(a.enabled, FALSE) AS enabled,
+		       EXISTS (
+		           SELECT 1 FROM plugin_access_requests r
+		            WHERE r.workspace_id = $1 AND r.plugin_name = m.name
+		              AND r.status = 'pending'
+		       ) AS pending
+		  FROM plugin_modules m
+		  LEFT JOIN workspace_plugin_access a
+		         ON a.plugin_name = m.name AND a.workspace_id = $1
+		 WHERE m.published = TRUE
+		 ORDER BY m.display_name, m.name`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AvailableModule{}
+	for rows.Next() {
+		var m AvailableModule
+		if err := rows.Scan(&m.Name, &m.DisplayName, &m.AcceptsApps, &m.Enabled, &m.PendingRequest); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // nullTimePtr scans a nullable TIMESTAMPTZ into a **time.Time, leaving it
 // nil on SQL NULL. Avoids threading sql.NullTime through every Scan.
 type nullTimePtr struct{ dst **time.Time }
