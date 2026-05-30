@@ -51,12 +51,24 @@ API="https://api.name.com/v4/domains/${DOMAIN}/records"
 
 SUBDOMAINS=(project expense latch hosts iosdist library video packtunnel wg assets)
 
+# is_private_ip: true for RFC1918 / loopback addresses (10/8, 172.16/12,
+# 192.168/16, 127/8). Used to guard the whole-domain wildcard.
+is_private_ip() {
+    case "$1" in
+        10.*|192.168.*|127.*) return 0 ;;
+        172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 MODE="bulk"
 DRY_RUN=0
+FORCE=0
 for arg in "$@"; do
     case "$arg" in
         --wildcard) MODE="wildcard" ;;
         --dry-run)  DRY_RUN=1 ;;
+        --force)    FORCE=1 ;;
         --list)     MODE="list" ;;
         -h|--help)
             sed -n '2,30p' "$0"
@@ -190,6 +202,19 @@ for r in d.get('records', []):
         # dev.4950.store, routed by Host on the target box).
         whost="*"
         [ -n "$ENV" ] && whost="*.${ENV}"
+        # Guard rail: the bare "*" wildcard is the WHOLE-DOMAIN catch-all.
+        # Pointing it at a private/RFC1918 IP (e.g. a 10.88.0.x WG address)
+        # silently breaks every unspecified public subdomain. Refuse unless
+        # --force. (A *.<ENV> wildcard is scoped + exempt — that's the
+        # intended dev/stage use.) This exact mistake repointed
+        # *.4950.store from the public IP to 10.88.0.5; never again.
+        if [ "$whost" = "*" ] && is_private_ip "$TARGET_IP" && [ "$FORCE" -ne 1 ]; then
+            echo "REFUSING: bare '*' (whole-domain) wildcard -> private IP ${TARGET_IP}." >&2
+            echo "  This would break every unspecified public subdomain of ${DOMAIN}." >&2
+            echo "  Did you mean a scoped wildcard? Set ENV=<tier> for *.\${ENV}.${DOMAIN}." >&2
+            echo "  To override intentionally, re-run with --force." >&2
+            exit 65
+        fi
         ensure_record "$whost" "$TARGET_IP"
         ;;
     bulk)
