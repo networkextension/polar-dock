@@ -25,17 +25,31 @@
 #   NAMECOM_USER=... NAMECOM_TOKEN=... ./name-com-records.sh --list
 #       Read-only: dump existing A/CNAME records for the domain.
 #
+# --dry-run does NOT require creds or hit the API — it just prints the
+# records it would create.
+#
 # Override the domain / IP via env:
 #   DOMAIN=4950.store TARGET_IP=58.37.118.182 ./name-com-records.sh
+#
+# ENV — environment prefix for a non-prod tier. When set, records are
+# created under <sub>.<ENV>.<DOMAIN> and the core `dock` host is added.
+# Empty (default) = the flat <sub>.<DOMAIN> layout (zen / prod).
+#
+#   # dev environment, all hosts -> the dev box WG IP:
+#   ENV=dev TARGET_IP=10.88.0.5 NAMECOM_USER=... NAMECOM_TOKEN=... \
+#       ./name-com-records.sh --wildcard      # one *.dev record (recommended)
+#   ENV=dev TARGET_IP=10.88.0.5 ... ./name-com-records.sh   # explicit per-host
+#   ENV=dev TARGET_IP=10.88.0.5 ./name-com-records.sh --dry-run   # preview, no creds
 
 set -euo pipefail
 
 DOMAIN="${DOMAIN:-4950.store}"
 TARGET_IP="${TARGET_IP:-58.37.118.182}"
 TTL="${TTL:-300}"
+ENV="${ENV:-}"
 API="https://api.name.com/v4/domains/${DOMAIN}/records"
 
-SUBDOMAINS=(project expense latch hosts iosdist library video packtunnel wg)
+SUBDOMAINS=(project expense latch hosts iosdist library video packtunnel wg assets)
 
 MODE="bulk"
 DRY_RUN=0
@@ -55,8 +69,12 @@ for arg in "$@"; do
     esac
 done
 
-: "${NAMECOM_USER:?NAMECOM_USER not set — your name.com account login}"
-: "${NAMECOM_TOKEN:?NAMECOM_TOKEN not set — see https://www.name.com/account/settings/api}"
+# --dry-run is creds-free and never calls the API, so the guard only
+# applies when we're actually going to mutate / read records.
+if [ "$DRY_RUN" -eq 0 ]; then
+    : "${NAMECOM_USER:?NAMECOM_USER not set — your name.com account login}"
+    : "${NAMECOM_TOKEN:?NAMECOM_TOKEN not set — see https://www.name.com/account/settings/api}"
+fi
 
 curl_api() {
     # Quiet, fail-on-http-error, basic auth via env (-u "$U:$T" stays out
@@ -143,8 +161,14 @@ ensure_record() {
 }
 
 # Single fetch of the record set, reused across ensure_record calls so we
-# don't burn the API budget with N read calls.
-ALL_RECORDS=$(list_records)
+# don't burn the API budget with N read calls. Skipped on --dry-run
+# (which is creds-free): an empty set makes ensure_record preview every
+# host as a "create".
+if [ "$DRY_RUN" -eq 1 ]; then
+    ALL_RECORDS='{"records":[]}'
+else
+    ALL_RECORDS=$(list_records)
+fi
 
 case "$MODE" in
     list)
@@ -162,11 +186,21 @@ for r in d.get('records', []):
         )
         ;;
     wildcard)
-        ensure_record "*" "$TARGET_IP"
+        # ENV=dev -> "*.dev" (one record covers dock + every module under
+        # dev.4950.store, routed by Host on the target box).
+        whost="*"
+        [ -n "$ENV" ] && whost="*.${ENV}"
+        ensure_record "$whost" "$TARGET_IP"
         ;;
     bulk)
-        for sub in "${SUBDOMAINS[@]}"; do
-            ensure_record "$sub" "$TARGET_IP"
+        # In an ENV tier, include the core `dock` host and suffix every
+        # subdomain with .<ENV> (e.g. dock.dev, wg.dev, assets.dev ...).
+        hosts=("${SUBDOMAINS[@]}")
+        [ -n "$ENV" ] && hosts=(dock "${SUBDOMAINS[@]}")
+        for sub in "${hosts[@]}"; do
+            host="$sub"
+            [ -n "$ENV" ] && host="${sub}.${ENV}"
+            ensure_record "$host" "$TARGET_IP"
         done
         ;;
 esac
