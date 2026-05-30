@@ -5571,8 +5571,13 @@ func (s *Server) createMarkdownEntry(userID, title, filePath string, isPublic bo
 }
 
 // createMarkdownEntryReturningID inserts a new markdown row with the
-// full three-tier visibility model. Pass workspaceID as nil for
-// private/public entries; only "workspace" visibility uses the FK.
+// full three-tier visibility model. Per R1 (Plan B) every markdown
+// entry is team-owned, so workspace_id is NOT NULL for ALL tiers: the
+// caller (saveMarkdownDocument) resolves the author's home team for
+// private/public and the target workspace for the "workspace" tier.
+// The workspace-tier read filter stays clean because it keys on
+// visibility too (`WHERE visibility='workspace' AND workspace_id=$1`),
+// so a home-team workspace_id on a private/public row is never matched.
 // is_public stays as a mirror of (visibility == "public") so legacy
 // readers still work.
 func (s *Server) createMarkdownEntryReturningID(userID, title, filePath, summary, coverURL, editorMode, visibility string, workspaceID *string, uploadedAt time.Time) (int64, error) {
@@ -5580,12 +5585,6 @@ func (s *Server) createMarkdownEntryReturningID(userID, title, filePath, summary
 		visibility = MarkdownVisibilityPrivate
 	}
 	isPublic := visibility == MarkdownVisibilityPublic
-	if visibility != MarkdownVisibilityWorkspace {
-		// Sanity: never store a workspace_id on a private/public
-		// entry — keeps querying clean (workspace tier filter is
-		// `WHERE visibility='workspace' AND workspace_id=$1`).
-		workspaceID = nil
-	}
 	var id int64
 	err := s.db.QueryRow(
 		`INSERT INTO markdown_entries (user_id, title, file_path, is_public, visibility, workspace_id, summary, cover_url, editor_mode, uploaded_at)
