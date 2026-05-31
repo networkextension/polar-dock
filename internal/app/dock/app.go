@@ -125,8 +125,8 @@ type Server struct {
 	// once at server boot via exec.LookPath. When empty, the sign
 	// endpoint returns a 503 with a helpful "install zsign" message
 	// instead of crashing the worker.
-	iosdistZsignPath  string
-	iosdistSignQueue  chan int64
+	iosdistZsignPath string
+	iosdistSignQueue chan int64
 
 	// Observability. metricsRegistry is always non-nil (Phase 1 metrics
 	// register unconditionally so the middleware can record); the
@@ -848,6 +848,10 @@ func (s *Server) registerRoutes() {
 		api.PATCH("/admin/plugin-modules/:name/disable", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleDisable)
 		api.POST("/admin/plugin-modules/:name/rotate-key", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleRotateKey)
 		api.DELETE("/admin/plugin-modules/:name", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleDelete)
+		// Track 3 (module OTA): publish a release manifest + pin the
+		// target version a module rolls to on its next heartbeat.
+		api.POST("/admin/plugin-modules/:name/releases", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModulePublishRelease)
+		api.POST("/admin/plugin-modules/:name/update", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleSetUpdate)
 		// R3 marketplace: publish flags + the tenant request approval queue.
 		api.PATCH("/admin/plugin-modules/:name/publish", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleSetPublished)
 		api.PATCH("/admin/plugin-modules/:name/accepts-applications", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminPluginModuleSetAcceptsApplications)
@@ -1065,6 +1069,11 @@ func (s *Server) registerRoutes() {
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
 		api.GET("/agent/whoami", s.handleAgentWhoAmI)
 		api.GET("/agent/binary", s.handleAgentBinary)
+		// Track 3 (module OTA): serve a published module binary for
+		// self-update. No auth, same posture as /agent/binary — the
+		// binary isn't secret and the SDK fetches it off a heartbeat
+		// directive dock itself issued.
+		api.GET("/plugin/:name/binary", s.handlePluginBinary)
 		// P1a: dock-initiated bundle install/uninstall. Admin issues
 		// the REST call; dock translates into a WS skill.install /
 		// skill.uninstall frame to the agent attached to the host.

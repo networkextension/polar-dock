@@ -148,12 +148,12 @@ var builtinBotPresets = []builtinBotPreset{
 
 // Visibility constants for markdown_entries.visibility:
 //
-//   private    — owner-only access. Default for fresh entries.
-//   workspace  — accessible to any member of workspace_id. Acts like
-//                team-shared knowledge: visible across the team but
-//                not on the public web.
-//   public     — anyone (including unauthenticated visitors) can read
-//                via /api/public/markdown/:id and the browse list.
+//	private    — owner-only access. Default for fresh entries.
+//	workspace  — accessible to any member of workspace_id. Acts like
+//	             team-shared knowledge: visible across the team but
+//	             not on the public web.
+//	public     — anyone (including unauthenticated visitors) can read
+//	             via /api/public/markdown/:id and the browse list.
 const (
 	MarkdownVisibilityPrivate   = "private"
 	MarkdownVisibilityWorkspace = "workspace"
@@ -161,16 +161,16 @@ const (
 )
 
 type MarkdownEntry struct {
-	ID          int64     `json:"id"`
-	UserID      string    `json:"user_id"`
-	Username    string    `json:"username"`
-	UserIcon    string    `json:"user_icon"`
-	WorkspaceID *string   `json:"workspace_id,omitempty"`
-	Visibility  string    `json:"visibility"`
-	Title       string    `json:"title"`
-	Summary     string    `json:"summary"`
-	CoverURL    string    `json:"cover_url"`
-	FilePath    string    `json:"file_path"`
+	ID          int64   `json:"id"`
+	UserID      string  `json:"user_id"`
+	Username    string  `json:"username"`
+	UserIcon    string  `json:"user_icon"`
+	WorkspaceID *string `json:"workspace_id,omitempty"`
+	Visibility  string  `json:"visibility"`
+	Title       string  `json:"title"`
+	Summary     string  `json:"summary"`
+	CoverURL    string  `json:"cover_url"`
+	FilePath    string  `json:"file_path"`
 	// IsPublic kept on the type for legacy clients reading
 	// `entry.is_public`; mirror of `Visibility == "public"`.
 	IsPublic   bool      `json:"is_public"`
@@ -283,8 +283,8 @@ type LLMConfig struct {
 
 // LLMConfigKind discriminator values for the provider_kind column.
 const (
-	LLMConfigKindText           = "text"
-	LLMConfigKindVideoSeedance  = "video.seedance"
+	LLMConfigKindText          = "text"
+	LLMConfigKindVideoSeedance = "video.seedance"
 )
 
 // VideoProject is the top-level container for a multi-shot video production
@@ -360,9 +360,9 @@ type VideoAsset struct {
 }
 
 const (
-	VideoAssetKindBGM           = "audio_bgm"
-	VideoAssetKindVoiceover     = "voiceover"
-	VideoAssetKindCharacterRef  = "character_reference"
+	VideoAssetKindBGM          = "audio_bgm"
+	VideoAssetKindVoiceover    = "voiceover"
+	VideoAssetKindCharacterRef = "character_reference"
 )
 
 type PackTunnelProfile struct {
@@ -370,14 +370,14 @@ type PackTunnelProfile struct {
 	UserID      string                    `json:"user_id"`
 	WorkspaceID string                    `json:"workspace_id"`
 	Name        string                    `json:"name"`
-	Type      string                    `json:"type"`
-	Server    PackTunnelServerEndpoint  `json:"server"`
-	Auth      PackTunnelAuth            `json:"auth"`
-	Options   PackTunnelOptions         `json:"options"`
-	Transport *PackTunnelTransport      `json:"transport,omitempty"`
-	Metadata  PackTunnelProfileMetadata `json:"metadata"`
-	CreatedAt time.Time                 `json:"created_at"`
-	UpdatedAt time.Time                 `json:"updated_at"`
+	Type        string                    `json:"type"`
+	Server      PackTunnelServerEndpoint  `json:"server"`
+	Auth        PackTunnelAuth            `json:"auth"`
+	Options     PackTunnelOptions         `json:"options"`
+	Transport   *PackTunnelTransport      `json:"transport,omitempty"`
+	Metadata    PackTunnelProfileMetadata `json:"metadata"`
+	CreatedAt   time.Time                 `json:"created_at"`
+	UpdatedAt   time.Time                 `json:"updated_at"`
 }
 
 type PackTunnelServerEndpoint struct {
@@ -456,7 +456,7 @@ type BotUser struct {
 	// when a polar-agent docker container booted. Operator can't
 	// edit/delete it from the UI; revoking the agent token removes
 	// the row via FK CASCADE.
-	IsAutoRegistered bool      `json:"is_auto_registered"`
+	IsAutoRegistered bool `json:"is_auto_registered"`
 	// HostSkillID (P1d): non-nil means dock routes this bot through
 	// the host module's skill.start dispatch instead of the legacy
 	// passthrough/tool-loop path. Pointer so JSON can serialize null
@@ -3614,6 +3614,36 @@ CREATE INDEX IF NOT EXISTS idx_plugin_modules_enabled
 -- Empty array / NULL = plugin has no UI surface (e.g. packtunnel).
 ALTER TABLE plugin_modules
     ADD COLUMN IF NOT EXISTS ui_routes JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- Track 3 (module OTA self-update). target_version pins which release a
+-- module should roll to; set by the admin UI's 更新 button. Empty = follow
+-- the latest published release in the channel (the default behavior).
+ALTER TABLE plugin_modules
+    ADD COLUMN IF NOT EXISTS target_version TEXT NOT NULL DEFAULT '';
+
+-- plugin_releases — published binaries per module/platform. Dock serves
+-- these from POLAR_PLUGIN_DIST_DIR/<name>/<dist_rel_path> (see
+-- plugin_binary_handler.go); the binary file is rsync'd in out-of-band and
+-- this row is its manifest (sha256 + version + channel). The heartbeat
+-- handler resolves a module's running version against the newest row here
+-- for its os/arch and hands back an update directive when they differ.
+-- No FK to plugin_modules: a release can be published for a name before its
+-- registry row exists, and we don't want a fresh-DB ordering hazard.
+CREATE TABLE IF NOT EXISTS plugin_releases (
+    name          TEXT NOT NULL,
+    version       TEXT NOT NULL,
+    os            TEXT NOT NULL,
+    arch          TEXT NOT NULL,
+    sha256        TEXT NOT NULL,
+    dist_rel_path TEXT NOT NULL,
+    channel       TEXT NOT NULL DEFAULT 'stable',
+    notes         TEXT NOT NULL DEFAULT '',
+    published_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (name, version, os, arch)
+);
+-- Newest-release lookup per (name, os, arch, channel) drives the directive.
+CREATE INDEX IF NOT EXISTS idx_plugin_releases_latest
+    ON plugin_releases(name, os, arch, channel, published_at DESC);
 
 -- R3 marketplace publishing metadata on plugin_modules.
 --   published:             上架 flag — module shows in the marketplace
