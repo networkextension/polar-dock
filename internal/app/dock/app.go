@@ -771,6 +771,9 @@ func (s *Server) registerRoutes() {
 		// full gin route table (method+path+handler) so the API surface
 		// is queryable instead of grepped. ?prefix= filters by path.
 		api.GET("/_routes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAPIRoutes)
+		// Enriched catalog: routes + body/query/param contracts (built by
+		// cmd/api-catalog-gen, embedded). ?prefix= filters by path.
+		api.GET("/_catalog", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAPICatalog)
 
 		api.POST("/register", s.handleRegister)
 		api.POST("/login", s.handleLogin)
