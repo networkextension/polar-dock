@@ -901,9 +901,6 @@ func (s *Server) registerRoutes() {
 		// GETs are workspace-member; kick is site-admin (closes the
 		// in-memory agent_hub conn so a reconnect-as-new can re-register
 		// cleanly without double-registration).
-		api.GET("/agents", s.AuthMiddleware(), s.handleAgentList)
-		api.GET("/agents/:id", s.AuthMiddleware(), s.handleAgentDetail)
-		api.GET("/hosts/:id/agents", s.AuthMiddleware(), s.handleAgentsByHost)
 		api.POST("/admin/agents/:id/kick", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminAgentKick)
 
 		// P2a tenant-side: a team member can see every admin_audit_log
