@@ -767,6 +767,11 @@ func (s *Server) registerRoutes() {
 
 	api := s.router.Group("/api")
 	{
+		// Self-describing route catalog — `GET /api/_routes` dumps the
+		// full gin route table (method+path+handler) so the API surface
+		// is queryable instead of grepped. ?prefix= filters by path.
+		api.GET("/_routes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAPIRoutes)
+
 		api.POST("/register", s.handleRegister)
 		api.POST("/login", s.handleLogin)
 		api.POST("/logout", s.handleLogout)
