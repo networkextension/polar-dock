@@ -1,0 +1,4711 @@
+{
+  "count": 272,
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/_catalog",
+      "handler": "handleAPICatalog",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "prefix",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/_routes",
+      "handler": "handleAPIRoutes",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "prefix",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/agents/:id/kick",
+      "handler": "handleAdminAgentKick",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/asset-providers",
+      "handler": "handleAssetProviderAdminList",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/asset-providers",
+      "handler": "handleAssetProviderAdminCreate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "slug",
+          "type": "string"
+        },
+        {
+          "name": "base_url",
+          "type": "string"
+        },
+        {
+          "name": "region",
+          "type": "string"
+        },
+        {
+          "name": "capacity_gb",
+          "type": "int"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/asset-providers/:id",
+      "handler": "handleAssetProviderAdminDelete",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/asset-quotas",
+      "handler": "handleAssetQuotaAdminList",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/asset-quotas/:ws",
+      "handler": "handleAssetQuotaAdminSet",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "quota_bytes",
+          "type": "int64"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "ws",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/assets/:id/replicate/:provider_id",
+      "handler": "handleAssetReplicateToProvider",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "provider_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/audit-log",
+      "handler": "handleAdminAuditLog",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/llm-config-applications",
+      "handler": "handleAdminLLMConfigApplicationsList",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/llm-config-team-quotas",
+      "handler": "handleAdminLLMConfigTeamQuotaList",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/llm-config-team-quotas",
+      "handler": "handleAdminLLMConfigTeamQuotaUpsert",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        },
+        {
+          "name": "workspace_id",
+          "type": "string"
+        },
+        {
+          "name": "monthly_budget_usd",
+          "type": "float64"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/llm-config-team-quotas/recharge",
+      "handler": "handleAdminLLMConfigTeamRecharge",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        },
+        {
+          "name": "workspace_id",
+          "type": "string"
+        },
+        {
+          "name": "amount_usd",
+          "type": "float64"
+        },
+        {
+          "name": "note",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/llm-config-team-quotas/recharges",
+      "handler": "handleAdminLLMConfigTeamRechargeList",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        },
+        {
+          "name": "llm_config_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/llm-configs/:id/pricing",
+      "handler": "handleAdminLLMConfigPricingUpdate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "price_per_million_input_usd",
+          "type": "*float64"
+        },
+        {
+          "name": "price_per_million_output_usd",
+          "type": "*float64"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/logs",
+      "handler": "handleAdminLogs",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/plugin-access-requests",
+      "handler": "handleAdminPluginAccessRequestList",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/plugin-access-requests/:id/approve",
+      "handler": "handleAdminPluginAccessRequestApprove",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/plugin-access-requests/:id/deny",
+      "handler": "handleAdminPluginAccessRequestDeny",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/plugin-modules",
+      "handler": "handleAdminPluginModuleList",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/plugin-modules",
+      "handler": "handleAdminPluginModuleCreate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "display_name",
+          "type": "string"
+        },
+        {
+          "name": "endpoint",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/plugin-modules/:name",
+      "handler": "handleAdminPluginModuleDelete",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/plugin-modules/:name/accepts-applications",
+      "handler": "handleAdminPluginModuleSetAcceptsApplications",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "accepts",
+          "type": "bool"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/plugin-modules/:name/disable",
+      "handler": "handleAdminPluginModuleDisable",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/plugin-modules/:name/enable",
+      "handler": "handleAdminPluginModuleEnable",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/plugin-modules/:name/publish",
+      "handler": "handleAdminPluginModuleSetPublished",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "published",
+          "type": "bool"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/plugin-modules/:name/rotate-key",
+      "handler": "handleAdminPluginModuleRotateKey",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/teams/:id/approve",
+      "handler": "handleAdminTeamApprove",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/teams/:id/reject",
+      "handler": "handleAdminTeamReject",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/teams/pending",
+      "handler": "handleAdminTeamPendingList",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users",
+      "handler": "handleAdminUserList",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        },
+        {
+          "name": "q",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users/:id/login-history",
+      "handler": "handleAdminUserLoginHistory",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/users/:id/password",
+      "handler": "handleAdminUserPasswordUpdate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "new_password",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/video-burn",
+      "handler": "handleAdminVideoBurn",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/workspace-plugin-access",
+      "handler": "handleAdminWorkspacePluginAccessList",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/workspace-plugin-access",
+      "handler": "handleAdminWorkspacePluginAccessUpsert",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "workspace_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "plugin",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "enabled",
+          "type": "bool"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent/auto-register",
+      "handler": "handleAgentAutoRegister",
+      "auth": "user",
+      "body": [
+        {
+          "name": "coders",
+          "type": "[]string"
+        },
+        {
+          "name": "research",
+          "type": "bool"
+        },
+        {
+          "name": "agent_name",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/binary",
+      "handler": "handleAgentBinary",
+      "body": [],
+      "query": [
+        {
+          "name": "os",
+          "type": "string"
+        },
+        {
+          "name": "arch",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/bots/:bot_id/config",
+      "handler": "handleAgentBotConfig",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "bot_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent/bots/:bot_id/dispatch",
+      "handler": "handleAgentDispatch",
+      "auth": "user",
+      "body": [
+        {
+          "name": "tool",
+          "type": "string"
+        },
+        {
+          "name": "args",
+          "type": "map[string]any"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "bot_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/bots/:bot_id/status",
+      "handler": "handleAgentStatus",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "bot_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent/library/devices/upsert",
+      "handler": "handleAgentRevDeviceUpsert",
+      "auth": "user",
+      "body": [
+        {
+          "name": "id",
+          "type": "int64"
+        },
+        {
+          "name": "ecid",
+          "type": "*int64"
+        },
+        {
+          "name": "cpid",
+          "type": "int"
+        },
+        {
+          "name": "bdid",
+          "type": "*int"
+        },
+        {
+          "name": "cprv",
+          "type": "*int"
+        },
+        {
+          "name": "chip_name",
+          "type": "string"
+        },
+        {
+          "name": "board_name",
+          "type": "string"
+        },
+        {
+          "name": "os_running",
+          "type": "string"
+        },
+        {
+          "name": "os_kernel_version",
+          "type": "string"
+        },
+        {
+          "name": "notes",
+          "type": "string"
+        },
+        {
+          "name": "added_at",
+          "type": "time.Time"
+        },
+        {
+          "name": "last_seen_at",
+          "type": "*time.Time"
+        },
+        {
+          "name": "metadata_json",
+          "type": "json.RawMessage"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/tokens",
+      "handler": "handleAgentTokenList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent/tokens",
+      "handler": "handleAgentTokenCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "coders",
+          "type": "map[string]AgentCoderEntry"
+        },
+        {
+          "name": "api_keys",
+          "type": "map[string]string"
+        },
+        {
+          "name": "target_os",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/agent/tokens/:id",
+      "handler": "handleAgentTokenRevoke",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent/whoami",
+      "handler": "handleAgentWhoAmI",
+      "body": [],
+      "query": [
+        {
+          "name": "token",
+          "type": "string"
+        }
+      ],
+      "headers": [
+        {
+          "name": "Authorization",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents",
+      "handler": "handleAgentList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/:id",
+      "handler": "handleAgentDetail",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/asset-quota",
+      "handler": "handleAssetQuotaSelf",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets",
+      "handler": "handleAssetList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "name_prefix",
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/assets",
+      "handler": "handleAssetUpload",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/assets/:id",
+      "handler": "handleAssetDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets/:id",
+      "handler": "handleAssetGet",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets/:id/blob",
+      "handler": "handleAssetBlob",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/assets/:id/share",
+      "handler": "handleAssetShareCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "expires_at",
+          "type": "*time.Time"
+        },
+        {
+          "name": "max_downloads",
+          "type": "*int"
+        },
+        {
+          "name": "require_login",
+          "type": "bool"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets/by-name/:kind/*name",
+      "handler": "handleAssetGetByName",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "version",
+          "type": "string"
+        },
+        {
+          "name": "scope",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets/folders",
+      "handler": "handleAssetFolders",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "prefix",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/attachments",
+      "handler": "handleAttachmentUpload",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/attachments/:id",
+      "handler": "handleAttachmentDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/attachments/:id",
+      "handler": "handleAttachmentGet",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/attachments/:id/download",
+      "handler": "handleAttachmentDownload",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/bots",
+      "handler": "handleBotUserList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/bots",
+      "handler": "handleBotUserCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "system_prompt",
+          "type": "string"
+        },
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        },
+        {
+          "name": "bot_kind",
+          "type": "string"
+        },
+        {
+          "name": "preferred_tool",
+          "type": "string"
+        },
+        {
+          "name": "model_override",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/bots/:id",
+      "handler": "handleBotUserDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/bots/:id",
+      "handler": "handleBotUserUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "system_prompt",
+          "type": "string"
+        },
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        },
+        {
+          "name": "bot_kind",
+          "type": "string"
+        },
+        {
+          "name": "preferred_tool",
+          "type": "string"
+        },
+        {
+          "name": "model_override",
+          "type": "string"
+        },
+        {
+          "name": "host_skill_id",
+          "type": "*int64"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/chats",
+      "handler": "handleChatList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/chats/:id/llm-threads",
+      "handler": "handleChatLLMThreads",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "active_thread_id",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/chats/:id/llm-threads",
+      "handler": "handleChatLLMThreadCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "title",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/chats/:id/llm-threads/:threadId",
+      "handler": "handleChatLLMThreadDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "threadId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/chats/:id/llm-threads/:threadId",
+      "handler": "handleChatLLMThreadUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "threadId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/chats/:id/llm-threads/:threadId/config",
+      "handler": "handleChatLLMThreadConfigUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "llm_config_id",
+          "type": "int64",
+          "required": true
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "threadId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/chats/:id/messages",
+      "handler": "handleChatMessages",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "llm_thread_id",
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        },
+        {
+          "name": "since",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/chats/:id/messages",
+      "handler": "handleChatSend",
+      "auth": "user",
+      "body": [
+        {
+          "name": "content",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "llm_thread_id",
+          "type": "*int64"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/chats/:id/messages/:messageId",
+      "handler": "handleChatDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "messageId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/chats/:id/messages/:messageId",
+      "handler": "handleChatMessageDetail",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "messageId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/chats/:id/messages/:messageId/markdown",
+      "handler": "handleChatSharedMarkdown",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "messageId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/chats/:id/messages/:messageId/retry",
+      "handler": "handleChatRetry",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "messageId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/chats/:id/messages/attachment",
+      "handler": "handleChatSendAttachment",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/chats/:id/summary",
+      "handler": "handleChatThreadSummary",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/chats/:id/summary/refresh",
+      "handler": "handleChatThreadSummaryRefresh",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/chats/start",
+      "handler": "handleChatStart",
+      "auth": "user",
+      "body": [
+        {
+          "name": "user_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/layout",
+      "handler": "handleDashboardLayoutGet",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/dashboard/layout",
+      "handler": "handleDashboardLayoutUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "layout",
+          "type": "[]string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/devices/push-token",
+      "handler": "handleDevicePushTokenDelete",
+      "auth": "user",
+      "body": [
+        {
+          "name": "device_id",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/devices/push-token",
+      "handler": "handleDevicePushTokenUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "device_id",
+          "type": "string"
+        },
+        {
+          "name": "device_type",
+          "type": "string"
+        },
+        {
+          "name": "push_token",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/email-verification/send",
+      "handler": "handleEmailVerificationSend",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/email-verification/verify",
+      "handler": "handleEmailVerificationConfirm",
+      "body": [],
+      "query": [
+        {
+          "name": "token",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hosts/:host_id/skills/install",
+      "handler": "handleHostSkillInstall",
+      "auth": "user",
+      "body": [
+        {
+          "name": "catalog_id",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "host_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hosts/:host_id/skills/uninstall",
+      "handler": "handleHostSkillUninstall",
+      "auth": "user",
+      "body": [
+        {
+          "name": "publisher",
+          "type": "string"
+        },
+        {
+          "name": "skill_kind",
+          "type": "string"
+        },
+        {
+          "name": "version",
+          "type": "string"
+        },
+        {
+          "name": "force",
+          "type": "bool"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "host_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hosts/:id/agents",
+      "handler": "handleAgentsByHost",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/invitations/:token",
+      "handler": "handleInvitationPublicPreview",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "token",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/invitations/:token/accept",
+      "handler": "handleInvitationAccept",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "token",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/invitations/:token/decline",
+      "handler": "handleInvitationDecline",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "token",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/iosdist/agent/builds/:id/result",
+      "handler": "handleIOSAgentBuildResult",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/iosdist/agent/builds/:id/start",
+      "handler": "handleIOSAgentBuildStart",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/iosdist/agent/builds/init",
+      "handler": "handleIOSAgentBuildInit",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-config-applications",
+      "handler": "handleLLMConfigApplicationsListMine",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/llm-config-applications",
+      "handler": "handleLLMConfigApply",
+      "auth": "user",
+      "body": [
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        },
+        {
+          "name": "note",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-configs",
+      "handler": "handleLLMConfigList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/llm-configs",
+      "handler": "handleLLMConfigCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "base_url",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "api_key",
+          "type": "string"
+        },
+        {
+          "name": "system_prompt",
+          "type": "string"
+        },
+        {
+          "name": "shared",
+          "type": "bool"
+        },
+        {
+          "name": "is_system",
+          "type": "bool"
+        },
+        {
+          "name": "streaming",
+          "type": "*bool"
+        },
+        {
+          "name": "provider_kind",
+          "type": "string"
+        },
+        {
+          "name": "extras",
+          "type": "string"
+        },
+        {
+          "name": "proxy_url",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/llm-configs/:id",
+      "handler": "handleLLMConfigDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/llm-configs/:id",
+      "handler": "handleLLMConfigUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "base_url",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "api_key",
+          "type": "string"
+        },
+        {
+          "name": "system_prompt",
+          "type": "string"
+        },
+        {
+          "name": "shared",
+          "type": "bool"
+        },
+        {
+          "name": "is_system",
+          "type": "*bool"
+        },
+        {
+          "name": "streaming",
+          "type": "*bool"
+        },
+        {
+          "name": "update_api_key",
+          "type": "bool"
+        },
+        {
+          "name": "provider_kind",
+          "type": "string"
+        },
+        {
+          "name": "extras",
+          "type": "string"
+        },
+        {
+          "name": "proxy_url",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-configs/available",
+      "handler": "handleAvailableLLMConfigList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-configs/health",
+      "handler": "handleLLMConfigsHealth",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-configs/marketplace",
+      "handler": "handleSharedLLMConfigList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-configs/shared/:shareId",
+      "handler": "handleLLMConfigGetByShareID",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "shareId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/llm-configs/test",
+      "handler": "handleLLMConfigTest",
+      "auth": "user",
+      "body": [
+        {
+          "name": "base_url",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "api_key",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "system_prompt",
+          "type": "string"
+        },
+        {
+          "name": "proxy_url",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-proxy/dashboard-stats",
+      "handler": "handleLLMProxyDashboardStats",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-proxy/tokens",
+      "handler": "handleLLMProxyTokenList",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/llm-proxy/tokens",
+      "handler": "handleLLMProxyTokenCreate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "default_llm_config_id",
+          "type": "*int64"
+        },
+        {
+          "name": "rate_limit_rpm",
+          "type": "int"
+        },
+        {
+          "name": "monthly_quota_usd",
+          "type": "float64"
+        },
+        {
+          "name": "scopes",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/llm-proxy/tokens/:id",
+      "handler": "handleLLMProxyTokenRevoke",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-proxy/tokens/:id/calls",
+      "handler": "handleLLMProxyTokenCalls",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-proxy/tokens/:id/calls/aggregate",
+      "handler": "handleLLMProxyTokenCallsAggregate",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "days",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/llm-proxy/tokens/:id/routes",
+      "handler": "handleLLMProxyTokenRoutesList",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/llm-proxy/tokens/:id/routes",
+      "handler": "handleLLMProxyTokenRoutesReplace",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "routes",
+          "type": "[]struct {\n\tAliasModel\tstring\t`json:\"alias_model\"`\n\tLLMConfigID\tint64\t`json:\"llm_config_id\"`\n}"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/login",
+      "handler": "handleLogin",
+      "body": [
+        {
+          "name": "email",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": [],
+      "headers": [
+        {
+          "name": "X-Device-Type",
+          "type": "string"
+        },
+        {
+          "name": "X-Push-Token",
+          "type": "string"
+        },
+        {
+          "name": "X-Device-Id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/login-history",
+      "handler": "handleLoginHistory",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/logout",
+      "handler": "handleLogout",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/markdown",
+      "handler": "handleMarkdownList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/markdown",
+      "handler": "handleMarkdownSubmit",
+      "auth": "user",
+      "body": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "is_public",
+          "type": "bool"
+        },
+        {
+          "name": "visibility",
+          "type": "string"
+        },
+        {
+          "name": "workspace_id",
+          "type": "*string"
+        },
+        {
+          "name": "editor_mode",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/markdown/:id",
+      "handler": "handleMarkdownDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/markdown/:id",
+      "handler": "handleMarkdownRead",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/markdown/:id",
+      "handler": "handleMarkdownUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "is_public",
+          "type": "bool"
+        },
+        {
+          "name": "visibility",
+          "type": "string"
+        },
+        {
+          "name": "workspace_id",
+          "type": "*string"
+        },
+        {
+          "name": "editor_mode",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/markdown/:id/bookmark",
+      "handler": "handleMarkdownUnbookmark",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/markdown/:id/bookmark",
+      "handler": "handleMarkdownBookmark",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/markdown/:id/like",
+      "handler": "handleMarkdownUnlike",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/markdown/:id/like",
+      "handler": "handleMarkdownLike",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/markdown/:id/replies",
+      "handler": "handleMarkdownReplyList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/markdown/:id/replies",
+      "handler": "handleMarkdownReplyCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "content",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/markdown/assist-with-bot",
+      "handler": "handleMarkdownAssistWithBot",
+      "auth": "user",
+      "body": [
+        {
+          "name": "bot_id",
+          "type": "int64"
+        },
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        },
+        {
+          "name": "title",
+          "type": "string"
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "instruction",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/markdown/workspace",
+      "handler": "handleWorkspaceMarkdownList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/me",
+      "handler": "handleMe",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/llm-proxy/tokens",
+      "handler": "handleLLMProxyTokenList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/llm-proxy/tokens/:id/calls",
+      "handler": "handleLLMProxyTokenCalls",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/llm-proxy/tokens/:id/calls/aggregate",
+      "handler": "handleLLMProxyTokenCallsAggregate",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "days",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/passkey/login/begin",
+      "handler": "handlePasskeyLoginBegin",
+      "body": [
+        {
+          "name": "email",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/passkey/login/finish",
+      "handler": "handlePasskeyLoginFinish",
+      "body": [],
+      "query": [],
+      "headers": [
+        {
+          "name": "X-Passkey-Session",
+          "type": "string"
+        },
+        {
+          "name": "X-Device-Type",
+          "type": "string"
+        },
+        {
+          "name": "X-Push-Token",
+          "type": "string"
+        },
+        {
+          "name": "X-Device-Id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/passkey/register/begin",
+      "handler": "handlePasskeyRegisterBegin",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/passkey/register/finish",
+      "handler": "handlePasskeyRegisterFinish",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "headers": [
+        {
+          "name": "X-Passkey-Session",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/passkeys",
+      "handler": "handlePasskeyList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/passkeys/:credentialId",
+      "handler": "handlePasskeyDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "credentialId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugin-ui-routes",
+      "handler": "handlePluginUIRoutes",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/posts",
+      "handler": "handlePostList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        },
+        {
+          "name": "tag_id",
+          "type": "string"
+        },
+        {
+          "name": "post_type",
+          "type": "string"
+        },
+        {
+          "name": "scope",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/posts",
+      "handler": "handlePostCreate",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/posts/:id",
+      "handler": "handlePostDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/posts/:id",
+      "handler": "handlePostRead",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/posts/:id/bookmark",
+      "handler": "handlePostUnbookmark",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/posts/:id/bookmark",
+      "handler": "handlePostBookmark",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/posts/:id/like",
+      "handler": "handlePostUnlike",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/posts/:id/like",
+      "handler": "handlePostLike",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/posts/:id/replies",
+      "handler": "handleReplyList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/posts/:id/replies",
+      "handler": "handleReplyCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "content",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/posts/:id/replies/assist-with-bot",
+      "handler": "handleReplyAssistWithBot",
+      "auth": "user",
+      "body": [
+        {
+          "name": "bot_id",
+          "type": "int64"
+        },
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        },
+        {
+          "name": "content",
+          "type": "string"
+        },
+        {
+          "name": "instruction",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/posts/assist-with-bot",
+      "handler": "handlePostAssistWithBot",
+      "auth": "user",
+      "body": [
+        {
+          "name": "bot_id",
+          "type": "int64"
+        },
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        },
+        {
+          "name": "content",
+          "type": "string"
+        },
+        {
+          "name": "topic",
+          "type": "string"
+        },
+        {
+          "name": "instruction",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/:id/research/runs",
+      "handler": "handleResearchRunsList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/:id/tasks/:task_id/research/dispatch",
+      "handler": "handleResearchDispatch",
+      "auth": "user",
+      "body": [
+        {
+          "name": "bot_user_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "llm_config_id",
+          "type": "int64"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/:id/tasks/:task_id/retrospect",
+      "handler": "handleProjectTaskRetrospectGet",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/:id/tasks/:task_id/retrospect",
+      "handler": "handleProjectTaskRetrospectGenerate",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/:id/tasks/:task_id/sharpen",
+      "handler": "handleProjectTaskSharpen",
+      "auth": "user",
+      "body": [
+        {
+          "name": "instruction",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/research/runs/:run_id/result",
+      "handler": "handleResearchRunResult",
+      "auth": "user",
+      "body": [
+        {
+          "name": "ok",
+          "type": "bool"
+        },
+        {
+          "name": "iterations",
+          "type": "int"
+        },
+        {
+          "name": "files_written",
+          "type": "[]string"
+        },
+        {
+          "name": "commit_sha",
+          "type": "string"
+        },
+        {
+          "name": "summary",
+          "type": "string"
+        },
+        {
+          "name": "error_message",
+          "type": "string"
+        },
+        {
+          "name": "log_text",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "run_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/research/runs/:run_id/start",
+      "handler": "handleResearchRunStart",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "run_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/prompts",
+      "handler": "handlePromptTemplateList",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/prompts/:slug",
+      "handler": "handlePromptTemplateGet",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "slug",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/prompts/:slug",
+      "handler": "handlePromptTemplateUpdate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "content",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "slug",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/proxy/v1/chat/completions",
+      "handler": "handleLLMProxyChatCompletions",
+      "body": [
+        {
+          "name": "model",
+          "type": "string"
+        },
+        {
+          "name": "messages",
+          "type": "[]aiChatCompletionMessage",
+          "required": true
+        },
+        {
+          "name": "max_tokens",
+          "type": "int"
+        },
+        {
+          "name": "stream",
+          "type": "bool"
+        },
+        {
+          "name": "chat_template_kwargs",
+          "type": "map[string]any"
+        }
+      ],
+      "query": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/public/markdown/:id",
+      "handler": "handlePublicMarkdownRead",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/public/markdowns",
+      "handler": "handlePublicMarkdownList",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/register",
+      "handler": "handleRegister",
+      "body": [
+        {
+          "name": "username",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "invitation_code",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "headers": [
+        {
+          "name": "X-Device-Type",
+          "type": "string"
+        },
+        {
+          "name": "X-Push-Token",
+          "type": "string"
+        },
+        {
+          "name": "X-Device-Id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/rooms",
+      "handler": "handleChatRoomList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "include_archived",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/rooms",
+      "handler": "handleChatRoomCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "topic",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/rooms/:id",
+      "handler": "handleChatRoomDelete",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/rooms/:id",
+      "handler": "handleChatRoomGet",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/rooms/:id",
+      "handler": "handleChatRoomUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "name",
+          "type": "*string"
+        },
+        {
+          "name": "topic",
+          "type": "*string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/rooms/:id/agent-loops",
+      "handler": "handleChatRoomAgentLoopList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/rooms/:id/agent-loops/:botUserId",
+      "handler": "handleChatRoomAgentLoopDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "botUserId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/rooms/:id/agent-loops/:botUserId",
+      "handler": "handleChatRoomAgentLoopUpsert",
+      "auth": "user",
+      "body": [
+        {
+          "name": "enabled",
+          "type": "bool"
+        },
+        {
+          "name": "interval_secs",
+          "type": "int"
+        },
+        {
+          "name": "max_per_hour",
+          "type": "int"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "botUserId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/rooms/:id/members",
+      "handler": "handleChatRoomMemberList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/rooms/:id/members",
+      "handler": "handleChatRoomMemberAdd",
+      "auth": "user",
+      "body": [
+        {
+          "name": "user_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "role",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/rooms/:id/members/:userId",
+      "handler": "handleChatRoomMemberRemove",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "userId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/rooms/:id/messages",
+      "handler": "handleChatRoomMessageList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "before_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/rooms/:id/messages",
+      "handler": "handleChatRoomMessageSend",
+      "auth": "user",
+      "body": [
+        {
+          "name": "content",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "message_type",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/share-links",
+      "handler": "handleAssetShareList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/share-links/:id",
+      "handler": "handleAssetShareDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/site-settings",
+      "handler": "handleSiteSettingsGet",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/site-settings",
+      "handler": "handleSiteSettingsUpdate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "registration_requires_invite",
+          "type": "bool"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/site-settings/apple-push-cert",
+      "handler": "handleApplePushCertificateDelete",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "env",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/site-settings/apple-push-cert",
+      "handler": "handleApplePushCertificateUpload",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "env",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/site-settings/icon",
+      "handler": "handleSiteIconUpload",
+      "auth": "admin",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/site-settings/invite-codes",
+      "handler": "handleInviteCodeList",
+      "auth": "admin",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/site-settings/invite-codes",
+      "handler": "handleInviteCodeGenerate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "count",
+          "type": "int"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/skill-updates",
+      "handler": "handleSkillUpdatesList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/system-agent",
+      "handler": "handleSystemAgentStatus",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/system-agent/bio/refine",
+      "handler": "handleBioRefine",
+      "auth": "user",
+      "body": [
+        {
+          "name": "current_bio",
+          "type": "string"
+        },
+        {
+          "name": "hints",
+          "type": "[]string"
+        },
+        {
+          "name": "extra",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/info",
+      "handler": "handleSystemInfo",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/tags",
+      "handler": "handleTagList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tags",
+      "handler": "handleTagCreate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "slug",
+          "type": "string"
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "sort_order",
+          "type": "int"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tags/:id",
+      "handler": "handleTagDelete",
+      "auth": "admin",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/tags/:id",
+      "handler": "handleTagUpdate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "slug",
+          "type": "string"
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "sort_order",
+          "type": "int"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/:id/applications",
+      "handler": "handleTaskApplications",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tasks/:id/apply",
+      "handler": "handleTaskWithdraw",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:id/apply",
+      "handler": "handleTaskApply",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:id/close",
+      "handler": "handleTaskClose",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/:id/results",
+      "handler": "handleTaskResultsList",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:id/results",
+      "handler": "handleTaskResultCreate",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:id/select-candidate",
+      "handler": "handleTaskSelectCandidate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "applicant_user_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "message_template",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teams",
+      "handler": "handleTeamList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/teams",
+      "handler": "handleTeamCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "avatar_url",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/teams/:id",
+      "handler": "handleTeamDelete",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/teams/:id",
+      "handler": "handleTeamDetail",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/teams/:id",
+      "handler": "handleTeamUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "avatar_url",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/teams/:id/admin-actions",
+      "handler": "handleTeamAdminActions",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teams/:id/available-modules",
+      "handler": "handleTeamAvailableModules",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/teams/:id/invitations",
+      "handler": "handleTeamInvitationList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/teams/:id/invitations",
+      "handler": "handleTeamInvitationCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "email",
+          "type": "string"
+        },
+        {
+          "name": "role",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/teams/:id/invitations/:inv_id",
+      "handler": "handleTeamInvitationRevoke",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "inv_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teams/:id/logs",
+      "handler": "handleTeamLogs",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/teams/:id/members",
+      "handler": "handleTeamMembers",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/teams/:id/members/:user_id",
+      "handler": "handleTeamMemberRemove",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "user_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/teams/:id/members/:user_id",
+      "handler": "handleTeamMemberRoleUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "role",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "user_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teams/:id/plugin-requests",
+      "handler": "handleTeamPluginRequestList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/teams/:id/plugin-requests",
+      "handler": "handleTeamPluginRequestCreate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "plugin_name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "scope",
+          "type": "string"
+        },
+        {
+          "name": "api_route",
+          "type": "string"
+        },
+        {
+          "name": "reason",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/teams/:id/transfer",
+      "handler": "handleTeamTransfer",
+      "auth": "user",
+      "body": [
+        {
+          "name": "new_owner_user_id",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/token/refresh",
+      "handler": "handleTokenRefresh",
+      "body": [],
+      "query": [],
+      "headers": [
+        {
+          "name": "X-Device-Type",
+          "type": "string"
+        },
+        {
+          "name": "X-Push-Token",
+          "type": "string"
+        },
+        {
+          "name": "X-Device-Id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/user/icon",
+      "handler": "handleUserIconUpload",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/users",
+      "handler": "handleUserSearch",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "q",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users/:id/block",
+      "handler": "handleUserBlockDelete",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/:id/block",
+      "handler": "handleUserBlockCreate",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users/:id/follow",
+      "handler": "handleUserUnfollow",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/:id/follow",
+      "handler": "handleUserFollow",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/:id/followers",
+      "handler": "handleUserFollowers",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/:id/following",
+      "handler": "handleUserFollowing",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/:id/profile",
+      "handler": "handleUserProfileGet",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/:id/recommendations",
+      "handler": "handleProfileRecommendationUpsert",
+      "auth": "user",
+      "body": [
+        {
+          "name": "content",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/me/bookmarks",
+      "handler": "handleMyBookmarkList",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/me/following",
+      "handler": "handleMyFollowing",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/me/invitations",
+      "handler": "handleInvitationInbox",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/me/invitations/count",
+      "handler": "handleInvitationInboxCount",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/users/me/profile",
+      "handler": "handleMyProfileUpdate",
+      "auth": "user",
+      "body": [
+        {
+          "name": "bio",
+          "type": "string"
+        },
+        {
+          "name": "industry",
+          "type": "*string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/video-burn",
+      "handler": "handleVideoBurn",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/video-shot-calls",
+      "handler": "handleVideoShotCallsList",
+      "auth": "user",
+      "body": [],
+      "query": [
+        {
+          "name": "project_id",
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/agent-presence/:bot_id",
+      "handler": "handleInternalAgentPresence",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "bot_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/agent-tokens/issue",
+      "handler": "handleInternalAgentTokenIssue",
+      "body": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "user_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "token_hash",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "coder_config_json",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/agent/dispatch",
+      "handler": "handleInternalAgentDispatch",
+      "body": [
+        {
+          "name": "thread_id",
+          "type": "int64",
+          "required": true
+        },
+        {
+          "name": "llm_thread_id",
+          "type": "*int64"
+        },
+        {
+          "name": "user_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "responder_user_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "responder_name",
+          "type": "string"
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/agent/llm-call-record",
+      "handler": "handleInternalLLMCallRecord",
+      "body": [
+        {
+          "name": "workspace_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "llm_config_id",
+          "type": "int64",
+          "required": true
+        },
+        {
+          "name": "model_requested",
+          "type": "string"
+        },
+        {
+          "name": "model_resolved",
+          "type": "string"
+        },
+        {
+          "name": "prompt_tokens",
+          "type": "int"
+        },
+        {
+          "name": "completion_tokens",
+          "type": "int"
+        },
+        {
+          "name": "total_tokens",
+          "type": "int"
+        },
+        {
+          "name": "latency_ms",
+          "type": "int"
+        },
+        {
+          "name": "status_code",
+          "type": "int"
+        },
+        {
+          "name": "error_text",
+          "type": "string"
+        },
+        {
+          "name": "cost_override_usd",
+          "type": "*float64"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/agents/register",
+      "handler": "handleInternalAgentRegister",
+      "body": [
+        {
+          "name": "enroll_token",
+          "type": "string"
+        },
+        {
+          "name": "workspace_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "machine_uuid_raw",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "host_info",
+          "type": "map[string]any"
+        },
+        {
+          "name": "os",
+          "type": "string"
+        },
+        {
+          "name": "arch",
+          "type": "string"
+        },
+        {
+          "name": "bot_user_id",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/auth/verify",
+      "handler": "handleInternalAuthVerify",
+      "body": [],
+      "query": [
+        {
+          "name": "token",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/billing/video-shots",
+      "handler": "handleInternalVideoShotCall",
+      "body": [
+        {
+          "name": "workspace_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "project_id",
+          "type": "int64",
+          "required": true
+        },
+        {
+          "name": "shot_id",
+          "type": "int64",
+          "required": true
+        },
+        {
+          "name": "provider",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "model",
+          "type": "string"
+        },
+        {
+          "name": "resolution",
+          "type": "string"
+        },
+        {
+          "name": "duration_charged_sec",
+          "type": "float64"
+        },
+        {
+          "name": "fps",
+          "type": "int"
+        },
+        {
+          "name": "frames_total",
+          "type": "int"
+        },
+        {
+          "name": "cost_usd",
+          "type": "float64"
+        },
+        {
+          "name": "cost_per_frame_usd",
+          "type": "float64"
+        },
+        {
+          "name": "billing_meta",
+          "type": "map[string]any"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/bot-users/:id",
+      "handler": "handleInternalBotUserGet",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/bots/create-for-agent",
+      "handler": "handleInternalBotForAgent",
+      "body": [
+        {
+          "name": "workspace_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "owner_user_id",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "llm_config",
+          "type": "map[string]any"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/chat-threads/:id",
+      "handler": "handleInternalChatThreadGet",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/hosts/issue",
+      "handler": "handleInternalHostIssue",
+      "body": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "workspace_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "slug",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "agent_token_id",
+          "type": "string"
+        },
+        {
+          "name": "os",
+          "type": "string"
+        },
+        {
+          "name": "arch",
+          "type": "string"
+        },
+        {
+          "name": "machine_uuid",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/llm-configs/:id",
+      "handler": "handleInternalLLMConfigGet",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/llm/chat-completion",
+      "handler": "handleInternalLLMChatCompletion",
+      "body": [
+        {
+          "name": "workspace_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "llm_config_id",
+          "type": "int64",
+          "required": true
+        },
+        {
+          "name": "model_override",
+          "type": "string"
+        },
+        {
+          "name": "endpoint_tag",
+          "type": "string"
+        },
+        {
+          "name": "messages",
+          "type": "[]aiChatCompletionMessage",
+          "required": true
+        },
+        {
+          "name": "max_tokens",
+          "type": "int"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/notify",
+      "handler": "handleInternalNotify",
+      "body": [
+        {
+          "name": "user_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "title",
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "type": "map[string]any"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/ping",
+      "handler": "handleInternalPing",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/plugin-registry/heartbeat",
+      "handler": "handleInternalHeartbeat",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "version",
+          "type": "string"
+        },
+        {
+          "name": "endpoint",
+          "type": "string"
+        },
+        {
+          "name": "uptime_seconds",
+          "type": "int64"
+        },
+        {
+          "name": "metrics_url",
+          "type": "string"
+        },
+        {
+          "name": "ui_routes",
+          "type": "json.RawMessage"
+        },
+        {
+          "name": "api_routes",
+          "type": "json.RawMessage"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/site-admin/check",
+      "handler": "handleInternalSiteAdminCheck",
+      "body": [],
+      "query": [
+        {
+          "name": "user_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/teams/:id",
+      "handler": "handleInternalTeamGet",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/teams/:id/members/:user",
+      "handler": "handleInternalTeamMember",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "user",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/users/:id",
+      "handler": "handleInternalUserGet",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/users/:id/workspace",
+      "handler": "handleInternalUserWorkspace",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/wg-peer-status",
+      "handler": "handleInternalWGPeerStatus",
+      "body": [],
+      "query": [
+        {
+          "name": "host_id",
+          "type": "string"
+        },
+        {
+          "name": "iface_public_key",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/wg-peer-status",
+      "handler": "handleInternalWGPeerStatusPush",
+      "body": [
+        {
+          "name": "host_id",
+          "type": "string"
+        },
+        {
+          "name": "iface",
+          "type": "string"
+        },
+        {
+          "name": "iface_public_key",
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "type": "map[string]any"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/workspace-plugin-access",
+      "handler": "handleInternalWorkspacePluginAccess",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        },
+        {
+          "name": "plugin",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/workspace-proxy-tokens/ensure",
+      "handler": "handleInternalWorkspaceProxyTokenEnsure",
+      "body": [
+        {
+          "name": "workspace_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "owner_user_id",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "handler": "handleMetrics",
+      "body": [],
+      "query": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/s/:short_code",
+      "handler": "handleAssetSharePublicDownload",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "short_code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/ws/agent",
+      "handler": "handleAgentWS",
+      "body": [],
+      "query": [
+        {
+          "name": "token",
+          "type": "string"
+        },
+        {
+          "name": "bot_id",
+          "type": "string"
+        },
+        {
+          "name": "workspace_id",
+          "type": "string"
+        },
+        {
+          "name": "workdir",
+          "type": "string"
+        }
+      ],
+      "headers": [
+        {
+          "name": "Authorization",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/ws/chat",
+      "handler": "handleChatWS",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/ws/host/:id/shell/:run_id",
+      "handler": "handleHostShellWS",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "run_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/ws/host/:id/vnc/:run_id",
+      "handler": "handleHostVNCWS",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "run_id",
+          "type": "string"
+        }
+      ]
+    }
+  ]
+}

@@ -9,12 +9,22 @@ package dock
 // tenants either.
 
 import (
+	_ "embed"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+// apiCatalogJSON is the build-time API contract catalog produced by
+// cmd/api-catalog-gen (run via `go generate ./internal/app/dock` or
+// `make api-catalog`). It enriches the route list with request-body
+// fields, query/path/header params, and auth per endpoint.
+//
+//go:embed api_catalog.gen.json
+var apiCatalogJSON []byte
 
 type apiRouteInfo struct {
 	Method  string `json:"method"`
@@ -46,6 +56,34 @@ func (s *Server) handleAPIRoutes(c *gin.Context) {
 		return out[i].Method < out[j].Method
 	})
 	c.JSON(http.StatusOK, gin.H{"count": len(out), "routes": out})
+}
+
+// handleAPICatalog serves the build-time contract catalog (body fields +
+// query/path/header params + auth per endpoint). Optional ?prefix=
+// filters by path. This is the enriched companion to /api/_routes.
+//
+//go:generate go run ../../../cmd/api-catalog-gen -dock . -out api_catalog.gen.json -doc ../../../doc/api/catalog.json
+func (s *Server) handleAPICatalog(c *gin.Context) {
+	prefix := strings.TrimSpace(c.Query("prefix"))
+	if prefix == "" {
+		c.Data(http.StatusOK, "application/json; charset=utf-8", apiCatalogJSON)
+		return
+	}
+	var cat struct {
+		Count     int              `json:"count"`
+		Endpoints []map[string]any `json:"endpoints"`
+	}
+	if err := json.Unmarshal(apiCatalogJSON, &cat); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "catalog unavailable"})
+		return
+	}
+	filtered := make([]map[string]any, 0, len(cat.Endpoints))
+	for _, e := range cat.Endpoints {
+		if p, _ := e["path"].(string); strings.HasPrefix(p, prefix) {
+			filtered = append(filtered, e)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"count": len(filtered), "endpoints": filtered})
 }
 
 // shortHandlerName trims gin's fully-qualified handler name
