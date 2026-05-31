@@ -2425,6 +2425,13 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS mem_peak_bytes BIGINT;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS cpu_peak_pct   REAL;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS first_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+-- host_info_json: free-form host facts (hw_model, etc.) the agent reports.
+-- Read by the agents list (agents_handlers.go: h.host_info_json->>'hw_model').
+-- Added here because that handler shipped referencing the column before any
+-- migration created it, so GET /api/agents 500'd on every DB. Default '{}'
+-- so the COALESCE in the query yields '' until a host populates real facts.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS host_info_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE TABLE IF NOT EXISTS agents (
     id             TEXT PRIMARY KEY,
     workspace_id   TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
