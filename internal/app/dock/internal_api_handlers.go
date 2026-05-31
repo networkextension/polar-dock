@@ -8,6 +8,7 @@ package dock
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -210,12 +211,12 @@ func (s *Server) handleInternalLLMConfigGet(c *gin.Context) {
 // ledger pipeline used by chat. Plugin doesn't hold any LLM credentials.
 
 type internalLLMChatReq struct {
-	WorkspaceID   string                     `json:"workspace_id" binding:"required"`
-	LLMConfigID   int64                      `json:"llm_config_id" binding:"required"`
-	ModelOverride string                     `json:"model_override"`
-	EndpointTag   string                     `json:"endpoint_tag"`
-	Messages      []aiChatCompletionMessage  `json:"messages" binding:"required"`
-	MaxTokens     int                        `json:"max_tokens"`
+	WorkspaceID   string                    `json:"workspace_id" binding:"required"`
+	LLMConfigID   int64                     `json:"llm_config_id" binding:"required"`
+	ModelOverride string                    `json:"model_override"`
+	EndpointTag   string                    `json:"endpoint_tag"`
+	Messages      []aiChatCompletionMessage `json:"messages" binding:"required"`
+	MaxTokens     int                       `json:"max_tokens"`
 }
 
 func (s *Server) handleInternalLLMChatCompletion(c *gin.Context) {
@@ -330,11 +331,11 @@ func (s *Server) handleInternalLLMChatCompletion(c *gin.Context) {
 // body so plugins know to gracefully degrade.
 
 type internalNotifyReq struct {
-	UserID string                 `json:"user_id" binding:"required"`
-	Title  string                 `json:"title"`
-	Body   string                 `json:"body"`
-	Kind   string                 `json:"kind"`
-	Data   map[string]any         `json:"data"`
+	UserID string         `json:"user_id" binding:"required"`
+	Title  string         `json:"title"`
+	Body   string         `json:"body"`
+	Kind   string         `json:"kind"`
+	Data   map[string]any `json:"data"`
 }
 
 func (s *Server) handleInternalNotify(c *gin.Context) {
@@ -356,10 +357,10 @@ func (s *Server) handleInternalNotify(c *gin.Context) {
 	// hint so plugins can degrade gracefully without breaking their
 	// callers. Real dispatch path is documented as Phase 1-C+.
 	c.JSON(http.StatusOK, gin.H{
-		"delivered":  0,
-		"skipped":    len(devices),
-		"stub":       true,
-		"stub_note":  "notify dispatch not yet wired for plugins; tracked for Phase 1-C+",
+		"delivered": 0,
+		"skipped":   len(devices),
+		"stub":      true,
+		"stub_note": "notify dispatch not yet wired for plugins; tracked for Phase 1-C+",
 	})
 }
 
@@ -370,11 +371,11 @@ func (s *Server) handleInternalNotify(c *gin.Context) {
 // plugin in the registry).
 
 type internalHeartbeatReq struct {
-	Name          string          `json:"name" binding:"required"`
-	Version       string          `json:"version"`
-	Endpoint      string          `json:"endpoint"`
-	UptimeSeconds int64           `json:"uptime_seconds"`
-	MetricsURL    string          `json:"metrics_url"`
+	Name          string `json:"name" binding:"required"`
+	Version       string `json:"version"`
+	Endpoint      string `json:"endpoint"`
+	UptimeSeconds int64  `json:"uptime_seconds"`
+	MetricsURL    string `json:"metrics_url"`
 	// UIRoutes: optional; raw JSON array of sidebar nav entries the
 	// plugin offers. See plugin_modules.ui_routes schema. Empty /
 	// missing = preserve current value in the column (don't blank
@@ -385,6 +386,11 @@ type internalHeartbeatReq struct {
 	// Same preserve-on-empty semantics as UIRoutes. Element:
 	// {"method":"GET","path":"/api/expense/items","label":"...","scope":"read"}.
 	APIRoutes json.RawMessage `json:"api_routes,omitempty"`
+	// OS/Arch: the platform this instance runs on (runtime.GOOS/GOARCH).
+	// Used to resolve an OTA update directive matching a prebuilt binary
+	// (Track 3). Empty = module doesn't participate in self-update.
+	OS   string `json:"os,omitempty"`
+	Arch string `json:"arch,omitempty"`
 }
 
 // ── F1 additions (Phase 2 handlers prep) ─────────────────────────
@@ -772,5 +778,17 @@ func (s *Server) handleInternalHeartbeat(c *gin.Context) {
 		internalErr(c, http.StatusInternalServerError, "heartbeat write failed")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ack": true})
+	// Track 3 (OTA): if the module reported its platform and dock has a
+	// newer/pinned binary for it, hand back an update directive. Resolution
+	// failures are non-fatal — the heartbeat itself already succeeded, so we
+	// just omit the directive rather than 500 a working module.
+	resp := gin.H{"ack": true}
+	if req.OS != "" && req.Arch != "" {
+		if upd, err := s.resolvePluginUpdate(req.Name, req.Version, req.OS, req.Arch); err != nil {
+			log.Printf("dock: resolvePluginUpdate(%s) failed: %v", req.Name, err)
+		} else if upd != nil {
+			resp["update"] = upd
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }

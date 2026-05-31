@@ -41,9 +41,10 @@ type PluginModule struct {
 	Version          string     `json:"version,omitempty"`
 	Published        bool       `json:"published"`            // R3 上架 flag
 	AcceptsApps      bool       `json:"accepts_applications"` // R3 per-module request toggle
-	Config           []byte     `json:"-"`               // raw jsonb bytes; handlers decide rendering
+	Config           []byte     `json:"-"`                    // raw jsonb bytes; handlers decide rendering
 	CreatedAt        time.Time  `json:"created_at"`
-	DerivedPlaintext string     `json:"plaintext,omitempty"` // set only on create / rotate
+	TargetVersion    string     `json:"target_version,omitempty"` // OTA pin; "" = follow latest
+	DerivedPlaintext string     `json:"plaintext,omitempty"`      // set only on create / rotate
 }
 
 // CreatePluginModuleInput is the admin-handler payload, validated +
@@ -83,7 +84,7 @@ func hashPluginToken(plaintext string) string {
 func (s *Server) listPluginModules() ([]PluginModule, error) {
 	rows, err := s.db.Query(`
 		SELECT name, display_name, enabled, endpoint, last_heartbeat,
-		       version, published, accepts_applications, config, created_at
+		       version, published, accepts_applications, config, created_at, target_version
 		  FROM plugin_modules
 		 ORDER BY created_at DESC`)
 	if err != nil {
@@ -95,7 +96,7 @@ func (s *Server) listPluginModules() ([]PluginModule, error) {
 		var m PluginModule
 		var lastHB sql.NullTime
 		if err := rows.Scan(&m.Name, &m.DisplayName, &m.Enabled, &m.Endpoint,
-			&lastHB, &m.Version, &m.Published, &m.AcceptsApps, &m.Config, &m.CreatedAt); err != nil {
+			&lastHB, &m.Version, &m.Published, &m.AcceptsApps, &m.Config, &m.CreatedAt, &m.TargetVersion); err != nil {
 			return nil, err
 		}
 		if lastHB.Valid {
