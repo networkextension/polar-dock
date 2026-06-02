@@ -203,7 +203,10 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 		Workdir:       project.ID,
 		GitRemoteURL:  strings.TrimSpace(project.GitRemoteURL),
 		TaskContent:   taskContent,
-		LLM: agentResearchLLMSnapshot{
+		// Direct-to-upstream snapshot. agentLLMProxySnapshot rewrites it
+		// to route through dock's billed/audited proxy (unless the kill
+		// switch POLAR_AGENT_LLM_DIRECT=1 is set, when it passes through).
+		LLM: s.agentLLMProxySnapshot(agentResearchLLMSnapshot{
 			ConfigID: llmConfig.ID,
 			Name:     llmConfig.Name,
 			Model:    llmConfig.Model,
@@ -211,7 +214,7 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 			BaseURL:  llmConfig.BaseURL,
 			APIKey:   rt.APIKey,
 			ProxyURL: strings.TrimSpace(llmConfig.ProxyURL),
-		},
+		}, workspaceID, userIDStr, run.ID, now),
 	}
 	if err := s.agentHub.dispatchResearchTask(botUserID, envelope); err != nil {
 		log.Printf("research dispatch: ws send: %v", err)
@@ -221,6 +224,7 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 			OK:           false,
 			ErrorMessage: "dispatch to agent failed: " + err.Error(),
 		})
+		s.revokeAgentResearchToken(workspaceID, run.ID, now)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "向 agent 发送任务失败：" + err.Error()})
 		return
 	}
@@ -340,6 +344,9 @@ func (s *Server) handleResearchRunResult(c *gin.Context) {
 	} else {
 		s.metricsRegistry.recordResearchDispatch(ResearchRunStatusFailed)
 	}
+	// Run is terminal — retire its per-run proxy token so the envelope
+	// credential can't be reused after the work is done.
+	s.revokeAgentResearchToken(run.WorkspaceID, run.ID, time.Now())
 
 	// Optional: post a terminal status message back into chat for
 	// visibility. Brief — long log goes to DB log_text, not chat.
