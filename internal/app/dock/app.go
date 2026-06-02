@@ -933,6 +933,9 @@ func (s *Server) registerRoutes() {
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.
 		api.POST("/proxy/v1/chat/completions", s.handleLLMProxyChatCompletions)
+		// OpenAI-compatible model discovery — returns the models the
+		// calling proxy token can reach (alias routes + default config).
+		api.GET("/proxy/v1/models", s.handleLLMProxyModels)
 		// wg-mac admin endpoints (/api/admin/wg-{hubs,tokens,devices,
 		// sites,bundles}) moved to github.com/networkextension/polar-wg.
 		// nginx on the deploy box routes /api/admin/wg-* to wg-svc.
