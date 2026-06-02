@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"strings"
 	"time"
@@ -154,6 +155,17 @@ func (s *Server) resolvePluginUpdate(name, runningVer, osName, arch string) (*Pl
 	resolved := strings.TrimSpace(target.String)
 
 	if resolved == "" {
+		// No pin → prefer the polar-release publish system when armed
+		// (POLAR_RELEASE_BASE). Its directive URL is the signed provider
+		// GET, so the binary bytes bypass dock entirely. Any miss/error
+		// falls through to the legacy plugin_releases path below, so a
+		// release outage can never block a working module's update.
+		if dir, rerr := s.resolvePluginUpdateViaRelease(name, runningVer, osName, arch); rerr != nil {
+			log.Printf("dock: release resolve(%s %s-%s) failed, falling back to plugin_releases: %v", name, osName, arch, rerr)
+		} else if dir != nil {
+			return dir, nil
+		}
+
 		// No pin: follow the newest stable release for this platform.
 		var v sql.NullString
 		err := s.db.QueryRow(`
