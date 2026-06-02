@@ -53,9 +53,11 @@ func (s *Server) resolvePluginUpdateViaRelease(name, runningVer, osName, arch st
 		return nil, fmt.Errorf("release resolve HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var r struct {
-		Version string `json:"version"`
-		SHA256  string `json:"sha256"`
-		DLURL   string `json:"dl_url"`
+		Version    string          `json:"version"`
+		SHA256     string          `json:"sha256"`
+		DLURL      string          `json:"dl_url"`
+		Ed25519Sig string          `json:"ed25519_sig"`
+		Manifest   json.RawMessage `json:"manifest"`
 	}
 	if err := json.Unmarshal(body, &r); err != nil {
 		return nil, err
@@ -63,5 +65,13 @@ func (s *Server) resolvePluginUpdateViaRelease(name, runningVer, osName, arch st
 	if r.Version == "" || r.DLURL == "" || r.Version == strings.TrimSpace(runningVer) {
 		return nil, nil // nothing to do
 	}
-	return &PluginUpdateDirective{Version: r.Version, URL: r.DLURL, SHA256: r.SHA256}, nil
+	// Pass the signature + manifest through verbatim so a module with
+	// POLAR_RELEASE_PUBKEY pinned can verify authenticity before swapping.
+	return &PluginUpdateDirective{
+		Version:    r.Version,
+		URL:        r.DLURL,
+		SHA256:     r.SHA256,
+		Ed25519Sig: r.Ed25519Sig,
+		Manifest:   r.Manifest,
+	}, nil
 }
