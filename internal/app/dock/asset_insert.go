@@ -161,49 +161,8 @@ func (s *Server) insertAssetFromFile(in AssetInsertInput) (*Asset, error) {
 	return asset, nil
 }
 
-// dualWritePostImageToAssets is the P8 hook. Runs in its own goroutine
-// from the post upload handler. Registers the post image as an asset
-// (kind=post-image), records the resulting asset.id back on
-// post_images.asset_id so a future read-path-flip PR can find what's
-// already migrated. Never blocks; all failures log + return.
-//
-// The (post_id, sha256) tuple is the unique identity for a post
-// image. We encode it in the asset name as `posts/<post_id>/<filename>`
-// so the catalog browses cleanly.
-//
-// Quota over-cap returns a non-nil error from insertAssetFromFile;
-// we log + skip. The legacy /uploads/ write already succeeded so the
-// user's post stays fine.
-func (s *Server) dualWritePostImageToAssets(postID int64, srcPath, origFilename, origURL, workspaceID, userID string) {
-	asset, err := s.insertAssetFromFile(AssetInsertInput{
-		WorkspaceID: workspaceID,
-		Kind:        "post-image",
-		Name:        fmt.Sprintf("posts/%d/%s", postID, origFilename),
-		Version:     "v1",
-		Visibility:  "workspace",
-		Mime:        "image/*",
-		SrcPath:     srcPath,
-		UploadedBy:  userID,
-		Metadata: map[string]any{
-			"post_id":      postID,
-			"variant":      "original",
-			"original_url": origURL,
-		},
-	})
-	if err != nil {
-		log.Printf("assets: post-image dual-write skipped post=%d file=%s: %v", postID, origFilename, err)
-		return
-	}
-	if _, err := s.db.Exec(
-		`UPDATE post_images SET asset_id = $1 WHERE post_id = $2 AND file_url = $3`,
-		asset.ID, postID, origURL,
-	); err != nil {
-		log.Printf("assets: post-image dual-write update post_images.asset_id failed post=%d asset=%d: %v", postID, asset.ID, err)
-	}
-}
-
 // copyFile copies src to dst, creating dst with 0o600. Used by the
-// local-FS dual-write path so the caller's srcPath survives.
+// local-FS path in insertAssetFromFile so the caller's srcPath survives.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
