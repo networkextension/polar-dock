@@ -214,7 +214,7 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 			BaseURL:  llmConfig.BaseURL,
 			APIKey:   rt.APIKey,
 			ProxyURL: strings.TrimSpace(llmConfig.ProxyURL),
-		}, workspaceID, userIDStr, run.ID, now),
+		}, workspaceID, userIDStr, botUserID, run.ID, now),
 	}
 	if err := s.agentHub.dispatchResearchTask(botUserID, envelope); err != nil {
 		log.Printf("research dispatch: ws send: %v", err)

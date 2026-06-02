@@ -197,6 +197,13 @@ func (s *Server) registerAgent(_ context.Context, req internalAgentRegisterReq) 
 			log.Printf("[v4 register] WARN agent %s name=%q migrated host: %s → %s", existingID, name, existingHost, hostID)
 			_, _ = s.db.Exec(`UPDATE agents SET host_id = $2 WHERE id = $1`, existingID, hostID)
 		}
+		// Re-issue the per-agent proxy token (decrypts the stored copy,
+		// or mints one for agents that predate P2). Best-effort.
+		proxyRaw, perr := s.ensureAgentProxyToken(existingID, workspaceID, ownerUserID, now)
+		if perr != nil {
+			log.Printf("[v4 register] agent %s proxy token (idempotent): %v", existingID, perr)
+		}
+		proxyBase, defaultModel := s.agentProxyResponseFields(workspaceID)
 		return map[string]any{
 			"agent_id":        existingID,
 			"host_id":         hostID,
@@ -204,6 +211,9 @@ func (s *Server) registerAgent(_ context.Context, req internalAgentRegisterReq) 
 			"agent_token_raw": "",
 			"server":          s.canonicalServerURL(),
 			"idempotent":      true,
+			"proxy_token":     proxyRaw,
+			"proxy_base_url":  proxyBase,
+			"default_model":   defaultModel,
 		}, nil
 	} else if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 		return nil, fmt.Errorf("agent lookup: %w", lookupErr)
@@ -250,12 +260,24 @@ func (s *Server) registerAgent(_ context.Context, req internalAgentRegisterReq) 
 		return nil, fmt.Errorf("insert agent: %w", err)
 	}
 
+	// 7. Issue the per-agent LLM proxy token (agent:<id>). Best-effort:
+	//    a failure here must not fail register — dispatch falls back to
+	//    a per-run token and the agent simply has no own-token yet.
+	proxyRaw, perr := s.ensureAgentProxyToken(agentID, workspaceID, ownerUserID, now)
+	if perr != nil {
+		log.Printf("[v4 register] agent %s proxy token: %v", agentID, perr)
+	}
+	proxyBase, defaultModel := s.agentProxyResponseFields(workspaceID)
+
 	return map[string]any{
 		"agent_id":        agentID,
 		"host_id":         hostID,
 		"bot_user_id":     botUserID,
 		"agent_token_raw": rawToken,
 		"server":          s.canonicalServerURL(),
+		"proxy_token":     proxyRaw,
+		"proxy_base_url":  proxyBase,
+		"default_model":   defaultModel,
 	}, nil
 }
 

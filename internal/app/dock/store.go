@@ -2371,6 +2371,14 @@ CREATE TABLE IF NOT EXISTS agents (
 CREATE INDEX IF NOT EXISTS idx_agents_host      ON agents(host_id);
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id, last_hello_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agents_bot       ON agents(bot_user_id) WHERE bot_user_id IS NOT NULL;
+-- P2: per-agent LLM proxy token (agent:<id>) issued at register. Stored
+-- encrypted when POLAR_CREDENTIAL_KEY is set, else plaintext with
+-- proxy_token_encrypted=FALSE. Lets research dispatch embed the agent's
+-- own token (per-agent billing) and the agent call /api/proxy/v1 itself.
+-- Plain BIGINT (no FK) to keep the fresh-DB boot gate order-independent.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS proxy_token_id        BIGINT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS proxy_token_enc       TEXT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS proxy_token_encrypted BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- host_skills: operator-enabled skill on a host. Schema exists in P0
 -- so future phase migrations don't need to add the table; nothing
