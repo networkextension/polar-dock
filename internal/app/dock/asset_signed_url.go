@@ -33,6 +33,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -113,4 +114,50 @@ func buildSignedBlobURL(providerBaseURL, sha256Hex string, ttl time.Duration, se
 	}
 	base := strings.TrimRight(providerBaseURL, "/")
 	return base + "/v1/blob/" + sha256Hex + "?token=" + token, nil
+}
+
+// buildSignedPutURL mints a scoped **upload** grant — the symmetric of
+// buildSignedBlobURL. The provider verifies it in verifyDockPutURL
+// (polar-assets internal/assets/signed_url.go). The grant binds the
+// exact object key (sha256), a max body size, a content-type, and an
+// expiry, so a leaked grant can only write that one blob, capped, for
+// a short window:
+//
+//	PUT <base>/v1/blob/<sha256>?exp=<unix>&max=<bytes>&ct=<mime>&sig=<hex>
+//	sig = HMAC-SHA256(secret, "PUT\n<sha256>\n<exp>\n<max>\n<ct>")
+//
+// The "PUT\n…"-prefixed, newline-delimited canonical can never collide
+// with the download token's "<sha>:<exp>" canonical, so a download
+// token cannot be replayed as an upload grant. maxBytes must be > 0;
+// ct defaults to application/octet-stream.
+func buildSignedPutURL(providerBaseURL, sha256Hex string, ttl time.Duration, maxBytes int64, ct string, secret []byte) (string, error) {
+	if sha256Hex == "" {
+		return "", errors.New("buildSignedPutURL: sha256 required")
+	}
+	if len(secret) == 0 {
+		return "", errors.New("buildSignedPutURL: secret required")
+	}
+	if maxBytes <= 0 {
+		return "", errors.New("buildSignedPutURL: maxBytes must be > 0")
+	}
+	if ttl == 0 {
+		ttl = defaultAssetSignedURLTTL
+	}
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	expStr := strconv.FormatInt(time.Now().Add(ttl).Unix(), 10)
+	maxStr := strconv.FormatInt(maxBytes, 10)
+	canonical := "PUT\n" + sha256Hex + "\n" + expStr + "\n" + maxStr + "\n" + ct
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(canonical))
+	sig := hex.EncodeToString(mac.Sum(nil))
+
+	base := strings.TrimRight(providerBaseURL, "/")
+	q := url.Values{}
+	q.Set("exp", expStr)
+	q.Set("max", maxStr)
+	q.Set("ct", ct)
+	q.Set("sig", sig)
+	return base + "/v1/blob/" + sha256Hex + "?" + q.Encode(), nil
 }

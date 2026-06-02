@@ -749,6 +749,21 @@ func (s *Server) registerRoutes() {
 		internal.POST("/agents/register", s.handleInternalAgentRegister)
 		internal.POST("/workspace-proxy-tokens/ensure", s.handleInternalWorkspaceProxyTokenEnsure)
 		internal.POST("/bots/create-for-agent", s.handleInternalBotForAgent)
+
+		// Assets data-plane surface for the polar-sdk Assets client and
+		// modules (release / video / iosdist…). Reads wrap the catalog;
+		// upload-grant + finalize implement the signed-PUT direct upload
+		// and /:id/download-url mints a signed GET — so blob bytes flow
+		// client↔provider and never traverse dock. See
+		// doc/arch/release-system.md and asset_internal_handlers.go.
+		internal.GET("/assets/by-name", s.handleInternalAssetGetByName)
+		internal.GET("/assets/by-sha256/:sha256", s.handleInternalAssetStatBySHA)
+		internal.GET("/assets/:id", s.handleInternalAssetGet)
+		internal.GET("/assets/:id/blob", s.handleInternalAssetBlob)
+		internal.GET("/assets/:id/download-url", s.handleInternalAssetDownloadURL)
+		internal.DELETE("/assets/:id", s.handleInternalAssetDelete)
+		internal.POST("/assets/upload-grant", s.handleInternalAssetUploadGrant)
+		internal.POST("/assets/finalize", s.handleInternalAssetFinalize)
 	}
 
 	// iOS distribution OTA endpoints + public share/plaza/install pages

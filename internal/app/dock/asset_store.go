@@ -182,6 +182,25 @@ func (s *Server) getAssetByName(workspaceID *string, kind, name, version string)
 	return a, err
 }
 
+// getAssetBySHA256 returns any one catalog row carrying this content
+// hash, or (nil, nil) on miss. The same bytes can back several rows
+// (different name/version), so this is "give me a row for this sha"
+// — used by the SDK's AssetStat to resolve a known hash back to
+// canonical metadata. Newest row wins so callers see current naming.
+func (s *Server) getAssetBySHA256(sha256Hex string) (*Asset, error) {
+	if sha256Hex == "" {
+		return nil, errors.New("getAssetBySHA256: sha256 required")
+	}
+	row := s.db.QueryRow(
+		`SELECT `+assetSelectColumns+`FROM assets WHERE sha256=$1
+		  ORDER BY created_at DESC LIMIT 1`, sha256Hex)
+	a, err := scanAssetRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return a, err
+}
+
 // listAssets handles the tenant + platform-public listing scope:
 //
 //	(workspace_id = filter.WorkspaceID)
