@@ -1455,6 +1455,16 @@ CREATE TABLE IF NOT EXISTS project_research_runs (
 CREATE INDEX IF NOT EXISTS idx_research_runs_project ON project_research_runs(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_research_runs_workspace ON project_research_runs(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_research_runs_open ON project_research_runs(status) WHERE status IN ('queued','running');
+-- P3 (durable pull dispatch): claimed_at stamps when an agent pulled the
+-- run via POST /api/agent/tasks/claim; dispatch_payload holds the built
+-- research_task envelope (LLM api_key stripped — re-injected at claim from
+-- the agent's per-agent token) so a queued run survives an offline agent
+-- and is delivered on reconnect-drain instead of fire-and-forget push.
+ALTER TABLE project_research_runs ADD COLUMN IF NOT EXISTS claimed_at       TIMESTAMPTZ;
+ALTER TABLE project_research_runs ADD COLUMN IF NOT EXISTS dispatch_payload TEXT;
+-- claim picks the oldest queued run for a bot; this index keeps that cheap.
+CREATE INDEX IF NOT EXISTS idx_research_runs_queued_bot
+	ON project_research_runs(bot_user_id, created_at) WHERE status = 'queued';
 
 -- attachments: workspace-scoped file uploads with content-addressed
 -- storage. Backs posts + chat_messages today via junction tables;

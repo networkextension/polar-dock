@@ -1129,6 +1129,9 @@ func (s *Server) registerRoutes() {
 		api.GET("/projects/:id/research/runs", s.AuthMiddleware(), s.handleResearchRunsList)
 		api.POST("/projects/research/runs/:run_id/start", s.PolarAgentAuthMiddleware(), s.handleResearchRunStart)
 		api.POST("/projects/research/runs/:run_id/result", s.PolarAgentAuthMiddleware(), s.handleResearchRunResult)
+		// P3 durable pull dispatch — agent claims the next queued research
+		// run for its bot (gated by POLAR_AGENT_TASK_PULL on the dispatch side).
+		api.POST("/agent/tasks/claim", s.PolarAgentAuthMiddleware(), s.handleAgentTaskClaim)
 		// teams (collaboration workspaces). T2 = CRUD + read-only members
 		// list. T3 = invitations. T5 = RequireTeamRole middleware
 		// chained on team-scoped routes (replaces inline role checks).
