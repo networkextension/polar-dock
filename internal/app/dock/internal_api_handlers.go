@@ -49,11 +49,18 @@ func (s *Server) handleInternalAuthVerify(c *gin.Context) {
 		internalErr(c, http.StatusUnauthorized, "invalid session")
 		return
 	}
-	// Resolve workspace_id — same logic as resolveActiveWorkspace, but
-	// without a request header to peek at. Plugins that want a specific
-	// workspace pass it explicitly via X-Workspace-Id on the forwarded
-	// user request and check membership separately.
+	// Resolve workspace_id. Default = the user's personal workspace, but a
+	// plugin may request the caller's ACTIVE workspace by forwarding
+	// ?workspace_id=<id> (sourced from the browser's X-Workspace-Id header).
+	// Honor it only when the user is actually a member of that team — so a
+	// module-subdomain page shows data scoped to the selected workspace,
+	// not just the personal one. Falls back to personal on non-membership.
 	workspaceID, _ := s.personalWorkspaceForUser(sess.UserID)
+	if req := strings.TrimSpace(c.Query("workspace_id")); req != "" && req != workspaceID {
+		if m, err := s.getTeamMember(req, sess.UserID); err == nil && m != nil {
+			workspaceID = req
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"user_id":      sess.UserID,
 		"username":     sess.Username,
