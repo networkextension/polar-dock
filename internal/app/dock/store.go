@@ -3622,6 +3622,14 @@ CREATE INDEX IF NOT EXISTS idx_plugin_modules_enabled
 ALTER TABLE plugin_modules
     ADD COLUMN IF NOT EXISTS ui_routes JSONB NOT NULL DEFAULT '[]'::jsonb;
 
+-- public_base_url: the plugin's externally-reachable origin (e.g.
+-- "https://hosts.4950.store:2443"), declared by the plugin at heartbeat.
+-- dock joins it with each ui_routes[].path to emit absolute cross-subdomain
+-- links in the shared platform nav (GET /api/nav). Empty = excluded from the
+-- shared nav (the module can still ship its own).
+ALTER TABLE plugin_modules
+    ADD COLUMN IF NOT EXISTS public_base_url TEXT NOT NULL DEFAULT '';
+
 -- Track 3 (module OTA self-update). target_version pins which release a
 -- module should roll to; set by the admin UI's 更新 button. Empty = follow
 -- the latest published release in the channel (the default behavior).
