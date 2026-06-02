@@ -11,6 +11,7 @@ package dock
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -40,6 +41,13 @@ type PluginUpdateDirective struct {
 	Version string `json:"version"`
 	URL     string `json:"url"`
 	SHA256  string `json:"sha256"`
+
+	// Release-backed OTA only: the ed25519 signature + the signed manifest,
+	// passed through verbatim from polar-release so a self-updating module
+	// (with POLAR_RELEASE_PUBKEY pinned) verifies authenticity. Empty on the
+	// legacy plugin_releases path.
+	Ed25519Sig string          `json:"ed25519_sig,omitempty"`
+	Manifest   json.RawMessage `json:"manifest,omitempty"`
 }
 
 // insertPluginRelease records a published binary. Upsert on the PK so
