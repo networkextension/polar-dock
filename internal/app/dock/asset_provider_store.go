@@ -377,6 +377,23 @@ func (s *Server) markAssetLocationFetching(assetID, providerID int64) error {
 	return err
 }
 
+// assetLocationStatus returns the status string of the (asset,
+// provider) location row, or "" if no row exists. Used by the
+// upload-grant finalize path to stay idempotent: only bump the
+// workspace usage counter the first time a location flips to ready,
+// so a re-sent finalize can't double-count quota.
+func (s *Server) assetLocationStatus(assetID, providerID int64) (string, error) {
+	var status string
+	err := s.db.QueryRow(
+		`SELECT status FROM asset_locations WHERE asset_id = $1 AND provider_id = $2`,
+		assetID, providerID,
+	).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return status, err
+}
+
 // deleteAssetLocation removes the row for (asset, provider). Used
 // by warm-pull rollback when the target provider rejects the pull
 // — leaves the catalog clean so a retry starts fresh.
