@@ -82,7 +82,9 @@ func (s *Server) insertAssetFromFile(in AssetInsertInput) (*Asset, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hash: %w", err)
 	}
-	if code, msg := s.checkAssetUploadAllowed(in.WorkspaceID, size); code != 0 {
+	// checkAssetUploadAllowed returns 200 on success (not 0) and a 4xx/5xx
+	// on denial — gate on >=400 so a clean check doesn't read as an error.
+	if code, msg := s.checkAssetUploadAllowed(in.WorkspaceID, size); code >= 400 {
 		return nil, fmt.Errorf("quota %d: %s", code, msg)
 	}
 
