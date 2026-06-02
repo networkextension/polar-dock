@@ -203,21 +203,31 @@ func (s *Server) handlePostCreate(c *gin.Context) {
 		if imageItem.OriginalURL == "" {
 			imageItem = normalizePostImageItem(publicURL, "", "")
 		}
+		// Cutover to assets (no dual-write): register each variant as a
+		// PUBLIC asset and rewrite the URL to a permanent /api/media/<id>
+		// handle (which 302s to a signed provider URL — bytes bypass dock).
+		// On any failure a variant keeps its /uploads/ URL, so a provider
+		// hiccup never hard-fails the post.
+		var origAsset *Asset
+		if newURL, a, cerr := s.cutoverUploadsURL(workspaceID, userIDStr, postID, imageItem.OriginalURL, "post-image"); cerr != nil {
+			log.Printf("post-image cutover (original) post=%d: %v", postID, cerr)
+		} else {
+			imageItem.OriginalURL, origAsset = newURL, a
+		}
+		if newURL, _, cerr := s.cutoverUploadsURL(workspaceID, userIDStr, postID, imageItem.MediumURL, "post-image"); cerr == nil {
+			imageItem.MediumURL = newURL
+		}
+		if newURL, _, cerr := s.cutoverUploadsURL(workspaceID, userIDStr, postID, imageItem.SmallURL, "post-image"); cerr == nil {
+			imageItem.SmallURL = newURL
+		}
 		if err := s.addPostImage(postID, imageItem, now); err != nil {
 			s.cleanupPostUpload(postID, append(savedFiles, dstPath))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 			return
 		}
-		// P8 dual-write: register the post image as an asset too.
-		// Fire-and-forget — never blocks the upload response. Read
-		// path still serves bytes from publicURL (legacy /uploads/).
-		// Only mirrors the original variant; resized derivatives can
-		// be regenerated from the asset later when the read path
-		// flips. Original filename for asset name keeps the catalog
-		// readable; the actual blob is content-addressed by sha256.
-		if s.polarAssetsPostsDualWrite {
-			origFilename := file.Filename
-			go s.dualWritePostImageToAssets(postID, dstPath, origFilename, imageItem.OriginalURL, workspaceID, userIDStr)
+		if origAsset != nil {
+			_, _ = s.db.Exec(`UPDATE post_images SET asset_id=$1 WHERE post_id=$2 AND file_url=$3`,
+				origAsset.ID, postID, imageItem.OriginalURL)
 		}
 		savedFiles = append(savedFiles, dstPath)
 		savedFiles = append(savedFiles, derivedPaths...)
@@ -255,14 +265,26 @@ func (s *Server) handlePostCreate(c *gin.Context) {
 			posterURL = posterPublicURL
 		}
 
-		if err := s.addPostVideo(postID, publicURL, posterURL, now); err != nil {
+		// Cutover to assets (no dual-write); fall back to /uploads on error.
+		videoURL := publicURL
+		if newURL, _, cerr := s.cutoverUploadsURL(workspaceID, userIDStr, postID, publicURL, "post-video"); cerr != nil {
+			log.Printf("post-video cutover post=%d: %v", postID, cerr)
+		} else {
+			videoURL = newURL
+		}
+		if posterURL != "" {
+			if newURL, _, cerr := s.cutoverUploadsURL(workspaceID, userIDStr, postID, posterURL, "post-video"); cerr == nil {
+				posterURL = newURL
+			}
+		}
+		if err := s.addPostVideo(postID, videoURL, posterURL, now); err != nil {
 			s.cleanupPostUpload(postID, append(savedFiles, dstPath))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 			return
 		}
 		savedFiles = append(savedFiles, dstPath)
-		videoURLs = append(videoURLs, publicURL)
-		videoItems = append(videoItems, PostVideo{URL: publicURL, PosterURL: posterURL})
+		videoURLs = append(videoURLs, videoURL)
+		videoItems = append(videoItems, PostVideo{URL: videoURL, PosterURL: posterURL})
 	}
 
 	c.JSON(http.StatusCreated, gin.H{

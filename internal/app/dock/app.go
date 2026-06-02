@@ -1057,6 +1057,13 @@ func (s *Server) registerRoutes() {
 		api.GET("/assets/:id", s.AuthMiddleware(), s.handleAssetGet)
 		api.GET("/assets/:id/blob", s.AuthMiddleware(), s.handleAssetBlob)
 		api.DELETE("/assets/:id", s.AuthMiddleware(), s.handleAssetDelete)
+		// Public post-media handle: permanent URL stored on post_images /
+		// post_videos; 302s to a signed provider blob. No auth (post media
+		// is public content) — serves visibility='public' assets only.
+		api.GET("/media/:id", s.handlePublicMedia)
+		// One-time backfill: move /uploads/-backed post media into assets
+		// + set post_images.asset_id. Idempotent; admin only.
+		api.POST("/admin/assets/migrate-post-media", s.AuthMiddleware(), s.AdminMiddleware(), s.handleMigratePostMedia)
 		// P1b: per-workspace asset quota — tenant gets own; admin
 		// sees + tunes all. Root quota config lives on site_settings.
 		api.GET("/asset-quota", s.AuthMiddleware(), s.handleAssetQuotaSelf)
