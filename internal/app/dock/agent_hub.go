@@ -683,6 +683,26 @@ func (h *agentHub) dispatchResearchTask(botUserID string, task agentResearchTask
 	}
 }
 
+// dispatchTaskWake sends a tiny task.wake doorbell so an online agent
+// pulls its queued runs immediately (P3 pull path). Best-effort: an
+// offline agent simply drains on its next reconnect, so we never block
+// or surface an error — the durable queue is the source of truth.
+func (h *agentHub) dispatchTaskWake(botUserID string) {
+	conn := h.lookup(botUserID)
+	if conn == nil {
+		return
+	}
+	payload, err := json.Marshal(map[string]string{"kind": "task.wake"})
+	if err != nil {
+		return
+	}
+	select {
+	case conn.send <- payload:
+	case <-conn.close:
+	case <-time.After(2 * time.Second):
+	}
+}
+
 // agentChatTimeout caps how long the platform waits for a
 // chat_reply. Must comfortably exceed polar-agent's own kimi
 // timeout (30min default, configurable via POLAR_KIMI_TIMEOUT) so

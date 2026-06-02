@@ -25,6 +25,7 @@ package dock
 // llm_model snapshot.
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -109,8 +110,12 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent hub 未就绪"})
 		return
 	}
+	// Pull mode (P3) tolerates an offline agent: the run is enqueued and
+	// the agent drains it on reconnect. Push mode still requires the
+	// agent attached, since fire-and-forget can't survive an offline gap.
+	pullMode := agentTaskPullEnabled()
 	conn := s.agentHub.lookup(botUserID)
-	if conn == nil {
+	if conn == nil && !pullMode {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "该 bot 的本地 polar-agent 还没连上。请先在终端 `polar-agent attach --bot=" + botUserID + "` 再点派单。",
 			"code":  "agent_not_attached",
@@ -216,7 +221,30 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 			ProxyURL: strings.TrimSpace(llmConfig.ProxyURL),
 		}, workspaceID, userIDStr, botUserID, run.ID, now),
 	}
-	if err := s.agentHub.dispatchResearchTask(botUserID, envelope); err != nil {
+	if pullMode {
+		// Durable enqueue: persist the envelope (api_key stripped — claim
+		// re-injects it from the agent's per-agent token) and ring the
+		// task.wake doorbell. The run stays 'queued' until the agent
+		// claims it, so an offline agent just drains on reconnect.
+		stored := envelope
+		stored.LLM.APIKey = ""
+		payloadJSON, merr := json.Marshal(stored)
+		if merr != nil {
+			log.Printf("research dispatch: marshal payload run=%d: %v", run.ID, merr)
+			_ = s.finalizeResearchRun(run.ID, ResearchRunResult{OK: false, ErrorMessage: "enqueue failed: " + merr.Error()})
+			s.revokeAgentResearchToken(workspaceID, run.ID, now)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if serr := s.storeResearchDispatchPayload(run.ID, payloadJSON); serr != nil {
+			log.Printf("research dispatch: store payload run=%d: %v", run.ID, serr)
+			_ = s.finalizeResearchRun(run.ID, ResearchRunResult{OK: false, ErrorMessage: "enqueue failed: " + serr.Error()})
+			s.revokeAgentResearchToken(workspaceID, run.ID, now)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		s.agentHub.dispatchTaskWake(botUserID) // best-effort; offline → drains on reconnect
+	} else if err := s.agentHub.dispatchResearchTask(botUserID, envelope); err != nil {
 		log.Printf("research dispatch: ws send: %v", err)
 		// Mark the run failed so the operator sees the dispatch failure
 		// instead of a permanently-queued ghost row.
