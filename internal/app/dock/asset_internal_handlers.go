@@ -285,8 +285,8 @@ func (s *Server) handleInternalAssetUploadGrant(c *gin.Context) {
 	req.Kind = strings.TrimSpace(req.Kind)
 	req.Name = strings.TrimSpace(req.Name)
 	req.SHA256 = strings.ToLower(strings.TrimSpace(req.SHA256))
-	if req.WorkspaceID == "" || req.Kind == "" || req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id, kind, name required"})
+	if req.Kind == "" || req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kind, name required"})
 		return
 	}
 	if !isHexSHA256(req.SHA256) {
@@ -300,19 +300,31 @@ func (s *Server) handleInternalAssetUploadGrant(c *gin.Context) {
 	if req.Version == "" {
 		req.Version = "v1"
 	}
-	if req.Visibility == "" {
-		req.Visibility = "workspace"
-	}
 	if req.UploadedBy == "" {
 		req.UploadedBy = "system"
 	}
-	if code, msg := s.checkAssetUploadAllowed(req.WorkspaceID, req.SizeBytes); code != 0 {
-		c.JSON(code, gin.H{"error": msg})
-		return
+	// workspace_id == "" means a platform-owned asset (module binaries,
+	// release artifacts, LLM weights): WorkspaceID NULL, no tenant quota,
+	// default visibility public so it's distributable via signed URL.
+	platform := req.WorkspaceID == ""
+	var lookupWS *string
+	if platform {
+		if req.Visibility == "" {
+			req.Visibility = "public"
+		}
+	} else {
+		lookupWS = &req.WorkspaceID
+		if req.Visibility == "" {
+			req.Visibility = "workspace"
+		}
+		if code, msg := s.checkAssetUploadAllowed(req.WorkspaceID, req.SizeBytes); code != 0 {
+			c.JSON(code, gin.H{"error": msg})
+			return
+		}
 	}
 
 	// Ensure the catalog row exists for this logical key.
-	existing, err := s.getAssetByName(&req.WorkspaceID, req.Kind, req.Name, req.Version)
+	existing, err := s.getAssetByName(lookupWS, req.Kind, req.Name, req.Version)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server error"})
 		return
@@ -340,9 +352,13 @@ func (s *Server) handleInternalAssetUploadGrant(c *gin.Context) {
 		if len(req.Metadata) > 0 {
 			meta, _ = json.Marshal(req.Metadata)
 		}
-		ws := req.WorkspaceID
+		var wsPtr *string
+		if !platform {
+			ws := req.WorkspaceID
+			wsPtr = &ws
+		}
 		a := &Asset{
-			WorkspaceID: &ws,
+			WorkspaceID: wsPtr,
 			Kind:        req.Kind,
 			Name:        req.Name,
 			Version:     req.Version,
