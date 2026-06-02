@@ -391,6 +391,11 @@ type internalHeartbeatReq struct {
 	// (Track 3). Empty = module doesn't participate in self-update.
 	OS   string `json:"os,omitempty"`
 	Arch string `json:"arch,omitempty"`
+	// PublicBaseURL: the plugin's externally-reachable origin (e.g.
+	// "https://hosts.4950.store:2443"); joined with ui_routes paths to
+	// build absolute links in the shared platform nav (GET /api/nav).
+	// Preserve-on-empty, same as UIRoutes.
+	PublicBaseURL string `json:"public_base_url,omitempty"`
 }
 
 // ── F1 additions (Phase 2 handlers prep) ─────────────────────────
@@ -774,7 +779,7 @@ func (s *Server) handleInternalHeartbeat(c *gin.Context) {
 		internalErr(c, http.StatusForbidden, "heartbeat name does not match auth header")
 		return
 	}
-	if err := s.updatePluginHeartbeat(req.Name, req.Version, req.Endpoint, []byte(req.UIRoutes), []byte(req.APIRoutes)); err != nil {
+	if err := s.updatePluginHeartbeat(req.Name, req.Version, req.Endpoint, req.PublicBaseURL, []byte(req.UIRoutes), []byte(req.APIRoutes)); err != nil {
 		internalErr(c, http.StatusInternalServerError, "heartbeat write failed")
 		return
 	}
