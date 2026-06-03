@@ -249,24 +249,30 @@ func (s *Server) handleSiteIconUpload(c *gin.Context) {
 		return
 	}
 
-	iconURL := "/uploads/" + filename
+	// Single-write to the central assets catalog + a permanent public
+	// share link. The staged file is transient (kept only to hash +
+	// register); icon_url becomes an ABSOLUTE share url that resolves from
+	// any subdomain (the relative /uploads/ form 404'd cross-origin).
+	iconURL, assetID, mErr := s.migrateSiteIconFileToAsset(dstPath, contentType, c.GetString("user_id"))
+	_ = os.Remove(dstPath)
+	if mErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "资产保存失败"})
+		return
+	}
 
 	var oldIcon string
 	if settings, err := s.getSiteSettings(); err == nil && settings != nil {
 		oldIcon = settings.IconURL
 	}
 	if oldIcon != "" && strings.HasPrefix(oldIcon, "/uploads/") {
-		oldPath := filepath.Join(s.uploadDir, filepath.Base(oldIcon))
-		if oldPath != dstPath {
-			_ = os.Remove(oldPath)
-		}
+		_ = os.Remove(filepath.Join(s.uploadDir, filepath.Base(oldIcon)))
 	}
 
 	if err := s.updateSiteIcon(iconURL); err != nil {
-		_ = os.Remove(dstPath)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
 		return
 	}
+	_ = s.setSiteIconAsset(assetID)
 
 	settings, err := s.getSiteSettings()
 	if err != nil {
