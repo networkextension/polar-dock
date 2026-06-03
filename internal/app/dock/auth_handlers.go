@@ -165,8 +165,9 @@ func (s *Server) handleLogin(c *gin.Context) {
 	s.recordLoginEvent(c, user.ID, "password", deviceType)
 
 	jsonMessage(c, http.StatusOK, "auth.login_success", gin.H{
-		"user_id":  user.ID,
-		"username": user.Username,
+		"user_id":           user.ID,
+		"username":          user.Username,
+		"access_expires_in": int(AccessTokenTTL / time.Second),
 	})
 }
 
@@ -189,7 +190,9 @@ func (s *Server) handleTokenRefresh(c *gin.Context) {
 	}
 
 	s.setAuthCookies(c, accessToken, newRefresh)
-	jsonMessage(c, http.StatusOK, "auth.token_refreshed", nil)
+	jsonMessage(c, http.StatusOK, "auth.token_refreshed", gin.H{
+		"access_expires_in": int(AccessTokenTTL / time.Second),
+	})
 }
 
 func (s *Server) handleLogout(c *gin.Context) {
