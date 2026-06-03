@@ -14,9 +14,11 @@ const (
 	// the token doesn't accompany every API call.
 	RefreshCookiePath = "/api/token"
 	// AccessTokenTTL controls the access cookie Max-Age and the Redis TTL
-	// of the access token record. Kept short so a leaked token expires
-	// quickly.
-	AccessTokenTTL = 30 * time.Minute
+	// of the access token record. 24h so an active session survives a full
+	// workday (and a dock restart) without re-login; the web client also
+	// refreshes proactively when <1h remains (refresh rotation limits the
+	// leaked-token window in practice).
+	AccessTokenTTL = 24 * time.Hour
 	// RefreshTokenTTL controls the refresh cookie Max-Age and the Redis
 	// TTL of the refresh token record. Refresh rotation on use means a
 	// clone is detected long before this window elapses.
@@ -36,22 +38,22 @@ const (
 )
 
 type Config struct {
-	Addr                string
-	PostgresDSN         string
-	RedisAddr           string
-	RedisPassword       string
-	RedisDB             int
-	RedisPrefix         string
-	MarkdownDir         string
-	UploadDir           string
-	GeoLiteDBPath       string
-	PasskeyRPID         string
-	PasskeyOrigin       string
+	Addr          string
+	PostgresDSN   string
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+	RedisPrefix   string
+	MarkdownDir   string
+	UploadDir     string
+	GeoLiteDBPath string
+	PasskeyRPID   string
+	PasskeyOrigin string
 	PasskeyRPName string
 	// AIAgent* env vars were removed: the system AI agent is now
 	// configured via the llm_configs row marked is_system=TRUE.
 	// See store.go::getSystemLLMConfig.
-	ApplePushTopic string
+	ApplePushTopic      string
 	ApplePushTopicDev   string
 	ApplePushTopicProd  string
 	ApplePushKeyID      string
