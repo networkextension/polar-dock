@@ -384,6 +384,12 @@ func NewServer(cfg Config) (*Server, error) {
 		log.Printf("teams: resource workspace_id backfill failed: %v", err)
 	}
 
+	// Site-icon → assets: ensure the tracking column, then self-migrate a
+	// legacy local /uploads logo into the catalog so its url is absolute
+	// (resolves cross-origin on every subdomain). Idempotent.
+	server.ensureSiteIconAssetColumn()
+	go server.backfillSiteIconAssetOnce()
+
 	// R1c / Plan B: in-place convert every kind='personal' team to
 	// kind='team'. MUST run after backfillResourceWorkspaceIDs (whose
 	// legacy NULL backfill still keys on kind='personal') and before
