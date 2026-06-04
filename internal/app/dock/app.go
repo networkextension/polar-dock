@@ -377,6 +377,12 @@ func NewServer(cfg Config) (*Server, error) {
 	// to exist before the lookup.
 	server.bootstrapRootTeam()
 
+	// RBAC foundation: ensure the role/permission tables + seed system roles
+	// (idempotent). Behavior-preserving — Can() bridges to legacy team roles.
+	if err := server.ensureRBACSchema(context.Background()); err != nil {
+		log.Printf("rbac: ensure schema failed: %v", err)
+	}
+
 	// T6-A: populate workspace_id on legacy resource rows from each
 	// owner's personal team. Idempotent. Must run after the personal
 	// team backfill above so the lookup never misses.
@@ -844,6 +850,7 @@ func (s *Server) registerRoutes() {
 		api.POST("/llm-configs", s.AuthMiddleware(), s.handleLLMConfigCreate)
 		api.GET("/llm-configs/shared/:shareId", s.AuthMiddleware(), s.handleLLMConfigGetByShareID)
 		api.PUT("/llm-configs/:id", s.AuthMiddleware(), s.handleLLMConfigUpdate)
+		api.POST("/llm-configs/:id/platform", s.AuthMiddleware(), s.handleLLMConfigSetPlatform) // 标平台级（站点管理员）→ 全工作区可见
 		api.DELETE("/llm-configs/:id", s.AuthMiddleware(), s.handleLLMConfigDelete)
 		// LLM billing (B1) — shared-config marketplace, applications,
 		// and per-team budgets.
@@ -1143,6 +1150,12 @@ func (s *Server) registerRoutes() {
 		// chained on team-scoped routes (replaces inline role checks).
 		api.GET("/teams", s.AuthMiddleware(), s.handleTeamList)
 		api.POST("/teams", s.AuthMiddleware(), s.handleTeamCreate)
+		// RBAC (foundation): effective permissions for UI gating, the
+		// permission catalog, and per-workspace member-role management.
+		api.GET("/me/permissions", s.AuthMiddleware(), s.handleMyPermissions)
+		api.GET("/rbac/permissions", s.AuthMiddleware(), s.handleRBACCatalog)
+		api.GET("/teams/:id/member-roles", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleListMemberRoles)
+		api.POST("/teams/:id/member-roles", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleAssignMemberRole)
 		api.GET("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamDetail)
 		api.PUT("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamUpdate)
 		api.DELETE("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleOwner), s.handleTeamDelete)
