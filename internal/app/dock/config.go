@@ -183,6 +183,14 @@ type Config struct {
 	// a per-handler resource gate (see rbac.go). Rollback = unset the env.
 	PolarEnforceLLMAdmin bool
 
+	// PolarEnforceResourceRBAC: extends the per-handler Can() gate (default off)
+	// to bot (bot:admin), asset (asset:write) and prompt (prompt:admin) writes.
+	// bot/asset are workspace-scoped (member keeps access; viewer tightened out);
+	// prompt is site-scoped (site-admin OR a root-team prompt:admin grant). When
+	// false the legacy gates stand (bot/asset = any member; prompt = site-admin),
+	// so behavior-preserving until opt-in via POLAR_ENFORCE_RESOURCE_RBAC=true.
+	PolarEnforceResourceRBAC bool
+
 	// PolarWorkspaceMounts: 南北向 resource-sharing axis (default off). When
 	// true, list queries that opt in (currently LLM configs) union resources
 	// from workspaces MOUNTED into the active workspace via workspace_mounts.

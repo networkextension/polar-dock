@@ -3861,12 +3861,16 @@ func (s *Server) listLLMConfigs(workspaceID string) ([]LLMConfig, error) {
 	// configs (上下向 inheritance, always). llmConfigWorkspaceScope returns
 	// just [workspaceID] when mounts are off, so this is behavior-preserving.
 	scope := s.llmConfigWorkspaceScope(workspaceID)
+	// Plus any single-resource mounts (specific config ids mounted in), so a
+	// whole-workspace mount isn't required to share one model. Empty when
+	// POLAR_WORKSPACE_MOUNTS is off → behavior-preserving.
+	mountedIDs := s.llmConfigMountedIDs(workspaceID)
 	rows, err := s.db.Query(
 		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, is_platform, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), is_system, created_at, updated_at
 		   FROM llm_configs
-		  WHERE workspace_id = ANY($1) OR is_platform = TRUE
+		  WHERE workspace_id = ANY($1) OR is_platform = TRUE OR id = ANY($2)
 		  ORDER BY is_platform ASC, updated_at DESC, id DESC`,
-		pq.Array(scope),
+		pq.Array(scope), pq.Array(mountedIDs),
 	)
 	if err != nil {
 		return nil, err
