@@ -3852,11 +3852,15 @@ func (s *Server) getUserByUsername(username string) (*User, error) {
 }
 
 func (s *Server) listLLMConfigs(workspaceID string) ([]LLMConfig, error) {
+	// A config is visible in a workspace if it's owned by that workspace OR
+	// flagged platform-level (is_platform) — so a config set up once at the
+	// platform level shows in every workspace (the "utility resource flows
+	// down" model) instead of forcing a re-create per workspace.
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), is_system, created_at, updated_at
+		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, is_platform, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), is_system, created_at, updated_at
 		   FROM llm_configs
-		  WHERE workspace_id = $1
-		  ORDER BY updated_at DESC, id DESC`,
+		  WHERE workspace_id = $1 OR is_platform = TRUE
+		  ORDER BY is_platform ASC, updated_at DESC, id DESC`,
 		workspaceID,
 	)
 	if err != nil {
@@ -3867,12 +3871,19 @@ func (s *Server) listLLMConfigs(workspaceID string) ([]LLMConfig, error) {
 	items := make([]LLMConfig, 0)
 	for rows.Next() {
 		var item LLMConfig
-		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.IsSystem, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &item.WorkspaceID, &item.ShareID, &item.Shared, &item.IsPlatform, &item.Name, &item.BaseURL, &item.Model, &item.SystemPrompt, &item.Streaming, &item.HasAPIKey, &item.ProxyURL, &item.IsSystem, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// setLLMConfigPlatform flags/unflags a config as platform-level (visible in
+// every workspace). Site-admin only — it widens visibility platform-wide.
+func (s *Server) setLLMConfigPlatform(id int64, isPlatform bool) error {
+	_, err := s.db.Exec(`UPDATE llm_configs SET is_platform = $2, updated_at = NOW() WHERE id = $1`, id, isPlatform)
+	return err
 }
 
 func (s *Server) getLLMConfigForOwner(workspaceID string, id int64) (*LLMConfig, string, error) {

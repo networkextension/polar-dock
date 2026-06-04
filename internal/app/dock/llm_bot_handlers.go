@@ -22,6 +22,44 @@ func (s *Server) handleLLMConfigList(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"configs": items})
 }
 
+// POST /api/llm-configs/:id/platform  {is_platform: bool}  (site-admin only)
+// Flags an LLM config platform-level → visible in EVERY workspace, so you
+// configure a model once instead of per-workspace. Platform-wide visibility
+// is a site-admin decision; audited.
+func (s *Server) handleLLMConfigSetPlatform(c *gin.Context) {
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	admin, err := s.IsSiteAdmin(userID)
+	if err != nil || !admin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "site admin only"})
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad id"})
+		return
+	}
+	var body struct {
+		IsPlatform bool `json:"is_platform"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad json"})
+		return
+	}
+	if err := s.setLLMConfigPlatform(id, body.IsPlatform); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	s.LogAdminAction(c, AdminAuditIn{
+		Category: AuditCatConfig, Action: "llm_config.set_platform",
+		TargetKind: "llm_config", TargetID: strconv.FormatInt(id, 10),
+		Payload: map[string]any{"is_platform": body.IsPlatform},
+	})
+	c.JSON(http.StatusOK, gin.H{"id": id, "is_platform": body.IsPlatform})
+}
+
 func (s *Server) handleLLMConfigTest(c *gin.Context) {
 	var req struct {
 		BaseURL      string `json:"base_url" binding:"required"`
