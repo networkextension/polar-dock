@@ -183,6 +183,14 @@ type Config struct {
 	// a per-handler resource gate (see rbac.go). Rollback = unset the env.
 	PolarEnforceLLMAdmin bool
 
+	// PolarWorkspaceMounts: 南北向 resource-sharing axis (default off). When
+	// true, list queries that opt in (currently LLM configs) union resources
+	// from workspaces MOUNTED into the active workspace via workspace_mounts.
+	// When false the mount table + CRUD still work but no query consults them,
+	// so visibility is unchanged. See doc/arch/workspace-resource-visibility.md.
+	// Opt in via POLAR_WORKSPACE_MOUNTS=true.
+	PolarWorkspaceMounts bool
+
 	// MetricsToken gates GET /metrics. When unset the endpoint returns
 	// 404 (fail-closed); when set, the request must carry
 	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's

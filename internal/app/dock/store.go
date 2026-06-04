@@ -3856,12 +3856,17 @@ func (s *Server) listLLMConfigs(workspaceID string) ([]LLMConfig, error) {
 	// flagged platform-level (is_platform) — so a config set up once at the
 	// platform level shows in every workspace (the "utility resource flows
 	// down" model) instead of forcing a re-create per workspace.
+	// Visibility scope: the workspace itself + any workspaces MOUNTED into it
+	// (南北向 sharing, when POLAR_WORKSPACE_MOUNTS is on) + platform-level
+	// configs (上下向 inheritance, always). llmConfigWorkspaceScope returns
+	// just [workspaceID] when mounts are off, so this is behavior-preserving.
+	scope := s.llmConfigWorkspaceScope(workspaceID)
 	rows, err := s.db.Query(
 		`SELECT id, owner_user_id, COALESCE(workspace_id, ''), share_id, shared, is_platform, name, base_url, model, system_prompt, streaming, (api_key <> '') AS has_api_key, COALESCE(proxy_url, ''), is_system, created_at, updated_at
 		   FROM llm_configs
-		  WHERE workspace_id = $1 OR is_platform = TRUE
+		  WHERE workspace_id = ANY($1) OR is_platform = TRUE
 		  ORDER BY is_platform ASC, updated_at DESC, id DESC`,
-		workspaceID,
+		pq.Array(scope),
 	)
 	if err != nil {
 		return nil, err
