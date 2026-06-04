@@ -114,6 +114,10 @@ type Server struct {
 	// See config.go: PolarEnforceLLMAdmin. Default off = behavior-preserving.
 	enforceLLMAdmin bool
 
+	// 南北向 flag: union mounted-source resources into list queries.
+	// See config.go: PolarWorkspaceMounts. Default off = visibility unchanged.
+	workspaceMounts bool
+
 	// assetWarmupInFlight dedups concurrent P4c warm-pull triggers.
 	// Keyed by warmupKey{AssetID, Region}; value is struct{}.
 	// Cleared when the goroutine finishes. See asset_warmup.go.
@@ -251,6 +255,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.polarAssetsUseProvider = cfg.PolarAssetsUseProvider
 	server.enforceTeamStatus = cfg.PolarEnforceTeamStatus
 	server.enforceLLMAdmin = cfg.PolarEnforceLLMAdmin
+	server.workspaceMounts = cfg.PolarWorkspaceMounts
 	server.polarAssetsPostsDualWrite = cfg.PolarAssetsPostsDualWrite
 	if cfg.PolarAssetsUseProvider {
 		log.Printf("assets: provider 302 path ENABLED (POLAR_ASSETS_USE_PROVIDER=true)")
@@ -386,6 +391,13 @@ func NewServer(cfg Config) (*Server, error) {
 	// (idempotent). Behavior-preserving — Can() bridges to legacy team roles.
 	if err := server.ensureRBACSchema(context.Background()); err != nil {
 		log.Printf("rbac: ensure schema failed: %v", err)
+	}
+
+	// 南北向 resource mounts: ensure workspace_mounts (idempotent). The table
+	// + CRUD work regardless of the consumption flag; only list queries that
+	// opt in consult it, and only when POLAR_WORKSPACE_MOUNTS=true.
+	if err := server.ensureMountsSchema(context.Background()); err != nil {
+		log.Printf("mounts: ensure schema failed: %v", err)
 	}
 
 	// T6-A: populate workspace_id on legacy resource rows from each
@@ -1165,6 +1177,9 @@ func (s *Server) registerRoutes() {
 		api.POST("/teams/:id/roles", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleCreateRole)
 		api.PUT("/teams/:id/roles/:roleId", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleUpdateRole)
 		api.DELETE("/teams/:id/roles/:roleId", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleDeleteRole)
+		api.GET("/teams/:id/mounts", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleListMounts)
+		api.POST("/teams/:id/mounts", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleCreateMount)
+		api.DELETE("/teams/:id/mounts/:mountId", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleDeleteMount)
 		api.GET("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamDetail)
 		api.PUT("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamUpdate)
 		api.DELETE("/teams/:id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleOwner), s.handleTeamDelete)

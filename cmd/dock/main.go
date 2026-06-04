@@ -128,6 +128,10 @@ func main() {
 		// granted llm:admin to whoever should manage models.
 		PolarEnforceLLMAdmin: os.Getenv("POLAR_ENFORCE_LLM_ADMIN") == "true",
 
+		// 南北向 workspace resource mounts. Default off; flip on .57 once
+		// a target workspace actually wants to mount a source's resources.
+		PolarWorkspaceMounts: os.Getenv("POLAR_WORKSPACE_MOUNTS") == "true",
+
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 
