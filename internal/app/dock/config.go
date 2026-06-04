@@ -172,6 +172,17 @@ type Config struct {
 	// POLAR_ASSETS_POSTS_DUAL_WRITE=true.
 	PolarAssetsPostsDualWrite bool
 
+	// PolarEnforceLLMAdmin: RBAC fine-grained gate (default off). When true,
+	// the LLM-config WRITE endpoints (create/update/delete) require the
+	// caller to hold the `llm:admin` permission in the active workspace
+	// (owner/admin/site-admin short-circuit; member/viewer or anyone without
+	// an explicit llm:admin role grant are blocked). When false (default)
+	// the legacy behavior stands — any workspace member may edit configs —
+	// so this is behavior-preserving until an operator opts in via
+	// POLAR_ENFORCE_LLM_ADMIN=true. The first concrete wiring of Can() into
+	// a per-handler resource gate (see rbac.go). Rollback = unset the env.
+	PolarEnforceLLMAdmin bool
+
 	// MetricsToken gates GET /metrics. When unset the endpoint returns
 	// 404 (fail-closed); when set, the request must carry
 	// `Authorization: Bearer <MetricsToken>`. Configure Prometheus's

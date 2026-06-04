@@ -96,6 +96,9 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !s.gateCan(c, "llm:admin", s.enforceLLMAdmin) {
+		return
+	}
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
 	var req struct {
@@ -199,6 +202,9 @@ func (s *Server) handleLLMConfigCreate(c *gin.Context) {
 func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
+		return
+	}
+	if !s.gateCan(c, "llm:admin", s.enforceLLMAdmin) {
 		return
 	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -311,6 +317,9 @@ func (s *Server) handleLLMConfigUpdate(c *gin.Context) {
 func (s *Server) handleLLMConfigDelete(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
+		return
+	}
+	if !s.gateCan(c, "llm:admin", s.enforceLLMAdmin) {
 		return
 	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)

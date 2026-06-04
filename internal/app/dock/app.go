@@ -110,6 +110,10 @@ type Server struct {
 	// See config.go: PolarEnforceTeamStatus.
 	enforceTeamStatus bool
 
+	// RBAC flag: require llm:admin permission to write LLM configs.
+	// See config.go: PolarEnforceLLMAdmin. Default off = behavior-preserving.
+	enforceLLMAdmin bool
+
 	// assetWarmupInFlight dedups concurrent P4c warm-pull triggers.
 	// Keyed by warmupKey{AssetID, Region}; value is struct{}.
 	// Cleared when the goroutine finishes. See asset_warmup.go.
@@ -246,6 +250,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// per-dock from env, default 32).
 	server.polarAssetsUseProvider = cfg.PolarAssetsUseProvider
 	server.enforceTeamStatus = cfg.PolarEnforceTeamStatus
+	server.enforceLLMAdmin = cfg.PolarEnforceLLMAdmin
 	server.polarAssetsPostsDualWrite = cfg.PolarAssetsPostsDualWrite
 	if cfg.PolarAssetsUseProvider {
 		log.Printf("assets: provider 302 path ENABLED (POLAR_ASSETS_USE_PROVIDER=true)")
