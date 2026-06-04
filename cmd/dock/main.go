@@ -123,6 +123,11 @@ func main() {
 		// building the post-image asset inventory.
 		PolarAssetsPostsDualWrite: os.Getenv("POLAR_ASSETS_POSTS_DUAL_WRITE") == "true",
 
+		// RBAC fine-grained gate: require llm:admin to edit LLM configs.
+		// Default off (behavior-preserving). Flip on .57 once owners have
+		// granted llm:admin to whoever should manage models.
+		PolarEnforceLLMAdmin: os.Getenv("POLAR_ENFORCE_LLM_ADMIN") == "true",
+
 		// /metrics gate. Empty = endpoint disabled.
 		MetricsToken: os.Getenv("METRICS_TOKEN"),
 

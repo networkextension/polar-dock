@@ -281,6 +281,35 @@ func (s *Server) handleDeleteRole(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"deleted": roleID})
 }
 
+// gateCan is the per-handler RBAC gate. When enforced is false it is a no-op
+// (returns true) — preserving legacy behavior under a feature flag. When
+// enforced is true it resolves the caller + active workspace and checks
+// Can(permKey); on failure it writes 403 and returns false so the handler can
+// `if !s.gateCan(c, "llm:admin", s.enforceLLMAdmin) { return }`.
+func (s *Server) gateCan(c *gin.Context, permKey string, enforced bool) bool {
+	if !enforced {
+		return true
+	}
+	userID, ok := requireUserID(c)
+	if !ok {
+		return false
+	}
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return false
+	}
+	can, err := s.Can(userID, workspaceID, permKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return false
+	}
+	if !can {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要 " + permKey + " 权限"})
+		return false
+	}
+	return true
+}
+
 // replaceRolePermissions sets a role's permission set to exactly permKeys.
 func (s *Server) replaceRolePermissions(roleID int64, permKeys []string) {
 	_, _ = s.db.Exec(`DELETE FROM rbac_role_permissions WHERE role_id=$1`, roleID)
