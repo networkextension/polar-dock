@@ -1,5 +1,5 @@
 {
-  "count": 272,
+  "count": 297,
   "endpoints": [
     {
       "method": "GET",
@@ -132,6 +132,14 @@
           "type": "string"
         }
       ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/assets/migrate-post-media",
+      "handler": "handleMigratePostMedia",
+      "auth": "admin",
+      "body": [],
+      "query": []
     },
     {
       "method": "GET",
@@ -409,10 +417,77 @@
     },
     {
       "method": "POST",
+      "path": "/api/admin/plugin-modules/:name/releases",
+      "handler": "handleAdminPluginModulePublishRelease",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "version",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "os",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "arch",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "sha256",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "dist_rel_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "channel",
+          "type": "string"
+        },
+        {
+          "name": "notes",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/api/admin/plugin-modules/:name/rotate-key",
       "handler": "handleAdminPluginModuleRotateKey",
       "auth": "admin",
       "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/plugin-modules/:name/update",
+      "handler": "handleAdminPluginModuleSetUpdate",
+      "auth": "admin",
+      "body": [
+        {
+          "name": "version",
+          "type": "string"
+        }
+      ],
       "query": [],
       "path_params": [
         {
@@ -704,6 +779,14 @@
       "query": []
     },
     {
+      "method": "POST",
+      "path": "/api/agent/tasks/claim",
+      "handler": "handleAgentTaskClaim",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
       "method": "GET",
       "path": "/api/agent/tokens",
       "handler": "handleAgentTokenList",
@@ -764,28 +847,6 @@
       "headers": [
         {
           "name": "Authorization",
-          "type": "string"
-        }
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents",
-      "handler": "handleAgentList",
-      "auth": "user",
-      "body": [],
-      "query": []
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/:id",
-      "handler": "handleAgentDetail",
-      "auth": "user",
-      "body": [],
-      "query": [],
-      "path_params": [
-        {
-          "name": "id",
           "type": "string"
         }
       ]
@@ -1534,20 +1595,6 @@
     },
     {
       "method": "GET",
-      "path": "/api/hosts/:id/agents",
-      "handler": "handleAgentsByHost",
-      "auth": "user",
-      "body": [],
-      "query": [],
-      "path_params": [
-        {
-          "name": "id",
-          "type": "string"
-        }
-      ]
-    },
-    {
-      "method": "GET",
       "path": "/api/invitations/:token",
       "handler": "handleInvitationPublicPreview",
       "body": [],
@@ -1781,6 +1828,25 @@
         {
           "name": "proxy_url",
           "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/llm-configs/:id/platform",
+      "handler": "handleLLMConfigSetPlatform",
+      "auth": "user",
+      "body": [
+        {
+          "name": "is_platform",
+          "type": "bool"
         }
       ],
       "query": [],
@@ -2366,6 +2432,35 @@
       ]
     },
     {
+      "method": "GET",
+      "path": "/api/me/permissions",
+      "handler": "handleMyPermissions",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/media/:id",
+      "handler": "handlePublicMedia",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/nav",
+      "handler": "handleNav",
+      "auth": "user",
+      "body": [],
+      "query": []
+    },
+    {
       "method": "POST",
       "path": "/api/passkey/login/begin",
       "handler": "handlePasskeyLoginBegin",
@@ -2454,6 +2549,32 @@
       "auth": "user",
       "body": [],
       "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugin/:name/binary",
+      "handler": "handlePluginBinary",
+      "body": [],
+      "query": [
+        {
+          "name": "version",
+          "type": "string"
+        },
+        {
+          "name": "os",
+          "type": "string"
+        },
+        {
+          "name": "arch",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
     },
     {
       "method": "GET",
@@ -2920,6 +3041,19 @@
     },
     {
       "method": "GET",
+      "path": "/api/proxy/v1/models",
+      "handler": "handleLLMProxyModels",
+      "body": [],
+      "query": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/api/public/markdown/:id",
       "handler": "handlePublicMarkdownRead",
       "body": [],
@@ -2946,6 +3080,14 @@
           "type": "string"
         }
       ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/rbac/permissions",
+      "handler": "handleRBACCatalog",
+      "auth": "user",
+      "body": [],
+      "query": []
     },
     {
       "method": "POST",
@@ -3668,6 +3810,47 @@
     },
     {
       "method": "GET",
+      "path": "/api/teams/:id/member-roles",
+      "handler": "handleListMemberRoles",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/teams/:id/member-roles",
+      "handler": "handleAssignMemberRole",
+      "auth": "user",
+      "body": [
+        {
+          "name": "user_id",
+          "type": "string"
+        },
+        {
+          "name": "role_key",
+          "type": "string"
+        },
+        {
+          "name": "revoke",
+          "type": "bool"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/api/teams/:id/members",
       "handler": "handleTeamMembers",
       "auth": "user",
@@ -3709,6 +3892,69 @@
     },
     {
       "method": "GET",
+      "path": "/api/teams/:id/mounts",
+      "handler": "handleListMounts",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/teams/:id/mounts",
+      "handler": "handleCreateMount",
+      "auth": "user",
+      "body": [
+        {
+          "name": "source_workspace_id",
+          "type": "string"
+        },
+        {
+          "name": "resource_kind",
+          "type": "string"
+        },
+        {
+          "name": "source_resource_id",
+          "type": "string"
+        },
+        {
+          "name": "mode",
+          "type": "string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/teams/:id/mounts/:mountId",
+      "handler": "handleDeleteMount",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "mountId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/api/teams/:id/plugin-requests",
       "handler": "handleTeamPluginRequestList",
       "auth": "user",
@@ -3740,6 +3986,92 @@
         }
       ],
       "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/teams/:id/roles",
+      "handler": "handleListRoles",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/teams/:id/roles",
+      "handler": "handleCreateRole",
+      "auth": "user",
+      "body": [
+        {
+          "name": "key",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "permission_keys",
+          "type": "[]string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/teams/:id/roles/:roleId",
+      "handler": "handleDeleteRole",
+      "auth": "user",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "roleId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/teams/:id/roles/:roleId",
+      "handler": "handleUpdateRole",
+      "auth": "user",
+      "body": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "permission_keys",
+          "type": "[]string"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "roleId",
+          "type": "string"
+        }
+      ]
     },
     {
       "method": "POST",
@@ -4166,6 +4498,182 @@
       "query": []
     },
     {
+      "method": "DELETE",
+      "path": "/internal/v1/assets/:id",
+      "handler": "handleInternalAssetDelete",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/assets/:id",
+      "handler": "handleInternalAssetGet",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/assets/:id/blob",
+      "handler": "handleInternalAssetBlob",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/assets/:id/download-url",
+      "handler": "handleInternalAssetDownloadURL",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/assets/by-name",
+      "handler": "handleInternalAssetGetByName",
+      "body": [],
+      "query": [
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "version",
+          "type": "string"
+        },
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/assets/by-sha256/:sha256",
+      "handler": "handleInternalAssetStatBySHA",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "sha256",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/assets/finalize",
+      "handler": "handleInternalAssetFinalize",
+      "body": [
+        {
+          "name": "asset_id",
+          "type": "int64"
+        },
+        {
+          "name": "provider_id",
+          "type": "int64"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/assets/upload-grant",
+      "handler": "handleInternalAssetUploadGrant",
+      "body": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "version",
+          "type": "string"
+        },
+        {
+          "name": "sha256",
+          "type": "string"
+        },
+        {
+          "name": "size_bytes",
+          "type": "int64"
+        },
+        {
+          "name": "mime",
+          "type": "string"
+        },
+        {
+          "name": "visibility",
+          "type": "string"
+        },
+        {
+          "name": "pinned",
+          "type": "bool"
+        },
+        {
+          "name": "source_url",
+          "type": "*string"
+        },
+        {
+          "name": "uploaded_by",
+          "type": "string"
+        },
+        {
+          "name": "metadata",
+          "type": "map[string]any"
+        }
+      ],
+      "query": []
+    },
+    {
       "method": "GET",
       "path": "/internal/v1/auth/verify",
       "handler": "handleInternalAuthVerify",
@@ -4173,6 +4681,10 @@
       "query": [
         {
           "name": "token",
+          "type": "string"
+        },
+        {
+          "name": "workspace_id",
           "type": "string"
         }
       ]
@@ -4459,6 +4971,18 @@
         {
           "name": "api_routes",
           "type": "json.RawMessage"
+        },
+        {
+          "name": "os",
+          "type": "string"
+        },
+        {
+          "name": "arch",
+          "type": "string"
+        },
+        {
+          "name": "public_base_url",
+          "type": "string"
         }
       ],
       "query": []
