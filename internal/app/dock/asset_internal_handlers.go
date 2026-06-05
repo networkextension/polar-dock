@@ -317,7 +317,14 @@ func (s *Server) handleInternalAssetUploadGrant(c *gin.Context) {
 		if req.Visibility == "" {
 			req.Visibility = "workspace"
 		}
-		if code, msg := s.checkAssetUploadAllowed(req.WorkspaceID, req.SizeBytes); code != 0 {
+		// checkAssetUploadAllowed returns 200 on success (NOT 0) and a 4xx/5xx
+		// with a message on rejection — same convention the /api/assets and
+		// asset_insert callers use. Comparing against 0 treated the 200-OK
+		// allow as a rejection, aborting EVERY tenant (workspace-scoped)
+		// asset upload with "200 {\"error\":\"\"}" — which the SDK then failed
+		// on at the meta step. Platform assets (workspace_id=="") skip this
+		// branch, which is why only tenant uploads (music/lawyer/expense) broke.
+		if code, msg := s.checkAssetUploadAllowed(req.WorkspaceID, req.SizeBytes); code != http.StatusOK {
 			c.JSON(code, gin.H{"error": msg})
 			return
 		}
