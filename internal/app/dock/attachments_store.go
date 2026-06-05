@@ -235,6 +235,21 @@ func (s *Server) listAttachmentsForPost(postID int64) ([]Attachment, error) {
 	)
 }
 
+// attachmentOnPost reports whether the attachment is linked to any post
+// via post_attachments. Posts are globally readable (getPostByID has no
+// workspace filter), so an attachment that lives on a post is downloadable
+// by any authenticated caller regardless of their active workspace — this
+// aligns attachment download visibility with the post's own visibility.
+// Attachments NOT on a post (DM / private-doc) stay workspace-gated.
+func (s *Server) attachmentOnPost(attachmentID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM post_attachments WHERE attachment_id = $1)`,
+		attachmentID,
+	).Scan(&exists)
+	return exists, err
+}
+
 func (s *Server) listAttachmentsForChatMessage(messageID int64) ([]Attachment, error) {
 	return s.listAttachmentsByJoin(
 		`SELECT a.id, a.workspace_id, a.uploader_user_id, a.filename, a.mime_type, a.size_bytes,
