@@ -118,9 +118,20 @@ func (s *Server) handleAttachmentGet(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	if att == nil || att.DeletedAt != nil || att.WorkspaceID != workspaceID {
+	if att == nil || att.DeletedAt != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "附件不存在"})
 		return
+	}
+	if att.WorkspaceID != workspaceID {
+		onPost, err := s.attachmentOnPost(id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if !onPost {
+			c.JSON(http.StatusNotFound, gin.H{"error": "附件不存在"})
+			return
+		}
 	}
 	att.DownloadURL = att.attachmentDownloadURL()
 	c.JSON(http.StatusOK, gin.H{"attachment": att})
@@ -141,9 +152,25 @@ func (s *Server) handleAttachmentDownload(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	if att == nil || att.DeletedAt != nil || att.WorkspaceID != workspaceID {
+	if att == nil || att.DeletedAt != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "附件不存在"})
 		return
+	}
+	// Same-workspace callers always pass. For a cross-workspace caller,
+	// allow the download only when the attachment lives on a post —
+	// posts are globally readable, so their attachments must be too
+	// (otherwise a publicly visible post shows an undownloadable file).
+	// DM / private-doc attachments (not on any post) stay workspace-gated.
+	if att.WorkspaceID != workspaceID {
+		onPost, err := s.attachmentOnPost(id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if !onPost {
+			c.JSON(http.StatusNotFound, gin.H{"error": "附件不存在"})
+			return
+		}
 	}
 	if att.StorageKind == AttachmentStorageRemote {
 		c.Redirect(http.StatusFound, att.StorageRef)
