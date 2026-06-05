@@ -128,6 +128,10 @@ func main() {
 		// granted llm:admin to whoever should manage models.
 		PolarEnforceLLMAdmin: os.Getenv("POLAR_ENFORCE_LLM_ADMIN") == "true",
 
+		// RBAC gates for bot/asset/prompt writes. Default off; flip with
+		// llm-admin once owners have granted the relevant capabilities.
+		PolarEnforceResourceRBAC: os.Getenv("POLAR_ENFORCE_RESOURCE_RBAC") == "true",
+
 		// 南北向 workspace resource mounts. Default off; flip on .57 once
 		// a target workspace actually wants to mount a source's resources.
 		PolarWorkspaceMounts: os.Getenv("POLAR_WORKSPACE_MOUNTS") == "true",

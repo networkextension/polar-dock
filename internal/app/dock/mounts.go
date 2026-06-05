@@ -64,6 +64,50 @@ func (s *Server) mountedSourceWorkspaceIDs(targetWorkspaceID, kind string) ([]st
 	return out, rows.Err()
 }
 
+// mountedSourceResourceIDs returns the specific source_resource_id values
+// (single-resource mounts, source_resource_id NOT NULL) mounted into the
+// target for `kind`. Whole-kind mounts (NULL) are handled by
+// mountedSourceWorkspaceIDs; this is the per-resource granularity.
+func (s *Server) mountedSourceResourceIDs(targetWorkspaceID, kind string) ([]string, error) {
+	if !s.workspaceMounts || targetWorkspaceID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query(
+		`SELECT source_resource_id FROM workspace_mounts
+		  WHERE workspace_id = $1 AND (resource_kind = $2 OR resource_kind = '*')
+		    AND source_resource_id IS NOT NULL`,
+		targetWorkspaceID, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil && id != "" {
+			out = append(out, id)
+		}
+	}
+	return out, rows.Err()
+}
+
+// llmConfigMountedIDs returns the specific llm_config ids mounted into the
+// workspace (single-resource mounts), parsed to int64. Whole-kind mounts are
+// covered by llmConfigWorkspaceScope. Empty when mounts are off.
+func (s *Server) llmConfigMountedIDs(workspaceID string) []int64 {
+	ids, err := s.mountedSourceResourceIDs(workspaceID, "llm_config")
+	if err != nil {
+		return nil
+	}
+	out := make([]int64, 0, len(ids))
+	for _, raw := range ids {
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // isWorkspaceMember reports whether the user holds any effective role in the
 // workspace (legacy team_members.role or an explicit rbac_member_roles grant).
 func (s *Server) isWorkspaceMember(userID, workspaceID string) bool {

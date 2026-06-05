@@ -310,6 +310,37 @@ func (s *Server) gateCan(c *gin.Context, permKey string, enforced bool) bool {
 	return true
 }
 
+// rootTeamID returns the site root team's id (teams.is_root = TRUE).
+func (s *Server) rootTeamID() (string, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM teams WHERE is_root = TRUE LIMIT 1`).Scan(&id)
+	return id, err
+}
+
+// siteGateCan gates a SITE-level resource (e.g. global prompt templates). When
+// enforced is false it requires site-admin (preserving the AdminMiddleware
+// behavior these handlers had). When enforced is true it ALSO allows a holder
+// of permKey in the ROOT team — so a site admin can delegate (e.g. prompt:admin)
+// without granting full site-admin. Writes 403 + returns false on failure.
+func (s *Server) siteGateCan(c *gin.Context, permKey string, enforced bool) bool {
+	userID, ok := requireUserID(c)
+	if !ok {
+		return false
+	}
+	if admin, _ := s.IsSiteAdmin(userID); admin {
+		return true
+	}
+	if enforced {
+		if root, err := s.rootTeamID(); err == nil && root != "" {
+			if can, _ := s.Can(userID, root, permKey); can {
+				return true
+			}
+		}
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "需要站点管理员或 " + permKey + " 权限"})
+	return false
+}
+
 // replaceRolePermissions sets a role's permission set to exactly permKeys.
 func (s *Server) replaceRolePermissions(roleID int64, permKeys []string) {
 	_, _ = s.db.Exec(`DELETE FROM rbac_role_permissions WHERE role_id=$1`, roleID)

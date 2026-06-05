@@ -363,6 +363,9 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !s.gateCan(c, "bot:admin", s.enforceResourceRBAC) {
+		return
+	}
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
 	var req struct {
@@ -420,6 +423,9 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 func (s *Server) handleBotUserUpdate(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
+		return
+	}
+	if !s.gateCan(c, "bot:admin", s.enforceResourceRBAC) {
 		return
 	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -490,6 +496,9 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 func (s *Server) handleBotUserDelete(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
+		return
+	}
+	if !s.gateCan(c, "bot:admin", s.enforceResourceRBAC) {
 		return
 	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)

@@ -46,6 +46,12 @@ type promptTemplateUpdateRequest struct {
 }
 
 func (s *Server) handlePromptTemplateUpdate(c *gin.Context) {
+	// Site-level gate: site-admin always; when POLAR_ENFORCE_RESOURCE_RBAC is on,
+	// also a root-team prompt:admin grant (delegation). Replaces the route's old
+	// AdminMiddleware — default (flag off) is still site-admin only.
+	if !s.siteGateCan(c, "prompt:admin", s.enforceResourceRBAC) {
+		return
+	}
 	slug := strings.TrimSpace(c.Param("slug"))
 	var req promptTemplateUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

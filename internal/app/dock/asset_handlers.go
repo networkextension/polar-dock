@@ -61,6 +61,9 @@ func (s *Server) handleAssetUpload(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !s.gateCan(c, "asset:write", s.enforceResourceRBAC) {
+		return
+	}
 	userID, ok := requireUserID(c)
 	if !ok {
 		return
@@ -408,6 +411,9 @@ func (s *Server) redirectToProviderBlob(c *gin.Context, a *Asset, callerRegion s
 func (s *Server) handleAssetDelete(c *gin.Context) {
 	workspaceID, ok := requireWorkspaceID(c)
 	if !ok {
+		return
+	}
+	if !s.gateCan(c, "asset:write", s.enforceResourceRBAC) {
 		return
 	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)

@@ -114,6 +114,10 @@ type Server struct {
 	// See config.go: PolarEnforceLLMAdmin. Default off = behavior-preserving.
 	enforceLLMAdmin bool
 
+	// RBAC flag: require bot:admin/asset:write/prompt:admin for those writes.
+	// See config.go: PolarEnforceResourceRBAC. Default off.
+	enforceResourceRBAC bool
+
 	// 南北向 flag: union mounted-source resources into list queries.
 	// See config.go: PolarWorkspaceMounts. Default off = visibility unchanged.
 	workspaceMounts bool
@@ -255,6 +259,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.polarAssetsUseProvider = cfg.PolarAssetsUseProvider
 	server.enforceTeamStatus = cfg.PolarEnforceTeamStatus
 	server.enforceLLMAdmin = cfg.PolarEnforceLLMAdmin
+	server.enforceResourceRBAC = cfg.PolarEnforceResourceRBAC
 	server.workspaceMounts = cfg.PolarWorkspaceMounts
 	server.polarAssetsPostsDualWrite = cfg.PolarAssetsPostsDualWrite
 	if cfg.PolarAssetsUseProvider {
@@ -855,7 +860,7 @@ func (s *Server) registerRoutes() {
 		// github.com/networkextension/polar-iosdist.
 		api.GET("/prompts", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateList)
 		api.GET("/prompts/:slug", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateGet)
-		api.PUT("/prompts/:slug", s.AuthMiddleware(), s.AdminMiddleware(), s.handlePromptTemplateUpdate)
+		api.PUT("/prompts/:slug", s.AuthMiddleware(), s.handlePromptTemplateUpdate) // site-admin OR prompt:admin (handler-gated)
 		api.GET("/site-settings/invite-codes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleInviteCodeList)
 		api.POST("/site-settings/invite-codes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleInviteCodeGenerate)
 		api.POST("/site-settings/icon", s.AuthMiddleware(), s.AdminMiddleware(), s.handleSiteIconUpload)

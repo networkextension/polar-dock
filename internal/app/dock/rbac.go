@@ -72,6 +72,9 @@ var rbacPermissionCatalog = []struct{ key, module, action, desc string }{
 	{"platform:admin", "platform", "admin", "站点级管理"},
 	{"team:manage", "team", "manage", "管理工作区成员与角色"},
 	{"llm:admin", "llm", "admin", "管理 LLM 配置（含标平台级）"},
+	{"bot:admin", "bot", "admin", "管理工作区 Bot"},
+	{"asset:write", "asset", "write", "上传/删除资产"},
+	{"prompt:admin", "prompt", "admin", "管理 Prompt 模板（站点级）"},
 	{"lawyer:use", "lawyer", "use", "访问律师模块"},
 	{"lawyer:doc:write", "lawyer", "doc:write", "上传/删除案件文档"},
 	{"lawyer:ai:run", "lawyer", "ai:run", "运行诊断/矩阵/策略/文书"},
@@ -80,8 +83,11 @@ var rbacPermissionCatalog = []struct{ key, module, action, desc string }{
 
 // systemRolePerms — what each global system role grants. owner/admin are
 // full-access (short-circuited in Can); listed here for queryability.
+// member keeps bot:admin + asset:write so the POLAR_ENFORCE_RESOURCE_RBAC
+// flag only tightens viewers out of those workspace resources (prompt:admin
+// is site-level, granted to owner/admin only).
 var systemRolePerms = map[string][]string{
-	"member": {"lawyer:use", "lawyer:doc:write", "lawyer:ai:run"},
+	"member": {"lawyer:use", "lawyer:doc:write", "lawyer:ai:run", "bot:admin", "asset:write"},
 	"viewer": {"lawyer:use"},
 }
 
