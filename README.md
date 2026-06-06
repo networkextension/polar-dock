@@ -137,21 +137,25 @@ Lives in its own repo: **[networkextension/polar-dock-ui](https://github.com/net
 The dock is the API + agent core. Everything else lives in its own repo
 under [networkextension/](https://github.com/networkextension):
 
-| Repo | Visibility | What it is |
-|---|---|---|
-| **[polar-dock-ui](https://github.com/networkextension/polar-dock-ui)** | private | The web UI — HTML pages + TypeScript bundles served in front of this dock. Built with esbuild → `dist/`. CI on every push. |
-| [polar-sdk](https://github.com/networkextension/polar-sdk) | public | Go SDK + HMAC plugin-token helpers shared by every plugin service |
-| [polar-agent](https://github.com/networkextension/polar-agent) | public | Local-side CLI: pairs a user's machine with a bot, runs skills (shell, VNC, MCP, library, …) |
-| [polar-hosts](https://github.com/networkextension/polar-hosts) | public | Hosts + skill catalog + workspace-scoped skill installs |
-| [polar-wg](https://github.com/networkextension/polar-wg) | public | wg-mac mesh control plane + Headscale-compat self-hosted coordinator |
-| [polar-library](https://github.com/networkextension/polar-library) | public | Reverse-engineering library: devices, firmwares, functions |
-| [polar-projects](https://github.com/networkextension/polar-projects) | public | PRD decompose → plan → task pickup |
-| [polar-video](https://github.com/networkextension/polar-video) | public | Video studio: provider dispatch, polling, render |
-| [polar-expense](https://github.com/networkextension/polar-expense) | public | Family expense ledger + OCR/multimodal extract |
-| [polar-latch](https://github.com/networkextension/polar-latch) | public | Latch profiles + rules + proxy |
-| [polar-packtunnel](https://github.com/networkextension/polar-packtunnel) | private | Pack-tunnel rules + proxy (split-out, not yet open) |
-| [polar-iosdist](https://github.com/networkextension/polar-iosdist) | private | iOS distribution + ASC + signing |
-| [polar-ui-common](https://github.com/networkextension/polar-ui-common) | private | Shared UI library used by plugin pages |
+CI badges are live — they track each public repo's latest GitHub Actions /
+checks status on `main`.
+
+| Repo | Visibility | CI | What it is |
+|---|---|---|---|
+| **[polar-dock-ui](https://github.com/networkextension/polar-dock-ui)** | private | — | The web UI — HTML pages + TypeScript bundles served in front of this dock. Built with esbuild → `dist/`. CI on every push. |
+| [polar-sdk](https://github.com/networkextension/polar-sdk) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-sdk/main)](https://github.com/networkextension/polar-sdk/actions) | Go SDK + HMAC plugin-token helpers shared by every plugin service |
+| [polar-agent](https://github.com/networkextension/polar-agent) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-agent/main)](https://github.com/networkextension/polar-agent/actions) | Local-side CLI: pairs a user's machine with a bot, runs skills (shell, VNC, MCP, library, …) |
+| [polar-hosts](https://github.com/networkextension/polar-hosts) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-hosts/main)](https://github.com/networkextension/polar-hosts/actions) | Hosts + skill catalog + workspace-scoped skill installs |
+| [polar-wg](https://github.com/networkextension/polar-wg) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-wg/main)](https://github.com/networkextension/polar-wg/actions) | wg-mac mesh control plane + Headscale-compat self-hosted coordinator |
+| [polar-library](https://github.com/networkextension/polar-library) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-library/main)](https://github.com/networkextension/polar-library/actions) | Reverse-engineering library: devices, firmwares, functions |
+| [polar-projects](https://github.com/networkextension/polar-projects) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-projects/main)](https://github.com/networkextension/polar-projects/actions) | PRD decompose → plan → task pickup |
+| [polar-video](https://github.com/networkextension/polar-video) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-video/main)](https://github.com/networkextension/polar-video/actions) | Video studio: provider dispatch, polling, render |
+| [polar-expense](https://github.com/networkextension/polar-expense) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-expense/main)](https://github.com/networkextension/polar-expense/actions) | Family expense ledger + OCR/multimodal extract |
+| [polar-latch](https://github.com/networkextension/polar-latch) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-latch/main)](https://github.com/networkextension/polar-latch/actions) | Latch profiles + rules + proxy |
+| [polar-music](https://github.com/networkextension/polar-music) | public | [![checks](https://img.shields.io/github/checks-status/networkextension/polar-music/main)](https://github.com/networkextension/polar-music/actions) | Private music library: audio in polar-assets, ID3 parse, signed-URL streaming, AI playlists |
+| [polar-packtunnel](https://github.com/networkextension/polar-packtunnel) | private | — | Pack-tunnel rules + proxy (split-out, not yet open) |
+| [polar-iosdist](https://github.com/networkextension/polar-iosdist) | private | — | iOS distribution + ASC + signing |
+| [polar-ui-common](https://github.com/networkextension/polar-ui-common) | private | — | Shared UI library used by plugin pages |
 
 Plugins talk back to this dock via the `/internal/v1/*` API (HMAC plugin
 tokens). See `doc/arch/internal-api-v1.md` for the contract and
