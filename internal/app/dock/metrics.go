@@ -72,6 +72,11 @@ type metrics struct {
 	// operator can spot which one is hitting the cap.
 	llmProxyQuotaExceeded *prometheus.CounterVec
 
+	// Open API tokens (P2).
+	apiTokenRequests      *prometheus.CounterVec
+	apiTokenLatency       *prometheus.HistogramVec
+	apiTokenQuotaExceeded *prometheus.CounterVec
+
 	// wg-mac metrics (wgDevicesAlive, wgHubsBound, wgRegisterTotal,
 	// wgHeartbeatTotal, wgStaleGCTotal, wgStaleGCRemoved,
 	// wgTokensExpiringSoon) moved to
@@ -207,6 +212,28 @@ func newMetrics() *metrics {
 			},
 			[]string{"token"},
 		),
+		apiTokenRequests: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_api_token_requests_total",
+				Help: "Count of /api/* requests authenticated by an open-API token, labelled by token, method and HTTP status code.",
+			},
+			[]string{"token", "method", "status"},
+		),
+		apiTokenLatency: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "polar_api_token_latency_seconds",
+				Help:    "End-to-end latency of open-API-token requests, labelled by token and method.",
+				Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
+			},
+			[]string{"token", "method"},
+		),
+		apiTokenQuotaExceeded: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "polar_api_token_quota_exceeded_total",
+				Help: "Count of open-API-token requests rejected (429) because the token's per-minute rate limit was exceeded.",
+			},
+			[]string{"token"},
+		),
 	}
 	reg.MustRegister(
 		m.httpRequests, m.httpLatency,
@@ -215,8 +242,30 @@ func newMetrics() *metrics {
 		m.agentAttached, m.researchDispatches, m.iosdistBuilds,
 		m.llmProxyE2E, m.llmProxyTTFT, m.llmProxyCompletion, m.llmProxyRequests,
 		m.llmUpstreamUp, m.llmProxyQuotaExceeded,
+		m.apiTokenRequests, m.apiTokenLatency, m.apiTokenQuotaExceeded,
 	)
 	return m
+}
+
+// recordAPITokenCall is the dock-side hook for every open-API-token request,
+// called after the handler chain finishes (success or error).
+func (m *metrics) recordAPITokenCall(tokenName, method string, status int, e2e time.Duration) {
+	if m == nil {
+		return
+	}
+	tokenName = labelOr(tokenName, "unknown")
+	method = labelOr(method, "GET")
+	statusStr := strconv.Itoa(status)
+	m.apiTokenRequests.WithLabelValues(tokenName, method, statusStr).Inc()
+	m.apiTokenLatency.WithLabelValues(tokenName, method).Observe(e2e.Seconds())
+}
+
+// recordAPITokenQuotaExceeded bumps the per-token 429 counter.
+func (m *metrics) recordAPITokenQuotaExceeded(tokenName string) {
+	if m == nil {
+		return
+	}
+	m.apiTokenQuotaExceeded.WithLabelValues(labelOr(tokenName, "unknown")).Inc()
 }
 
 // recordLLMProxyQuotaExceeded bumps the per-token quota-rejection counter.
