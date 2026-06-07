@@ -226,4 +226,11 @@ type Config struct {
 	// http://127.0.0.1:8095/internal/v1/hosts/touch in the standard
 	// .57-style deploy. Empty disables forwarding (legacy behavior).
 	PolarHostsTouchURL string
+
+	// PolarWGLinkURL is the wg-svc loopback endpoint dock posts to when an
+	// agent hello carries host_info.wg_pubkeys, to stamp wg_devices.host_id
+	// for the WG↔Hosts UI cross-link (doc/arch/wg-host-crosslink.md, P2).
+	// Set to http://127.0.0.1:<wg-port>/internal/v1/wg-devices/link in the
+	// standard .57-style deploy. Empty disables the cross-link backfill.
+	PolarWGLinkURL string
 }

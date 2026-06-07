@@ -39,23 +39,23 @@ func main() {
 	}
 
 	cfg := dock.Config{
-		Addr:                envOrDefault("ADDR", dock.DefaultAddr),
-		PostgresDSN:         envOrDefault("POSTGRES_DSN", dock.DefaultPostgresDSN),
-		RedisAddr:           envOrDefault("REDIS_ADDR", dock.DefaultRedisAddr),
-		RedisPassword:       os.Getenv("REDIS_PASSWORD"),
-		RedisDB:             redisDB,
-		RedisPrefix:         envOrDefault("REDIS_PREFIX", dock.DefaultRedisPrefix),
-		MarkdownDir:         envOrDefault("MARKDOWN_DIR", dock.DefaultMarkdownDir),
-		UploadDir:           envOrDefault("UPLOAD_DIR", dock.DefaultUploadDir),
-		GeoLiteDBPath:       envOrDefault("GEOLITE_DB_PATH", dock.DefaultGeoLiteDBPath),
-		PasskeyRPID:         envOrDefault("PASSKEY_RP_ID", dock.DefaultPasskeyRPID),
-		PasskeyOrigin:       envOrDefault("PASSKEY_ORIGIN", dock.DefaultPasskeyOrigin),
-		PasskeyRPName:       envOrDefault("PASSKEY_RP_NAME", dock.DefaultPasskeyRPName),
+		Addr:          envOrDefault("ADDR", dock.DefaultAddr),
+		PostgresDSN:   envOrDefault("POSTGRES_DSN", dock.DefaultPostgresDSN),
+		RedisAddr:     envOrDefault("REDIS_ADDR", dock.DefaultRedisAddr),
+		RedisPassword: os.Getenv("REDIS_PASSWORD"),
+		RedisDB:       redisDB,
+		RedisPrefix:   envOrDefault("REDIS_PREFIX", dock.DefaultRedisPrefix),
+		MarkdownDir:   envOrDefault("MARKDOWN_DIR", dock.DefaultMarkdownDir),
+		UploadDir:     envOrDefault("UPLOAD_DIR", dock.DefaultUploadDir),
+		GeoLiteDBPath: envOrDefault("GEOLITE_DB_PATH", dock.DefaultGeoLiteDBPath),
+		PasskeyRPID:   envOrDefault("PASSKEY_RP_ID", dock.DefaultPasskeyRPID),
+		PasskeyOrigin: envOrDefault("PASSKEY_ORIGIN", dock.DefaultPasskeyOrigin),
+		PasskeyRPName: envOrDefault("PASSKEY_RP_NAME", dock.DefaultPasskeyRPName),
 		PublicBaseURL: envOrDefault("PUBLIC_BASE_URL", envOrDefault("PASSKEY_ORIGIN", dock.DefaultPasskeyOrigin)),
 		// AI_AGENT_* env vars removed — the system AI agent now lives in
 		// the llm_configs row marked is_system=TRUE. Configure via Bot
 		// Management; no restart needed when swapping model / prompt.
-		ApplePushTopic: os.Getenv("APPLE_PUSH_TOPIC"),
+		ApplePushTopic:      os.Getenv("APPLE_PUSH_TOPIC"),
 		ApplePushTopicDev:   os.Getenv("APPLE_PUSH_TOPIC_DEV"),
 		ApplePushTopicProd:  os.Getenv("APPLE_PUSH_TOPIC_PROD"),
 		ApplePushKeyID:      os.Getenv("APPLE_PUSH_KEY_ID"),
@@ -147,6 +147,11 @@ func main() {
 		// row the UI reads stays fresh (the table moved to polar_hosts
 		// DB in H9 cleanup). Empty disables.
 		PolarHostsTouchURL: os.Getenv("POLAR_HOSTS_TOUCH_URL"),
+
+		// Stamp wg_devices.host_id from agent-reported wg pubkeys for the
+		// WG↔Hosts UI cross-link (doc/arch/wg-host-crosslink.md). Empty
+		// disables. Loopback wg-svc /internal/v1/wg-devices/link endpoint.
+		PolarWGLinkURL: os.Getenv("POLAR_WG_LINK_URL"),
 
 		// All plugin cutover flags were removed alongside their dock-side
 		// routes in the H-series cleanups; see open-platform.md for the

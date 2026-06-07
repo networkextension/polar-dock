@@ -210,7 +210,7 @@ func (s *Server) handleAgentTokenRevoke(c *gin.Context) {
 var agentWSUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
 // handleAgentWS accepts a bearer token via either the
@@ -270,15 +270,15 @@ func (s *Server) handleAgentWS(c *gin.Context) {
 	// forwarded headers when gin's trusted-proxy list allows them
 	// (default = trust all, see the gin startup warning).
 	ac := &agentConn{
-		tokenID:           tokenID,
-		requestRemoteAddr: c.ClientIP(),
-		attachedAt:        time.Now(),
-		userID:            userID,
-		botUserID:         botUserID,
-		workspaceID:       strings.TrimSpace(c.Query("workspace_id")),
-		workdir:           strings.TrimSpace(c.Query("workdir")),
-		send:        make(chan []byte, 64),
-		close:       make(chan struct{}),
+		tokenID:            tokenID,
+		requestRemoteAddr:  c.ClientIP(),
+		attachedAt:         time.Now(),
+		userID:             userID,
+		botUserID:          botUserID,
+		workspaceID:        strings.TrimSpace(c.Query("workspace_id")),
+		workdir:            strings.TrimSpace(c.Query("workdir")),
+		send:               make(chan []byte, 64),
+		close:              make(chan struct{}),
 		pending:            map[string]chan agentToolResult{},
 		chatPending:        map[string]chan agentChatReply{},
 		skillPending:       map[int64]chan skillEventFrame{},
@@ -375,13 +375,13 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 			ac.deliverChatReply(r)
 		case "hello":
 			var h struct {
-				Kind         string          `json:"kind"`
-				Version      string          `json:"version"`
-				Capabilities []string        `json:"capabilities"`
-				Tool         string          `json:"tool"`
-				HostOS       string          `json:"host_os"`
-				HostArch     string          `json:"host_arch"`
-				HostName     string          `json:"host_name"`
+				Kind         string   `json:"kind"`
+				Version      string   `json:"version"`
+				Capabilities []string `json:"capabilities"`
+				Tool         string   `json:"tool"`
+				HostOS       string   `json:"host_os"`
+				HostArch     string   `json:"host_arch"`
+				HostName     string   `json:"host_name"`
 				// polar-dock#351: static host facts the agent learns at
 				// attach time (virt, memory_bytes, cpu_model, kernel, …).
 				// Shape is agent-owned — we pass it through to polar-hosts
@@ -415,6 +415,10 @@ func (s *Server) runAgentReadPump(conn *websocket.Conn, ac *agentConn) {
 					if ac.hostID != "" {
 						now := time.Now().UTC()
 						go s.forwardHostInfoToPolarHosts(ac, ac.hostID, h.HostInfo, now)
+						// WG↔Hosts cross-link (doc/arch/wg-host-crosslink.md, P2):
+						// stamp wg_devices.host_id for any wg pubkey the agent
+						// reported in host_info.wg_pubkeys. Best-effort, loopback.
+						go s.forwardWGLinkToWGSvc(ac.hostID, h.HostInfo)
 					}
 				}
 			}
@@ -678,12 +682,12 @@ func (s *Server) handleAgentBotConfig(c *gin.Context) {
 // agentAutoRegisterRequest is what polar-agent POSTs at startup to
 // declare its capabilities. Two registration tracks today:
 //
-//   coders   — one passthrough bot per coder (kimi/claude/codex);
-//              agent's local CLI handles the LLM call. Code projects.
-//   research — one classic bot using workspace default LLM + agent
-//              for tool execution. Research / non-code projects;
-//              dock makes the LLM call, agent runs read_file /
-//              write_file / run_cmd / etc. tool_calls.
+//	coders   — one passthrough bot per coder (kimi/claude/codex);
+//	           agent's local CLI handles the LLM call. Code projects.
+//	research — one classic bot using workspace default LLM + agent
+//	           for tool execution. Research / non-code projects;
+//	           dock makes the LLM call, agent runs read_file /
+//	           write_file / run_cmd / etc. tool_calls.
 //
 // Both tracks are idempotent per (token, kind) — re-registering
 // returns the existing bot ids.
