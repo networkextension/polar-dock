@@ -29,6 +29,7 @@ func (s *Server) handleAPITokenCreate(c *gin.Context) {
 	var req struct {
 		Name         string     `json:"name"`
 		Scopes       []string   `json:"scopes"`
+		IPAllowlist  []string   `json:"ip_allowlist"`
 		RateLimitRPM int        `json:"rate_limit_rpm"`
 		ExpiresAt    *time.Time `json:"expires_at"`
 	}
@@ -44,7 +45,15 @@ func (s *Server) handleAPITokenCreate(c *gin.Context) {
 			return
 		}
 	}
-	raw, tok, err := s.createAPIToken(ws, userID, req.Name, req.Scopes, req.RateLimitRPM, req.ExpiresAt)
+	// Validate IP allowlist entries (exact IP or CIDR) so a bad entry can't
+	// silently lock the token out of every source.
+	for _, ip := range req.IPAllowlist {
+		if !validIPEntry(ip) {
+			jsonError(c, http.StatusBadRequest, "api.invalid_ip")
+			return
+		}
+	}
+	raw, tok, err := s.createAPIToken(ws, userID, req.Name, req.Scopes, req.IPAllowlist, req.RateLimitRPM, req.ExpiresAt)
 	if err != nil {
 		jsonError(c, http.StatusInternalServerError, "server.error")
 		return
@@ -126,6 +135,31 @@ func (s *Server) handleAPITokenCallsAggregate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"summary": sum})
+}
+
+// handleAPITokenRotate — POST /api/api-tokens/:id/rotate. Issues a new secret
+// for the same token row (id/scopes/rpm/expiry/ip preserved); the old secret
+// stops working immediately. Returns the new secret once, like create.
+func (s *Server) handleAPITokenRotate(c *gin.Context) {
+	if _, ok := requireUserID(c); !ok {
+		return
+	}
+	ws := strings.TrimSpace(c.GetString("workspace_id"))
+	id, perr := strconv.ParseInt(c.Param("id"), 10, 64)
+	if perr != nil || ws == "" {
+		jsonError(c, http.StatusBadRequest, "input.invalid")
+		return
+	}
+	raw, tok, err := s.rotateAPIToken(id, ws)
+	if err != nil {
+		jsonError(c, http.StatusNotFound, "not_found")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"token":  tok,
+		"secret": raw,
+		"hint":   "已生成新 secret，旧 secret 立即失效；复制保存，事后无法再展示",
+	})
 }
 
 // handleAPITokenRevoke — DELETE /api/api-tokens/:id (scoped to workspace).
