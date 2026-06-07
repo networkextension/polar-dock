@@ -69,6 +69,7 @@ var coreNav = []navGroup{
 		{Href: "/teams.html", Label: "工作区", I18n: "nav.teams", Icon: "users-round"},
 		{Href: "/assets.html", Label: "资产", Icon: "folder"},
 		{Href: "/api-tokens.html", Label: "开放 API", Icon: "key-round"},
+		{Href: "/api-reference.html", Label: "API 参考", Icon: "book-open"},
 	}},
 	{Label: "内容", Items: []navItem{
 		{Href: "/posts.html", Label: "Posts", Icon: "message-square"},
