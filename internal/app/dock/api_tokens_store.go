@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 	"time"
 )
@@ -29,6 +30,7 @@ type APIToken struct {
 	Name         string     `json:"name"`
 	Prefix       string     `json:"prefix"`
 	Scopes       []string   `json:"scopes"`
+	IPAllowlist  []string   `json:"ip_allowlist"`
 	RateLimitRPM int        `json:"rate_limit_rpm"`
 	Status       string     `json:"status"`
 	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
@@ -56,9 +58,9 @@ func hashAPIToken(raw string) string {
 
 func scanAPIToken(rs interface{ Scan(...any) error }) (*APIToken, error) {
 	var t APIToken
-	var scopesRaw []byte
+	var scopesRaw, ipRaw []byte
 	if err := rs.Scan(&t.ID, &t.WorkspaceID, &t.OwnerUserID, &t.Name, &t.Prefix,
-		&scopesRaw, &t.RateLimitRPM, &t.Status, &t.ExpiresAt, &t.CreatedAt,
+		&scopesRaw, &ipRaw, &t.RateLimitRPM, &t.Status, &t.ExpiresAt, &t.CreatedAt,
 		&t.LastUsedAt, &t.RevokedAt); err != nil {
 		return nil, err
 	}
@@ -68,19 +70,28 @@ func scanAPIToken(rs interface{ Scan(...any) error }) (*APIToken, error) {
 	if t.Scopes == nil {
 		t.Scopes = []string{}
 	}
+	if len(ipRaw) > 0 {
+		_ = json.Unmarshal(ipRaw, &t.IPAllowlist)
+	}
+	if t.IPAllowlist == nil {
+		t.IPAllowlist = []string{}
+	}
 	return &t, nil
 }
 
-const apiTokenCols = `id, workspace_id, owner_user_id, name, prefix, scopes, rate_limit_rpm, status, expires_at, created_at, last_used_at, revoked_at`
+const apiTokenCols = `id, workspace_id, owner_user_id, name, prefix, scopes, ip_allowlist, rate_limit_rpm, status, expires_at, created_at, last_used_at, revoked_at`
 
 // createAPIToken mints a token in the given workspace owned by the user.
 // Returns the raw secret (shown once) + the stored row.
-func (s *Server) createAPIToken(workspaceID, ownerUserID, name string, scopes []string, rpm int, expiresAt *time.Time) (raw string, tok *APIToken, err error) {
+func (s *Server) createAPIToken(workspaceID, ownerUserID, name string, scopes []string, ipAllowlist []string, rpm int, expiresAt *time.Time) (raw string, tok *APIToken, err error) {
 	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(ownerUserID) == "" {
 		return "", nil, errors.New("workspace and owner required")
 	}
 	if scopes == nil {
 		scopes = []string{}
+	}
+	if ipAllowlist == nil {
+		ipAllowlist = []string{}
 	}
 	if rpm <= 0 {
 		rpm = 120
@@ -90,21 +101,84 @@ func (s *Server) createAPIToken(workspaceID, ownerUserID, name string, scopes []
 		return "", nil, err
 	}
 	scopesJSON, _ := json.Marshal(scopes)
+	ipJSON, _ := json.Marshal(ipAllowlist)
 	var id int64
 	var created time.Time
 	err = s.db.QueryRow(
-		`INSERT INTO api_tokens (workspace_id, owner_user_id, name, prefix, token_hash, scopes, rate_limit_rpm, expires_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, created_at`,
-		workspaceID, ownerUserID, strings.TrimSpace(name), prefix, hashHex, scopesJSON, rpm, expiresAt,
+		`INSERT INTO api_tokens (workspace_id, owner_user_id, name, prefix, token_hash, scopes, ip_allowlist, rate_limit_rpm, expires_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, created_at`,
+		workspaceID, ownerUserID, strings.TrimSpace(name), prefix, hashHex, scopesJSON, ipJSON, rpm, expiresAt,
 	).Scan(&id, &created)
 	if err != nil {
 		return "", nil, err
 	}
 	return raw, &APIToken{
 		ID: id, WorkspaceID: workspaceID, OwnerUserID: ownerUserID,
-		Name: strings.TrimSpace(name), Prefix: prefix, Scopes: scopes,
+		Name: strings.TrimSpace(name), Prefix: prefix, Scopes: scopes, IPAllowlist: ipAllowlist,
 		RateLimitRPM: rpm, Status: "active", ExpiresAt: expiresAt, CreatedAt: created,
 	}, nil
+}
+
+// rotateAPIToken mints a fresh secret for an existing active token, keeping its
+// id (so audit history + scopes + rpm + expiry + ip carry over). The old secret
+// stops working immediately. Returns the new raw secret (shown once) + the row.
+func (s *Server) rotateAPIToken(id int64, workspaceID string) (raw string, tok *APIToken, err error) {
+	raw, hashHex, prefix, err := generateAPIToken()
+	if err != nil {
+		return "", nil, err
+	}
+	row := s.db.QueryRow(
+		`UPDATE api_tokens SET token_hash=$1, prefix=$2
+		  WHERE id=$3 AND workspace_id=$4 AND status='active'
+		  RETURNING `+apiTokenCols,
+		hashHex, prefix, id, workspaceID,
+	)
+	t, err := scanAPIToken(row)
+	if err != nil {
+		return "", nil, err
+	}
+	return raw, t, nil
+}
+
+// ipAllowed reports whether clientIP is permitted by an api_token's allowlist.
+// Empty allowlist = unrestricted. Each entry is an exact IP or a CIDR.
+func ipAllowed(clientIP string, allow []string) bool {
+	if len(allow) == 0 {
+		return true
+	}
+	ip := net.ParseIP(strings.TrimSpace(clientIP))
+	if ip == nil {
+		return false
+	}
+	for _, entry := range allow {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			if _, cidr, err := net.ParseCIDR(entry); err == nil && cidr.Contains(ip) {
+				return true
+			}
+			continue
+		}
+		if e := net.ParseIP(entry); e != nil && e.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// validIPEntry reports whether s is a parseable IP or CIDR (create-time check).
+func validIPEntry(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if strings.Contains(s, "/") {
+		_, _, err := net.ParseCIDR(s)
+		return err == nil
+	}
+	return net.ParseIP(s) != nil
 }
 
 // listAPITokens returns the workspace's tokens (newest first), incl. revoked

@@ -141,6 +141,17 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 						c.Abort()
 						return
 					}
+					// P3: source-IP allowlist. Empty = unrestricted.
+					if !ipAllowed(c.ClientIP(), tok.IPAllowlist) {
+						go s.insertAPITokenCall(&APITokenCall{
+							TokenID: tok.ID, WorkspaceID: tok.WorkspaceID,
+							Method: c.Request.Method, Path: c.FullPath(),
+							StatusCode: http.StatusForbidden, Scope: required, IP: c.ClientIP(),
+						})
+						jsonError(c, http.StatusForbidden, "api.ip_forbidden")
+						c.Abort()
+						return
+					}
 					// P2: per-token RPM. rpm<=0 = unlimited (admin opt-out).
 					if s.apiTokenRateLimiter != nil {
 						if ok, retry := s.apiTokenRateLimiter.allow(tok.ID, tok.RateLimitRPM); !ok {
