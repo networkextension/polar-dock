@@ -23,8 +23,39 @@ import (
 )
 
 type wgLinkPayload struct {
-	HostID  string   `json:"host_id"`
-	Pubkeys []string `json:"pubkeys"`
+	HostID    string   `json:"host_id"`
+	Pubkeys   []string `json:"pubkeys"`
+	DeviceIPs []string `json:"device_ips,omitempty"`
+}
+
+// deviceIPsFromHostInfo returns the agent's IPv4 addresses (host_info
+// .ipv4_by_iface values) so wg-svc can stamp host_id by wg_devices.device_ip.
+// This is the NE-proof path: the mesh IP is readable on every box (incl.
+// wg-mac NE clients whose WG pubkey is not). Only a real mesh IP will match a
+// device row; LAN IPs in the set simply hit nothing. Returns nil when absent.
+func deviceIPsFromHostInfo(hostInfo json.RawMessage) []string {
+	if len(hostInfo) == 0 {
+		return nil
+	}
+	var hi struct {
+		IPv4ByIface map[string]string `json:"ipv4_by_iface"`
+	}
+	if err := json.Unmarshal(hostInfo, &hi); err != nil || len(hi.IPv4ByIface) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(hi.IPv4ByIface))
+	out := make([]string, 0, len(hi.IPv4ByIface))
+	for _, ip := range hi.IPv4ByIface {
+		if ip == "" {
+			continue
+		}
+		if _, dup := seen[ip]; dup {
+			continue
+		}
+		seen[ip] = struct{}{}
+		out = append(out, ip)
+	}
+	return out
 }
 
 // wgPubkeysFromHostInfo extracts the wg_pubkeys map (iface → pubkey) the
@@ -64,10 +95,11 @@ func (s *Server) forwardWGLinkToWGSvc(hostID string, hostInfo json.RawMessage) {
 		return
 	}
 	pubkeys := wgPubkeysFromHostInfo(hostInfo)
-	if len(pubkeys) == 0 {
+	deviceIPs := deviceIPsFromHostInfo(hostInfo)
+	if len(pubkeys) == 0 && len(deviceIPs) == 0 {
 		return
 	}
-	body, err := json.Marshal(wgLinkPayload{HostID: hostID, Pubkeys: pubkeys})
+	body, err := json.Marshal(wgLinkPayload{HostID: hostID, Pubkeys: pubkeys, DeviceIPs: deviceIPs})
 	if err != nil {
 		log.Printf("[agent ws] wg-link marshal host=%s: %v", hostID, err)
 		return
