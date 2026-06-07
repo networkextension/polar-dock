@@ -3475,6 +3475,13 @@ CREATE INDEX IF NOT EXISTS idx_plugin_modules_enabled
 -- Empty array / NULL = plugin has no UI surface (e.g. packtunnel).
 ALTER TABLE plugin_modules
     ADD COLUMN IF NOT EXISTS ui_routes JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- public_base_url: a plugin's externally reachable origin (e.g.
+-- https://dns.dev.4950.store), pushed at heartbeat time. dock joins it
+-- with each ui_routes[].path to build absolute, cross-subdomain sidebar
+-- links in GET /api/nav. Empty = plugin not surfaced in the shared nav.
+ALTER TABLE plugin_modules
+    ADD COLUMN IF NOT EXISTS public_base_url TEXT NOT NULL DEFAULT '';
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

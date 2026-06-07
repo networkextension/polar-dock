@@ -842,6 +842,9 @@ func (s *Server) registerRoutes() {
 		// pushes its routes via heartbeat → dock aggregates +
 		// filters by workspace_plugin_access for non-root tenants.
 		api.GET("/plugin-ui-routes", s.AuthMiddleware(), s.handlePluginUIRoutes)
+		// Full sidebar nav (base menu + dynamic plugin links). dock-ui's
+		// renderSidebar replaces its static fallback with this.
+		api.GET("/nav", s.AuthMiddleware(), s.handleNav)
 		// Public OpenAI-compatible chat completion endpoint. Auth is
 		// done in-handler via Bearer <plaintext> from the
 		// llm_proxy_tokens table — no cookie/session auth.
