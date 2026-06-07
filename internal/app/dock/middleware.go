@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,13 +141,41 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 						c.Abort()
 						return
 					}
+					// P2: per-token RPM. rpm<=0 = unlimited (admin opt-out).
+					if s.apiTokenRateLimiter != nil {
+						if ok, retry := s.apiTokenRateLimiter.allow(tok.ID, tok.RateLimitRPM); !ok {
+							s.metricsRegistry.recordAPITokenQuotaExceeded(tok.Name)
+							go s.insertAPITokenCall(&APITokenCall{
+								TokenID: tok.ID, WorkspaceID: tok.WorkspaceID,
+								Method: c.Request.Method, Path: c.FullPath(),
+								StatusCode: http.StatusTooManyRequests, Scope: required, IP: c.ClientIP(),
+							})
+							c.Header("Retry-After", strconv.Itoa(retry))
+							jsonError(c, http.StatusTooManyRequests, "api.rate_limited")
+							c.Abort()
+							return
+						}
+					}
 					c.Set("user_id", tok.OwnerUserID)
 					c.Set("role", "api_token")
 					c.Set("workspace_id", tok.WorkspaceID)
 					c.Set("auth_kind", "api_token")
 					c.Set("api_token_id", tok.ID)
 					go s.touchAPIToken(tok.ID)
+					// P2: audit + metrics after the handler chain runs (real
+					// status + latency). Capture primitives — the gin.Context
+					// is not safe to touch from the recording goroutine.
+					start := time.Now()
 					c.Next()
+					method, path, status := c.Request.Method, c.FullPath(), c.Writer.Status()
+					ip, name := c.ClientIP(), tok.Name
+					latency := time.Since(start)
+					s.metricsRegistry.recordAPITokenCall(name, method, status, latency)
+					go s.insertAPITokenCall(&APITokenCall{
+						TokenID: tok.ID, WorkspaceID: tok.WorkspaceID,
+						Method: method, Path: path, StatusCode: status,
+						Scope: required, IP: ip, LatencyMS: int(latency.Milliseconds()),
+					})
 					return
 				}
 				jsonError(c, http.StatusUnauthorized, "auth.unauthorized")

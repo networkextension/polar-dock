@@ -172,6 +172,7 @@ type Server struct {
 	// LLM proxy in-memory rate limiter. Per-token sliding window;
 	// see llm_proxy_rate_limit.go.
 	llmProxyRateLimiter *llmProxyRateLimiter
+	apiTokenRateLimiter *apiTokenRateLimiter
 
 	// LLM upstream health prober — synthetic-call goroutine that
 	// updates polar_llm_upstream_up gauges every 30s.
@@ -525,6 +526,7 @@ func NewServer(cfg Config) (*Server, error) {
 
 	server.metricsRegistry = newMetrics()
 	server.llmProxyRateLimiter = newLLMProxyRateLimiter()
+	server.apiTokenRateLimiter = newAPITokenRateLimiter()
 	server.metricsToken = strings.TrimSpace(cfg.MetricsToken)
 	server.cookieDomain = strings.TrimSpace(cfg.CookieDomain)
 	if server.cookieDomain != "" {
@@ -851,6 +853,8 @@ func (s *Server) registerRoutes() {
 		api.POST("/api-tokens", s.AuthMiddleware(), s.handleAPITokenCreate)
 		api.GET("/api-tokens", s.AuthMiddleware(), s.handleAPITokenList)
 		api.GET("/api-token-scopes", s.AuthMiddleware(), s.handleAPITokenScopes)
+		api.GET("/api-tokens/:id/calls", s.AuthMiddleware(), s.handleAPITokenCalls)
+		api.GET("/api-tokens/:id/calls/aggregate", s.AuthMiddleware(), s.handleAPITokenCallsAggregate)
 		api.DELETE("/api-tokens/:id", s.AuthMiddleware(), s.handleAPITokenRevoke)
 		api.POST("/passkey/login/begin", s.GuestMiddleware(), s.handlePasskeyLoginBegin)
 		api.POST("/passkey/login/finish", s.GuestMiddleware(), s.handlePasskeyLoginFinish)

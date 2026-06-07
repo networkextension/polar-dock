@@ -165,3 +165,95 @@ func (s *Server) resolveAPIToken(raw string) *APIToken {
 func (s *Server) touchAPIToken(id int64) {
 	_, _ = s.db.Exec(`UPDATE api_tokens SET last_used_at=now() WHERE id=$1`, id)
 }
+
+// ── P2: per-call audit (api_token_calls) ──────────────────────────────────
+
+// APITokenCall is one recorded open-API-token request (P2 audit).
+type APITokenCall struct {
+	ID          int64     `json:"id"`
+	TokenID     int64     `json:"token_id"`
+	WorkspaceID string    `json:"workspace_id"`
+	Method      string    `json:"method"`
+	Path        string    `json:"path"`
+	StatusCode  int       `json:"status_code"`
+	Scope       string    `json:"scope"`
+	IP          string    `json:"ip"`
+	LatencyMS   int       `json:"latency_ms"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// insertAPITokenCall records one call. Best-effort (called in a goroutine off
+// the request path); a failed insert must never affect the served response.
+func (s *Server) insertAPITokenCall(c *APITokenCall) {
+	_, _ = s.db.Exec(
+		`INSERT INTO api_token_calls
+		   (token_id, workspace_id, method, path, status_code, scope, ip, latency_ms)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		c.TokenID, c.WorkspaceID, c.Method, c.Path, c.StatusCode, c.Scope, c.IP, c.LatencyMS,
+	)
+}
+
+// listAPITokenCalls returns the most-recent calls for a token, newest first.
+// Workspace-scoped; caller verifies the token belongs to the active workspace.
+func (s *Server) listAPITokenCalls(workspaceID string, tokenID int64, limit int) ([]APITokenCall, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.Query(
+		`SELECT id, token_id, workspace_id, method, path, status_code, scope, ip, latency_ms, created_at
+		   FROM api_token_calls
+		  WHERE workspace_id = $1 AND token_id = $2
+		  ORDER BY id DESC
+		  LIMIT $3`,
+		workspaceID, tokenID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]APITokenCall, 0)
+	for rows.Next() {
+		var c APITokenCall
+		if err := rows.Scan(&c.ID, &c.TokenID, &c.WorkspaceID, &c.Method, &c.Path, &c.StatusCode, &c.Scope, &c.IP, &c.LatencyMS, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// APITokenCallSummary is the rollup the usage modal shows over the trailing
+// `days` days.
+type APITokenCallSummary struct {
+	Calls    int        `json:"calls"`
+	OkCount  int        `json:"ok_count"`
+	ErrCount int        `json:"err_count"`
+	LastUsed *time.Time `json:"last_used,omitempty"`
+}
+
+// aggregateAPITokenCalls returns counts (total / 2xx-3xx ok / >=400 err) and
+// the last-seen timestamp for a token over the trailing `days` days.
+func (s *Server) aggregateAPITokenCalls(workspaceID string, tokenID int64, days int) (*APITokenCallSummary, error) {
+	if days <= 0 || days > 365 {
+		days = 7
+	}
+	var sum APITokenCallSummary
+	var last sql.NullTime
+	err := s.db.QueryRow(
+		`SELECT COUNT(*),
+		        COUNT(*) FILTER (WHERE status_code < 400),
+		        COUNT(*) FILTER (WHERE status_code >= 400),
+		        MAX(created_at)
+		   FROM api_token_calls
+		  WHERE workspace_id = $1 AND token_id = $2
+		    AND created_at >= now() - ($3 || ' days')::interval`,
+		workspaceID, tokenID, days,
+	).Scan(&sum.Calls, &sum.OkCount, &sum.ErrCount, &last)
+	if err != nil {
+		return nil, err
+	}
+	if last.Valid {
+		sum.LastUsed = &last.Time
+	}
+	return &sum, nil
+}

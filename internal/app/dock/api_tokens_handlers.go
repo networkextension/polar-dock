@@ -85,6 +85,49 @@ func (s *Server) handleAPITokenScopes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"groups": apiScopeCatalog(), "wildcard": "*"})
 }
 
+// handleAPITokenCalls — GET /api/api-tokens/:id/calls?limit=N. Recent calls
+// for one token, workspace-scoped (the query filters on workspace_id so a
+// caller can't read another workspace's token usage).
+func (s *Server) handleAPITokenCalls(c *gin.Context) {
+	if _, ok := requireUserID(c); !ok {
+		return
+	}
+	ws := strings.TrimSpace(c.GetString("workspace_id"))
+	id, perr := strconv.ParseInt(c.Param("id"), 10, 64)
+	if perr != nil || ws == "" {
+		jsonError(c, http.StatusBadRequest, "input.invalid")
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	calls, err := s.listAPITokenCalls(ws, id, limit)
+	if err != nil {
+		jsonError(c, http.StatusInternalServerError, "server.error")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"calls": calls})
+}
+
+// handleAPITokenCallsAggregate — GET /api/api-tokens/:id/calls/aggregate?days=N.
+// Total / ok / error counts + last-seen over the window.
+func (s *Server) handleAPITokenCallsAggregate(c *gin.Context) {
+	if _, ok := requireUserID(c); !ok {
+		return
+	}
+	ws := strings.TrimSpace(c.GetString("workspace_id"))
+	id, perr := strconv.ParseInt(c.Param("id"), 10, 64)
+	if perr != nil || ws == "" {
+		jsonError(c, http.StatusBadRequest, "input.invalid")
+		return
+	}
+	days, _ := strconv.Atoi(c.Query("days"))
+	sum, err := s.aggregateAPITokenCalls(ws, id, days)
+	if err != nil {
+		jsonError(c, http.StatusInternalServerError, "server.error")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"summary": sum})
+}
+
 // handleAPITokenRevoke — DELETE /api/api-tokens/:id (scoped to workspace).
 func (s *Server) handleAPITokenRevoke(c *gin.Context) {
 	if _, ok := requireUserID(c); !ok {
