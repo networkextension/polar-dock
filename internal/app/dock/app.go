@@ -157,6 +157,11 @@ type Server struct {
 	// See polar_hosts_touch.go.
 	polarHostsTouchURL string
 
+	// polarWGLinkURL — loopback wg-svc endpoint dock posts to so an agent's
+	// reported wg pubkeys stamp wg_devices.host_id (WG↔Hosts UI cross-link).
+	// See polar_wg_link.go. Empty disables.
+	polarWGLinkURL string
+
 	// Plugin cutover flags removed — all plugin REST surfaces are now
 	// remote. The H-series cleanups dropped the per-plugin gated route
 	// blocks; see open-platform.md for history.
@@ -524,6 +529,10 @@ func NewServer(cfg Config) (*Server, error) {
 	server.polarHostsTouchURL = strings.TrimSpace(cfg.PolarHostsTouchURL)
 	if server.polarHostsTouchURL != "" {
 		log.Printf("hosts: skill.advertise forwarding to %s", server.polarHostsTouchURL)
+	}
+	server.polarWGLinkURL = strings.TrimSpace(cfg.PolarWGLinkURL)
+	if server.polarWGLinkURL != "" {
+		log.Printf("wg: host_id cross-link forwarding to %s", server.polarWGLinkURL)
 	}
 	server.startMetricsSampler()
 	server.llmProxyProber = newLLMProxyProber(server)
