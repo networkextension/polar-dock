@@ -35,6 +35,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"gin-auth-app/internal/apiscopes"
 )
 
 // ---- output shapes ----
@@ -49,7 +51,8 @@ type endpoint struct {
 	Method  string  `json:"method"`
 	Path    string  `json:"path"`
 	Handler string  `json:"handler"`
-	Auth    string  `json:"auth,omitempty"` // e.g. "user", "admin", "" (open) / "plugin-hmac"
+	Auth    string  `json:"auth,omitempty"`  // e.g. "user", "admin", "" (open) / "plugin-hmac"
+	Scope   string  `json:"scope,omitempty"` // open-API-token scope guarding this route (apiscopes.ScopeFor)
 	Body    []field `json:"body"`
 	Query   []field `json:"query"`
 	PathP   []field `json:"path_params,omitempty"`
@@ -95,11 +98,13 @@ func main() {
 	eps := make([]endpoint, 0, len(routes))
 	for _, r := range routes {
 		c := contracts[r.handler] // zero value ok (empty contract)
+		auth := authOf(r.middleware)
 		eps = append(eps, endpoint{
 			Method:  r.method,
 			Path:    r.path,
 			Handler: r.handler,
-			Auth:    authOf(r.middleware),
+			Auth:    auth,
+			Scope:   apiscopes.ScopeFor(r.method, r.path, auth),
 			Body:    nz(c.body),
 			Query:   nz(c.query),
 			PathP:   c.path,

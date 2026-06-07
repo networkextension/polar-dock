@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"gin-auth-app/internal/apiscopes"
 )
 
 func isAPIRequest(c *gin.Context) bool {
@@ -128,6 +130,16 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 		if s.openAPITokens {
 			if bt := extractBearerToken(c); strings.HasPrefix(bt, apiTokenPrefix) {
 				if tok := s.resolveAPIToken(bt); tok != nil {
+					// P1: least-privilege scope gate. A token with no scopes
+					// keeps full access (P0 compat); a scoped token may only
+					// call routes whose required scope it was granted. Admin
+					// routes still pass through AdminMiddleware on top.
+					required := s.requiredScope(c.Request.Method, c.FullPath())
+					if !apiscopes.AllowsScope(tok.Scopes, required) {
+						jsonError(c, http.StatusForbidden, "api.forbidden_scope")
+						c.Abort()
+						return
+					}
 					c.Set("user_id", tok.OwnerUserID)
 					c.Set("role", "api_token")
 					c.Set("workspace_id", tok.WorkspaceID)
