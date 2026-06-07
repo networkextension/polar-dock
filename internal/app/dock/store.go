@@ -2805,6 +2805,48 @@ CREATE INDEX IF NOT EXISTS idx_llm_proxy_calls_workspace_created
     WHERE cost_usd IS NOT NULL;
 
 -- ============================================================
+-- Open API tokens (doc/arch/open-api-tokens.md). Self-service,
+-- scoped, hashed-at-rest Bearer tokens (polar_…) for the public
+-- /api/* surface — generalizes the llm_proxy_tokens pattern. P0
+-- ships full-access (scopes enforced in P1). Flag-gated by
+-- POLAR_OPEN_API_TOKENS.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id             BIGSERIAL PRIMARY KEY,
+    workspace_id   TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    owner_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    prefix         TEXT NOT NULL,
+    token_hash     TEXT NOT NULL UNIQUE,
+    scopes         JSONB NOT NULL DEFAULT '[]'::jsonb,
+    rate_limit_rpm INTEGER NOT NULL DEFAULT 120,
+    ip_allowlist   JSONB,
+    expires_at     TIMESTAMPTZ,
+    status         TEXT NOT NULL DEFAULT 'active',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at   TIMESTAMPTZ,
+    revoked_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_ws ON api_tokens(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_owner ON api_tokens(owner_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_active_hash ON api_tokens(token_hash) WHERE status = 'active';
+
+-- per-request audit (wired in P2; table created now so it's there)
+CREATE TABLE IF NOT EXISTS api_token_calls (
+    id           BIGSERIAL PRIMARY KEY,
+    token_id     BIGINT NOT NULL REFERENCES api_tokens(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL,
+    method       TEXT NOT NULL,
+    path         TEXT NOT NULL,
+    status_code  INT  NOT NULL,
+    scope        TEXT NOT NULL DEFAULT '',
+    ip           TEXT NOT NULL DEFAULT '',
+    latency_ms   INT  NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_api_token_calls_tok ON api_token_calls(token_id, created_at DESC);
+
+-- ============================================================
 -- Asset management: per-workspace file storage + quotas.
 -- Unified store backing platform internals (LLM weights,
 -- polar-agent binaries) AND tenant workloads (S3-style backing
