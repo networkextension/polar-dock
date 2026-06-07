@@ -850,6 +850,7 @@ func (s *Server) registerRoutes() {
 		// Logged-in user manages tokens for their active workspace.
 		api.POST("/api-tokens", s.AuthMiddleware(), s.handleAPITokenCreate)
 		api.GET("/api-tokens", s.AuthMiddleware(), s.handleAPITokenList)
+		api.GET("/api-token-scopes", s.AuthMiddleware(), s.handleAPITokenScopes)
 		api.DELETE("/api-tokens/:id", s.AuthMiddleware(), s.handleAPITokenRevoke)
 		api.POST("/passkey/login/begin", s.GuestMiddleware(), s.handlePasskeyLoginBegin)
 		api.POST("/passkey/login/finish", s.GuestMiddleware(), s.handlePasskeyLoginFinish)

@@ -1,11 +1,12 @@
 {
-  "count": 297,
+  "count": 301,
   "endpoints": [
     {
       "method": "GET",
       "path": "/api/_catalog",
       "handler": "handleAPICatalog",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -19,6 +20,7 @@
       "path": "/api/_routes",
       "handler": "handleAPIRoutes",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -32,6 +34,7 @@
       "path": "/api/admin/agents/:id/kick",
       "handler": "handleAdminAgentKick",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -46,6 +49,7 @@
       "path": "/api/admin/asset-providers",
       "handler": "handleAssetProviderAdminList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -54,6 +58,7 @@
       "path": "/api/admin/asset-providers",
       "handler": "handleAssetProviderAdminCreate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "slug",
@@ -79,6 +84,7 @@
       "path": "/api/admin/asset-providers/:id",
       "handler": "handleAssetProviderAdminDelete",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -93,6 +99,7 @@
       "path": "/api/admin/asset-quotas",
       "handler": "handleAssetQuotaAdminList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -101,6 +108,7 @@
       "path": "/api/admin/asset-quotas/:ws",
       "handler": "handleAssetQuotaAdminSet",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "quota_bytes",
@@ -120,6 +128,7 @@
       "path": "/api/admin/assets/:id/replicate/:provider_id",
       "handler": "handleAssetReplicateToProvider",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -138,6 +147,7 @@
       "path": "/api/admin/assets/migrate-post-media",
       "handler": "handleMigratePostMedia",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": []
     },
@@ -146,6 +156,7 @@
       "path": "/api/admin/audit-log",
       "handler": "handleAdminAuditLog",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -154,6 +165,7 @@
       "path": "/api/admin/llm-config-applications",
       "handler": "handleAdminLLMConfigApplicationsList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -162,6 +174,7 @@
       "path": "/api/admin/llm-config-team-quotas",
       "handler": "handleAdminLLMConfigTeamQuotaList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -175,6 +188,7 @@
       "path": "/api/admin/llm-config-team-quotas",
       "handler": "handleAdminLLMConfigTeamQuotaUpsert",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "llm_config_id",
@@ -196,6 +210,7 @@
       "path": "/api/admin/llm-config-team-quotas/recharge",
       "handler": "handleAdminLLMConfigTeamRecharge",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "llm_config_id",
@@ -221,6 +236,7 @@
       "path": "/api/admin/llm-config-team-quotas/recharges",
       "handler": "handleAdminLLMConfigTeamRechargeList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -238,6 +254,7 @@
       "path": "/api/admin/llm-configs/:id/pricing",
       "handler": "handleAdminLLMConfigPricingUpdate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "price_per_million_input_usd",
@@ -261,6 +278,7 @@
       "path": "/api/admin/logs",
       "handler": "handleAdminLogs",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -274,6 +292,7 @@
       "path": "/api/admin/plugin-access-requests",
       "handler": "handleAdminPluginAccessRequestList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -282,6 +301,7 @@
       "path": "/api/admin/plugin-access-requests/:id/approve",
       "handler": "handleAdminPluginAccessRequestApprove",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -296,6 +316,7 @@
       "path": "/api/admin/plugin-access-requests/:id/deny",
       "handler": "handleAdminPluginAccessRequestDeny",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -310,6 +331,7 @@
       "path": "/api/admin/plugin-modules",
       "handler": "handleAdminPluginModuleList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -318,6 +340,7 @@
       "path": "/api/admin/plugin-modules",
       "handler": "handleAdminPluginModuleCreate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "name",
@@ -340,6 +363,7 @@
       "path": "/api/admin/plugin-modules/:name",
       "handler": "handleAdminPluginModuleDelete",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -354,6 +378,7 @@
       "path": "/api/admin/plugin-modules/:name/accepts-applications",
       "handler": "handleAdminPluginModuleSetAcceptsApplications",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "accepts",
@@ -373,6 +398,7 @@
       "path": "/api/admin/plugin-modules/:name/disable",
       "handler": "handleAdminPluginModuleDisable",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -387,6 +413,7 @@
       "path": "/api/admin/plugin-modules/:name/enable",
       "handler": "handleAdminPluginModuleEnable",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -401,6 +428,7 @@
       "path": "/api/admin/plugin-modules/:name/publish",
       "handler": "handleAdminPluginModuleSetPublished",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "published",
@@ -420,6 +448,7 @@
       "path": "/api/admin/plugin-modules/:name/releases",
       "handler": "handleAdminPluginModulePublishRelease",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "version",
@@ -468,6 +497,7 @@
       "path": "/api/admin/plugin-modules/:name/rotate-key",
       "handler": "handleAdminPluginModuleRotateKey",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -482,6 +512,7 @@
       "path": "/api/admin/plugin-modules/:name/update",
       "handler": "handleAdminPluginModuleSetUpdate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "version",
@@ -501,6 +532,7 @@
       "path": "/api/admin/teams/:id/approve",
       "handler": "handleAdminTeamApprove",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": []
     },
@@ -509,6 +541,7 @@
       "path": "/api/admin/teams/:id/reject",
       "handler": "handleAdminTeamReject",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": []
     },
@@ -517,6 +550,7 @@
       "path": "/api/admin/teams/pending",
       "handler": "handleAdminTeamPendingList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -525,6 +559,7 @@
       "path": "/api/admin/users",
       "handler": "handleAdminUserList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -546,6 +581,7 @@
       "path": "/api/admin/users/:id/login-history",
       "handler": "handleAdminUserLoginHistory",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -565,6 +601,7 @@
       "path": "/api/admin/users/:id/password",
       "handler": "handleAdminUserPasswordUpdate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "new_password",
@@ -585,6 +622,7 @@
       "path": "/api/admin/video-burn",
       "handler": "handleAdminVideoBurn",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -598,6 +636,7 @@
       "path": "/api/admin/workspace-plugin-access",
       "handler": "handleAdminWorkspacePluginAccessList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -611,6 +650,7 @@
       "path": "/api/admin/workspace-plugin-access",
       "handler": "handleAdminWorkspacePluginAccessUpsert",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "workspace_id",
@@ -634,6 +674,7 @@
       "path": "/api/agent/auto-register",
       "handler": "handleAgentAutoRegister",
       "auth": "user",
+      "scope": "agent:write",
       "body": [
         {
           "name": "coders",
@@ -671,6 +712,7 @@
       "path": "/api/agent/bots/:bot_id/config",
       "handler": "handleAgentBotConfig",
       "auth": "user",
+      "scope": "agent:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -685,6 +727,7 @@
       "path": "/api/agent/bots/:bot_id/dispatch",
       "handler": "handleAgentDispatch",
       "auth": "user",
+      "scope": "agent:write",
       "body": [
         {
           "name": "tool",
@@ -708,6 +751,7 @@
       "path": "/api/agent/bots/:bot_id/status",
       "handler": "handleAgentStatus",
       "auth": "user",
+      "scope": "agent:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -722,6 +766,7 @@
       "path": "/api/agent/library/devices/upsert",
       "handler": "handleAgentRevDeviceUpsert",
       "auth": "user",
+      "scope": "agent:write",
       "body": [
         {
           "name": "id",
@@ -783,6 +828,7 @@
       "path": "/api/agent/tasks/claim",
       "handler": "handleAgentTaskClaim",
       "auth": "user",
+      "scope": "agent:write",
       "body": [],
       "query": []
     },
@@ -791,6 +837,7 @@
       "path": "/api/agent/tokens",
       "handler": "handleAgentTokenList",
       "auth": "user",
+      "scope": "agent:read",
       "body": [],
       "query": []
     },
@@ -799,6 +846,7 @@
       "path": "/api/agent/tokens",
       "handler": "handleAgentTokenCreate",
       "auth": "user",
+      "scope": "agent:write",
       "body": [
         {
           "name": "name",
@@ -824,6 +872,7 @@
       "path": "/api/agent/tokens/:id",
       "handler": "handleAgentTokenRevoke",
       "auth": "user",
+      "scope": "agent:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -853,9 +902,69 @@
     },
     {
       "method": "GET",
+      "path": "/api/api-token-scopes",
+      "handler": "handleAPITokenScopes",
+      "auth": "user",
+      "scope": "api-token-scopes:read",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/api-tokens",
+      "handler": "handleAPITokenList",
+      "auth": "user",
+      "scope": "api-tokens:read",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/api-tokens",
+      "handler": "handleAPITokenCreate",
+      "auth": "user",
+      "scope": "api-tokens:write",
+      "body": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "scopes",
+          "type": "[]string"
+        },
+        {
+          "name": "rate_limit_rpm",
+          "type": "int"
+        },
+        {
+          "name": "expires_at",
+          "type": "*time.Time"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/api-tokens/:id",
+      "handler": "handleAPITokenRevoke",
+      "auth": "user",
+      "scope": "api-tokens:write",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/api/asset-quota",
       "handler": "handleAssetQuotaSelf",
       "auth": "user",
+      "scope": "asset-quota:read",
       "body": [],
       "query": []
     },
@@ -864,6 +973,7 @@
       "path": "/api/assets",
       "handler": "handleAssetList",
       "auth": "user",
+      "scope": "assets:read",
       "body": [],
       "query": [
         {
@@ -889,6 +999,7 @@
       "path": "/api/assets",
       "handler": "handleAssetUpload",
       "auth": "user",
+      "scope": "assets:write",
       "body": [],
       "query": []
     },
@@ -897,6 +1008,7 @@
       "path": "/api/assets/:id",
       "handler": "handleAssetDelete",
       "auth": "user",
+      "scope": "assets:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -911,6 +1023,7 @@
       "path": "/api/assets/:id",
       "handler": "handleAssetGet",
       "auth": "user",
+      "scope": "assets:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -925,6 +1038,7 @@
       "path": "/api/assets/:id/blob",
       "handler": "handleAssetBlob",
       "auth": "user",
+      "scope": "assets:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -939,6 +1053,7 @@
       "path": "/api/assets/:id/share",
       "handler": "handleAssetShareCreate",
       "auth": "user",
+      "scope": "assets:write",
       "body": [
         {
           "name": "expires_at",
@@ -966,6 +1081,7 @@
       "path": "/api/assets/by-name/:kind/*name",
       "handler": "handleAssetGetByName",
       "auth": "user",
+      "scope": "assets:read",
       "body": [],
       "query": [
         {
@@ -993,6 +1109,7 @@
       "path": "/api/assets/folders",
       "handler": "handleAssetFolders",
       "auth": "user",
+      "scope": "assets:read",
       "body": [],
       "query": [
         {
@@ -1006,6 +1123,7 @@
       "path": "/api/attachments",
       "handler": "handleAttachmentUpload",
       "auth": "user",
+      "scope": "attachments:write",
       "body": [],
       "query": []
     },
@@ -1014,6 +1132,7 @@
       "path": "/api/attachments/:id",
       "handler": "handleAttachmentDelete",
       "auth": "user",
+      "scope": "attachments:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1028,6 +1147,7 @@
       "path": "/api/attachments/:id",
       "handler": "handleAttachmentGet",
       "auth": "user",
+      "scope": "attachments:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -1042,6 +1162,7 @@
       "path": "/api/attachments/:id/download",
       "handler": "handleAttachmentDownload",
       "auth": "user",
+      "scope": "attachments:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -1056,6 +1177,7 @@
       "path": "/api/bots",
       "handler": "handleBotUserList",
       "auth": "user",
+      "scope": "bots:read",
       "body": [],
       "query": []
     },
@@ -1064,6 +1186,7 @@
       "path": "/api/bots",
       "handler": "handleBotUserCreate",
       "auth": "user",
+      "scope": "bots:write",
       "body": [
         {
           "name": "name",
@@ -1102,6 +1225,7 @@
       "path": "/api/bots/:id",
       "handler": "handleBotUserDelete",
       "auth": "user",
+      "scope": "bots:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1116,6 +1240,7 @@
       "path": "/api/bots/:id",
       "handler": "handleBotUserUpdate",
       "auth": "user",
+      "scope": "bots:write",
       "body": [
         {
           "name": "name",
@@ -1164,6 +1289,7 @@
       "path": "/api/chats",
       "handler": "handleChatList",
       "auth": "user",
+      "scope": "chats:read",
       "body": [],
       "query": [
         {
@@ -1181,6 +1307,7 @@
       "path": "/api/chats/:id/llm-threads",
       "handler": "handleChatLLMThreads",
       "auth": "user",
+      "scope": "chats:read",
       "body": [],
       "query": [
         {
@@ -1200,6 +1327,7 @@
       "path": "/api/chats/:id/llm-threads",
       "handler": "handleChatLLMThreadCreate",
       "auth": "user",
+      "scope": "chats:write",
       "body": [
         {
           "name": "title",
@@ -1219,6 +1347,7 @@
       "path": "/api/chats/:id/llm-threads/:threadId",
       "handler": "handleChatLLMThreadDelete",
       "auth": "user",
+      "scope": "chats:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1237,6 +1366,7 @@
       "path": "/api/chats/:id/llm-threads/:threadId",
       "handler": "handleChatLLMThreadUpdate",
       "auth": "user",
+      "scope": "chats:write",
       "body": [
         {
           "name": "title",
@@ -1261,6 +1391,7 @@
       "path": "/api/chats/:id/llm-threads/:threadId/config",
       "handler": "handleChatLLMThreadConfigUpdate",
       "auth": "user",
+      "scope": "chats:write",
       "body": [
         {
           "name": "llm_config_id",
@@ -1285,6 +1416,7 @@
       "path": "/api/chats/:id/messages",
       "handler": "handleChatMessages",
       "auth": "user",
+      "scope": "chats:read",
       "body": [],
       "query": [
         {
@@ -1316,6 +1448,7 @@
       "path": "/api/chats/:id/messages",
       "handler": "handleChatSend",
       "auth": "user",
+      "scope": "chats:write",
       "body": [
         {
           "name": "content",
@@ -1340,6 +1473,7 @@
       "path": "/api/chats/:id/messages/:messageId",
       "handler": "handleChatDelete",
       "auth": "user",
+      "scope": "chats:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1358,6 +1492,7 @@
       "path": "/api/chats/:id/messages/:messageId",
       "handler": "handleChatMessageDetail",
       "auth": "user",
+      "scope": "chats:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -1376,6 +1511,7 @@
       "path": "/api/chats/:id/messages/:messageId/markdown",
       "handler": "handleChatSharedMarkdown",
       "auth": "user",
+      "scope": "chats:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -1394,6 +1530,7 @@
       "path": "/api/chats/:id/messages/:messageId/retry",
       "handler": "handleChatRetry",
       "auth": "user",
+      "scope": "chats:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1412,6 +1549,7 @@
       "path": "/api/chats/:id/messages/attachment",
       "handler": "handleChatSendAttachment",
       "auth": "user",
+      "scope": "chats:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1426,6 +1564,7 @@
       "path": "/api/chats/:id/summary",
       "handler": "handleChatThreadSummary",
       "auth": "user",
+      "scope": "chats:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -1440,6 +1579,7 @@
       "path": "/api/chats/:id/summary/refresh",
       "handler": "handleChatThreadSummaryRefresh",
       "auth": "user",
+      "scope": "chats:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1454,6 +1594,7 @@
       "path": "/api/chats/start",
       "handler": "handleChatStart",
       "auth": "user",
+      "scope": "chats:write",
       "body": [
         {
           "name": "user_id",
@@ -1472,6 +1613,7 @@
       "path": "/api/dashboard/layout",
       "handler": "handleDashboardLayoutGet",
       "auth": "user",
+      "scope": "dashboard:read",
       "body": [],
       "query": []
     },
@@ -1480,6 +1622,7 @@
       "path": "/api/dashboard/layout",
       "handler": "handleDashboardLayoutUpdate",
       "auth": "user",
+      "scope": "dashboard:write",
       "body": [
         {
           "name": "layout",
@@ -1493,6 +1636,7 @@
       "path": "/api/devices/push-token",
       "handler": "handleDevicePushTokenDelete",
       "auth": "user",
+      "scope": "devices:write",
       "body": [
         {
           "name": "device_id",
@@ -1506,6 +1650,7 @@
       "path": "/api/devices/push-token",
       "handler": "handleDevicePushTokenUpdate",
       "auth": "user",
+      "scope": "devices:write",
       "body": [
         {
           "name": "device_id",
@@ -1528,6 +1673,7 @@
       "path": "/api/email-verification/send",
       "handler": "handleEmailVerificationSend",
       "auth": "user",
+      "scope": "email-verification:write",
       "body": [],
       "query": []
     },
@@ -1548,6 +1694,7 @@
       "path": "/api/hosts/:host_id/skills/install",
       "handler": "handleHostSkillInstall",
       "auth": "user",
+      "scope": "hosts:write",
       "body": [
         {
           "name": "catalog_id",
@@ -1567,6 +1714,7 @@
       "path": "/api/hosts/:host_id/skills/uninstall",
       "handler": "handleHostSkillUninstall",
       "auth": "user",
+      "scope": "hosts:write",
       "body": [
         {
           "name": "publisher",
@@ -1611,6 +1759,7 @@
       "path": "/api/invitations/:token/accept",
       "handler": "handleInvitationAccept",
       "auth": "user",
+      "scope": "invitations:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1638,6 +1787,7 @@
       "path": "/api/iosdist/agent/builds/:id/result",
       "handler": "handleIOSAgentBuildResult",
       "auth": "user",
+      "scope": "iosdist:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1652,6 +1802,7 @@
       "path": "/api/iosdist/agent/builds/:id/start",
       "handler": "handleIOSAgentBuildStart",
       "auth": "user",
+      "scope": "iosdist:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1666,6 +1817,7 @@
       "path": "/api/iosdist/agent/builds/init",
       "handler": "handleIOSAgentBuildInit",
       "auth": "user",
+      "scope": "iosdist:write",
       "body": [],
       "query": []
     },
@@ -1674,6 +1826,7 @@
       "path": "/api/llm-config-applications",
       "handler": "handleLLMConfigApplicationsListMine",
       "auth": "user",
+      "scope": "llm-config-applications:read",
       "body": [],
       "query": []
     },
@@ -1682,6 +1835,7 @@
       "path": "/api/llm-config-applications",
       "handler": "handleLLMConfigApply",
       "auth": "user",
+      "scope": "llm-config-applications:write",
       "body": [
         {
           "name": "llm_config_id",
@@ -1699,6 +1853,7 @@
       "path": "/api/llm-configs",
       "handler": "handleLLMConfigList",
       "auth": "user",
+      "scope": "llm-configs:read",
       "body": [],
       "query": []
     },
@@ -1707,6 +1862,7 @@
       "path": "/api/llm-configs",
       "handler": "handleLLMConfigCreate",
       "auth": "user",
+      "scope": "llm-configs:write",
       "body": [
         {
           "name": "name",
@@ -1763,6 +1919,7 @@
       "path": "/api/llm-configs/:id",
       "handler": "handleLLMConfigDelete",
       "auth": "user",
+      "scope": "llm-configs:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1777,6 +1934,7 @@
       "path": "/api/llm-configs/:id",
       "handler": "handleLLMConfigUpdate",
       "auth": "user",
+      "scope": "llm-configs:write",
       "body": [
         {
           "name": "name",
@@ -1843,6 +2001,7 @@
       "path": "/api/llm-configs/:id/platform",
       "handler": "handleLLMConfigSetPlatform",
       "auth": "user",
+      "scope": "llm-configs:write",
       "body": [
         {
           "name": "is_platform",
@@ -1862,6 +2021,7 @@
       "path": "/api/llm-configs/available",
       "handler": "handleAvailableLLMConfigList",
       "auth": "user",
+      "scope": "llm-configs:read",
       "body": [],
       "query": []
     },
@@ -1870,6 +2030,7 @@
       "path": "/api/llm-configs/health",
       "handler": "handleLLMConfigsHealth",
       "auth": "user",
+      "scope": "llm-configs:read",
       "body": [],
       "query": []
     },
@@ -1878,6 +2039,7 @@
       "path": "/api/llm-configs/marketplace",
       "handler": "handleSharedLLMConfigList",
       "auth": "user",
+      "scope": "llm-configs:read",
       "body": [],
       "query": []
     },
@@ -1886,6 +2048,7 @@
       "path": "/api/llm-configs/shared/:shareId",
       "handler": "handleLLMConfigGetByShareID",
       "auth": "user",
+      "scope": "llm-configs:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -1900,6 +2063,7 @@
       "path": "/api/llm-configs/test",
       "handler": "handleLLMConfigTest",
       "auth": "user",
+      "scope": "llm-configs:write",
       "body": [
         {
           "name": "base_url",
@@ -1932,6 +2096,7 @@
       "path": "/api/llm-proxy/dashboard-stats",
       "handler": "handleLLMProxyDashboardStats",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -1940,6 +2105,7 @@
       "path": "/api/llm-proxy/tokens",
       "handler": "handleLLMProxyTokenList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -1948,6 +2114,7 @@
       "path": "/api/llm-proxy/tokens",
       "handler": "handleLLMProxyTokenCreate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "name",
@@ -1978,6 +2145,7 @@
       "path": "/api/llm-proxy/tokens/:id",
       "handler": "handleLLMProxyTokenRevoke",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -1992,6 +2160,7 @@
       "path": "/api/llm-proxy/tokens/:id/calls",
       "handler": "handleLLMProxyTokenCalls",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -2011,6 +2180,7 @@
       "path": "/api/llm-proxy/tokens/:id/calls/aggregate",
       "handler": "handleLLMProxyTokenCallsAggregate",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -2030,6 +2200,7 @@
       "path": "/api/llm-proxy/tokens/:id/routes",
       "handler": "handleLLMProxyTokenRoutesList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -2044,6 +2215,7 @@
       "path": "/api/llm-proxy/tokens/:id/routes",
       "handler": "handleLLMProxyTokenRoutesReplace",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "routes",
@@ -2095,6 +2267,7 @@
       "path": "/api/login-history",
       "handler": "handleLoginHistory",
       "auth": "user",
+      "scope": "login-history:read",
       "body": [],
       "query": [
         {
@@ -2115,6 +2288,7 @@
       "path": "/api/markdown",
       "handler": "handleMarkdownList",
       "auth": "user",
+      "scope": "markdown:read",
       "body": [],
       "query": [
         {
@@ -2132,6 +2306,7 @@
       "path": "/api/markdown",
       "handler": "handleMarkdownSubmit",
       "auth": "user",
+      "scope": "markdown:write",
       "body": [
         {
           "name": "title",
@@ -2167,6 +2342,7 @@
       "path": "/api/markdown/:id",
       "handler": "handleMarkdownDelete",
       "auth": "user",
+      "scope": "markdown:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2181,6 +2357,7 @@
       "path": "/api/markdown/:id",
       "handler": "handleMarkdownRead",
       "auth": "user",
+      "scope": "markdown:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -2195,6 +2372,7 @@
       "path": "/api/markdown/:id",
       "handler": "handleMarkdownUpdate",
       "auth": "user",
+      "scope": "markdown:write",
       "body": [
         {
           "name": "title",
@@ -2236,6 +2414,7 @@
       "path": "/api/markdown/:id/bookmark",
       "handler": "handleMarkdownUnbookmark",
       "auth": "user",
+      "scope": "markdown:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2250,6 +2429,7 @@
       "path": "/api/markdown/:id/bookmark",
       "handler": "handleMarkdownBookmark",
       "auth": "user",
+      "scope": "markdown:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2264,6 +2444,7 @@
       "path": "/api/markdown/:id/like",
       "handler": "handleMarkdownUnlike",
       "auth": "user",
+      "scope": "markdown:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2278,6 +2459,7 @@
       "path": "/api/markdown/:id/like",
       "handler": "handleMarkdownLike",
       "auth": "user",
+      "scope": "markdown:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2292,6 +2474,7 @@
       "path": "/api/markdown/:id/replies",
       "handler": "handleMarkdownReplyList",
       "auth": "user",
+      "scope": "markdown:read",
       "body": [],
       "query": [
         {
@@ -2315,6 +2498,7 @@
       "path": "/api/markdown/:id/replies",
       "handler": "handleMarkdownReplyCreate",
       "auth": "user",
+      "scope": "markdown:write",
       "body": [
         {
           "name": "content",
@@ -2335,6 +2519,7 @@
       "path": "/api/markdown/assist-with-bot",
       "handler": "handleMarkdownAssistWithBot",
       "auth": "user",
+      "scope": "markdown:write",
       "body": [
         {
           "name": "bot_id",
@@ -2365,6 +2550,7 @@
       "path": "/api/markdown/workspace",
       "handler": "handleWorkspaceMarkdownList",
       "auth": "user",
+      "scope": "markdown:read",
       "body": [],
       "query": [
         {
@@ -2382,6 +2568,7 @@
       "path": "/api/me",
       "handler": "handleMe",
       "auth": "user",
+      "scope": "me:read",
       "body": [],
       "query": []
     },
@@ -2390,6 +2577,7 @@
       "path": "/api/me/llm-proxy/tokens",
       "handler": "handleLLMProxyTokenList",
       "auth": "user",
+      "scope": "me:read",
       "body": [],
       "query": []
     },
@@ -2398,6 +2586,7 @@
       "path": "/api/me/llm-proxy/tokens/:id/calls",
       "handler": "handleLLMProxyTokenCalls",
       "auth": "user",
+      "scope": "me:read",
       "body": [],
       "query": [
         {
@@ -2417,6 +2606,7 @@
       "path": "/api/me/llm-proxy/tokens/:id/calls/aggregate",
       "handler": "handleLLMProxyTokenCallsAggregate",
       "auth": "user",
+      "scope": "me:read",
       "body": [],
       "query": [
         {
@@ -2436,6 +2626,7 @@
       "path": "/api/me/permissions",
       "handler": "handleMyPermissions",
       "auth": "user",
+      "scope": "me:read",
       "body": [],
       "query": []
     },
@@ -2457,6 +2648,7 @@
       "path": "/api/nav",
       "handler": "handleNav",
       "auth": "user",
+      "scope": "nav:read",
       "body": [],
       "query": []
     },
@@ -2503,6 +2695,7 @@
       "path": "/api/passkey/register/begin",
       "handler": "handlePasskeyRegisterBegin",
       "auth": "user",
+      "scope": "passkey:write",
       "body": [],
       "query": []
     },
@@ -2511,6 +2704,7 @@
       "path": "/api/passkey/register/finish",
       "handler": "handlePasskeyRegisterFinish",
       "auth": "user",
+      "scope": "passkey:write",
       "body": [],
       "query": [],
       "headers": [
@@ -2525,6 +2719,7 @@
       "path": "/api/passkeys",
       "handler": "handlePasskeyList",
       "auth": "user",
+      "scope": "passkeys:read",
       "body": [],
       "query": []
     },
@@ -2533,6 +2728,7 @@
       "path": "/api/passkeys/:credentialId",
       "handler": "handlePasskeyDelete",
       "auth": "user",
+      "scope": "passkeys:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2547,6 +2743,7 @@
       "path": "/api/plugin-ui-routes",
       "handler": "handlePluginUIRoutes",
       "auth": "user",
+      "scope": "plugin-ui-routes:read",
       "body": [],
       "query": []
     },
@@ -2581,6 +2778,7 @@
       "path": "/api/posts",
       "handler": "handlePostList",
       "auth": "user",
+      "scope": "posts:read",
       "body": [],
       "query": [
         {
@@ -2610,6 +2808,7 @@
       "path": "/api/posts",
       "handler": "handlePostCreate",
       "auth": "user",
+      "scope": "posts:write",
       "body": [],
       "query": []
     },
@@ -2618,6 +2817,7 @@
       "path": "/api/posts/:id",
       "handler": "handlePostDelete",
       "auth": "user",
+      "scope": "posts:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2632,6 +2832,7 @@
       "path": "/api/posts/:id",
       "handler": "handlePostRead",
       "auth": "user",
+      "scope": "posts:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -2646,6 +2847,7 @@
       "path": "/api/posts/:id/bookmark",
       "handler": "handlePostUnbookmark",
       "auth": "user",
+      "scope": "posts:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2660,6 +2862,7 @@
       "path": "/api/posts/:id/bookmark",
       "handler": "handlePostBookmark",
       "auth": "user",
+      "scope": "posts:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2674,6 +2877,7 @@
       "path": "/api/posts/:id/like",
       "handler": "handlePostUnlike",
       "auth": "user",
+      "scope": "posts:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2688,6 +2892,7 @@
       "path": "/api/posts/:id/like",
       "handler": "handlePostLike",
       "auth": "user",
+      "scope": "posts:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2702,6 +2907,7 @@
       "path": "/api/posts/:id/replies",
       "handler": "handleReplyList",
       "auth": "user",
+      "scope": "posts:read",
       "body": [],
       "query": [
         {
@@ -2725,6 +2931,7 @@
       "path": "/api/posts/:id/replies",
       "handler": "handleReplyCreate",
       "auth": "user",
+      "scope": "posts:write",
       "body": [
         {
           "name": "content",
@@ -2745,6 +2952,7 @@
       "path": "/api/posts/:id/replies/assist-with-bot",
       "handler": "handleReplyAssistWithBot",
       "auth": "user",
+      "scope": "posts:write",
       "body": [
         {
           "name": "bot_id",
@@ -2776,6 +2984,7 @@
       "path": "/api/posts/assist-with-bot",
       "handler": "handlePostAssistWithBot",
       "auth": "user",
+      "scope": "posts:write",
       "body": [
         {
           "name": "bot_id",
@@ -2805,6 +3014,7 @@
       "path": "/api/projects/:id/research/runs",
       "handler": "handleResearchRunsList",
       "auth": "user",
+      "scope": "projects:read",
       "body": [],
       "query": [
         {
@@ -2824,6 +3034,7 @@
       "path": "/api/projects/:id/tasks/:task_id/research/dispatch",
       "handler": "handleResearchDispatch",
       "auth": "user",
+      "scope": "projects:write",
       "body": [
         {
           "name": "bot_user_id",
@@ -2852,6 +3063,7 @@
       "path": "/api/projects/:id/tasks/:task_id/retrospect",
       "handler": "handleProjectTaskRetrospectGet",
       "auth": "user",
+      "scope": "projects:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -2870,6 +3082,7 @@
       "path": "/api/projects/:id/tasks/:task_id/retrospect",
       "handler": "handleProjectTaskRetrospectGenerate",
       "auth": "user",
+      "scope": "projects:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2888,6 +3101,7 @@
       "path": "/api/projects/:id/tasks/:task_id/sharpen",
       "handler": "handleProjectTaskSharpen",
       "auth": "user",
+      "scope": "projects:write",
       "body": [
         {
           "name": "instruction",
@@ -2911,6 +3125,7 @@
       "path": "/api/projects/research/runs/:run_id/result",
       "handler": "handleResearchRunResult",
       "auth": "user",
+      "scope": "projects:write",
       "body": [
         {
           "name": "ok",
@@ -2954,6 +3169,7 @@
       "path": "/api/projects/research/runs/:run_id/start",
       "handler": "handleResearchRunStart",
       "auth": "user",
+      "scope": "projects:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -2968,6 +3184,7 @@
       "path": "/api/prompts",
       "handler": "handlePromptTemplateList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": []
     },
@@ -2976,6 +3193,7 @@
       "path": "/api/prompts/:slug",
       "handler": "handlePromptTemplateGet",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -2989,7 +3207,8 @@
       "method": "PUT",
       "path": "/api/prompts/:slug",
       "handler": "handlePromptTemplateUpdate",
-      "auth": "admin",
+      "auth": "user",
+      "scope": "prompts:write",
       "body": [
         {
           "name": "content",
@@ -3086,6 +3305,7 @@
       "path": "/api/rbac/permissions",
       "handler": "handleRBACCatalog",
       "auth": "user",
+      "scope": "rbac:read",
       "body": [],
       "query": []
     },
@@ -3135,6 +3355,7 @@
       "path": "/api/rooms",
       "handler": "handleChatRoomList",
       "auth": "user",
+      "scope": "rooms:read",
       "body": [],
       "query": [
         {
@@ -3148,6 +3369,7 @@
       "path": "/api/rooms",
       "handler": "handleChatRoomCreate",
       "auth": "user",
+      "scope": "rooms:write",
       "body": [
         {
           "name": "kind",
@@ -3169,6 +3391,7 @@
       "path": "/api/rooms/:id",
       "handler": "handleChatRoomDelete",
       "auth": "user",
+      "scope": "rooms:write",
       "body": [],
       "query": []
     },
@@ -3177,6 +3400,7 @@
       "path": "/api/rooms/:id",
       "handler": "handleChatRoomGet",
       "auth": "user",
+      "scope": "rooms:read",
       "body": [],
       "query": []
     },
@@ -3185,6 +3409,7 @@
       "path": "/api/rooms/:id",
       "handler": "handleChatRoomUpdate",
       "auth": "user",
+      "scope": "rooms:write",
       "body": [
         {
           "name": "name",
@@ -3202,6 +3427,7 @@
       "path": "/api/rooms/:id/agent-loops",
       "handler": "handleChatRoomAgentLoopList",
       "auth": "user",
+      "scope": "rooms:read",
       "body": [],
       "query": []
     },
@@ -3210,6 +3436,7 @@
       "path": "/api/rooms/:id/agent-loops/:botUserId",
       "handler": "handleChatRoomAgentLoopDelete",
       "auth": "user",
+      "scope": "rooms:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3224,6 +3451,7 @@
       "path": "/api/rooms/:id/agent-loops/:botUserId",
       "handler": "handleChatRoomAgentLoopUpsert",
       "auth": "user",
+      "scope": "rooms:write",
       "body": [
         {
           "name": "enabled",
@@ -3251,6 +3479,7 @@
       "path": "/api/rooms/:id/members",
       "handler": "handleChatRoomMemberList",
       "auth": "user",
+      "scope": "rooms:read",
       "body": [],
       "query": []
     },
@@ -3259,6 +3488,7 @@
       "path": "/api/rooms/:id/members",
       "handler": "handleChatRoomMemberAdd",
       "auth": "user",
+      "scope": "rooms:write",
       "body": [
         {
           "name": "user_id",
@@ -3277,6 +3507,7 @@
       "path": "/api/rooms/:id/members/:userId",
       "handler": "handleChatRoomMemberRemove",
       "auth": "user",
+      "scope": "rooms:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3291,6 +3522,7 @@
       "path": "/api/rooms/:id/messages",
       "handler": "handleChatRoomMessageList",
       "auth": "user",
+      "scope": "rooms:read",
       "body": [],
       "query": [
         {
@@ -3308,6 +3540,7 @@
       "path": "/api/rooms/:id/messages",
       "handler": "handleChatRoomMessageSend",
       "auth": "user",
+      "scope": "rooms:write",
       "body": [
         {
           "name": "content",
@@ -3326,6 +3559,7 @@
       "path": "/api/share-links",
       "handler": "handleAssetShareList",
       "auth": "user",
+      "scope": "share-links:read",
       "body": [],
       "query": []
     },
@@ -3334,6 +3568,7 @@
       "path": "/api/share-links/:id",
       "handler": "handleAssetShareDelete",
       "auth": "user",
+      "scope": "share-links:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3355,6 +3590,7 @@
       "path": "/api/site-settings",
       "handler": "handleSiteSettingsUpdate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "name",
@@ -3377,6 +3613,7 @@
       "path": "/api/site-settings/apple-push-cert",
       "handler": "handleApplePushCertificateDelete",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [
         {
@@ -3390,6 +3627,7 @@
       "path": "/api/site-settings/apple-push-cert",
       "handler": "handleApplePushCertificateUpload",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [
         {
@@ -3403,6 +3641,7 @@
       "path": "/api/site-settings/icon",
       "handler": "handleSiteIconUpload",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": []
     },
@@ -3411,6 +3650,7 @@
       "path": "/api/site-settings/invite-codes",
       "handler": "handleInviteCodeList",
       "auth": "admin",
+      "scope": "admin:read",
       "body": [],
       "query": [
         {
@@ -3424,6 +3664,7 @@
       "path": "/api/site-settings/invite-codes",
       "handler": "handleInviteCodeGenerate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "count",
@@ -3437,6 +3678,7 @@
       "path": "/api/skill-updates",
       "handler": "handleSkillUpdatesList",
       "auth": "user",
+      "scope": "skill-updates:read",
       "body": [],
       "query": []
     },
@@ -3445,6 +3687,7 @@
       "path": "/api/system-agent",
       "handler": "handleSystemAgentStatus",
       "auth": "user",
+      "scope": "system-agent:read",
       "body": [],
       "query": []
     },
@@ -3453,6 +3696,7 @@
       "path": "/api/system-agent/bio/refine",
       "handler": "handleBioRefine",
       "auth": "user",
+      "scope": "system-agent:write",
       "body": [
         {
           "name": "current_bio",
@@ -3481,6 +3725,7 @@
       "path": "/api/tags",
       "handler": "handleTagList",
       "auth": "user",
+      "scope": "tags:read",
       "body": [],
       "query": [
         {
@@ -3498,6 +3743,7 @@
       "path": "/api/tags",
       "handler": "handleTagCreate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "name",
@@ -3524,6 +3770,7 @@
       "path": "/api/tags/:id",
       "handler": "handleTagDelete",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3538,6 +3785,7 @@
       "path": "/api/tags/:id",
       "handler": "handleTagUpdate",
       "auth": "admin",
+      "scope": "admin:write",
       "body": [
         {
           "name": "name",
@@ -3570,6 +3818,7 @@
       "path": "/api/tasks/:id/applications",
       "handler": "handleTaskApplications",
       "auth": "user",
+      "scope": "tasks:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -3584,6 +3833,7 @@
       "path": "/api/tasks/:id/apply",
       "handler": "handleTaskWithdraw",
       "auth": "user",
+      "scope": "tasks:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3598,6 +3848,7 @@
       "path": "/api/tasks/:id/apply",
       "handler": "handleTaskApply",
       "auth": "user",
+      "scope": "tasks:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3612,6 +3863,7 @@
       "path": "/api/tasks/:id/close",
       "handler": "handleTaskClose",
       "auth": "user",
+      "scope": "tasks:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3626,6 +3878,7 @@
       "path": "/api/tasks/:id/results",
       "handler": "handleTaskResultsList",
       "auth": "user",
+      "scope": "tasks:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -3640,6 +3893,7 @@
       "path": "/api/tasks/:id/results",
       "handler": "handleTaskResultCreate",
       "auth": "user",
+      "scope": "tasks:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3654,6 +3908,7 @@
       "path": "/api/tasks/:id/select-candidate",
       "handler": "handleTaskSelectCandidate",
       "auth": "user",
+      "scope": "tasks:write",
       "body": [
         {
           "name": "applicant_user_id",
@@ -3678,6 +3933,7 @@
       "path": "/api/teams",
       "handler": "handleTeamList",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": []
     },
@@ -3686,6 +3942,7 @@
       "path": "/api/teams",
       "handler": "handleTeamCreate",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "name",
@@ -3707,6 +3964,7 @@
       "path": "/api/teams/:id",
       "handler": "handleTeamDelete",
       "auth": "user",
+      "scope": "teams:write",
       "body": [],
       "query": []
     },
@@ -3715,6 +3973,7 @@
       "path": "/api/teams/:id",
       "handler": "handleTeamDetail",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": []
     },
@@ -3723,6 +3982,7 @@
       "path": "/api/teams/:id",
       "handler": "handleTeamUpdate",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "name",
@@ -3744,6 +4004,7 @@
       "path": "/api/teams/:id/admin-actions",
       "handler": "handleTeamAdminActions",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -3758,6 +4019,7 @@
       "path": "/api/teams/:id/available-modules",
       "handler": "handleTeamAvailableModules",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": []
     },
@@ -3766,6 +4028,7 @@
       "path": "/api/teams/:id/invitations",
       "handler": "handleTeamInvitationList",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": []
     },
@@ -3774,6 +4037,7 @@
       "path": "/api/teams/:id/invitations",
       "handler": "handleTeamInvitationCreate",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "email",
@@ -3791,6 +4055,7 @@
       "path": "/api/teams/:id/invitations/:inv_id",
       "handler": "handleTeamInvitationRevoke",
       "auth": "user",
+      "scope": "teams:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3805,6 +4070,7 @@
       "path": "/api/teams/:id/logs",
       "handler": "handleTeamLogs",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": []
     },
@@ -3813,6 +4079,7 @@
       "path": "/api/teams/:id/member-roles",
       "handler": "handleListMemberRoles",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -3827,6 +4094,7 @@
       "path": "/api/teams/:id/member-roles",
       "handler": "handleAssignMemberRole",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "user_id",
@@ -3854,6 +4122,7 @@
       "path": "/api/teams/:id/members",
       "handler": "handleTeamMembers",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": []
     },
@@ -3862,6 +4131,7 @@
       "path": "/api/teams/:id/members/:user_id",
       "handler": "handleTeamMemberRemove",
       "auth": "user",
+      "scope": "teams:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3876,6 +4146,7 @@
       "path": "/api/teams/:id/members/:user_id",
       "handler": "handleTeamMemberRoleUpdate",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "role",
@@ -3895,6 +4166,7 @@
       "path": "/api/teams/:id/mounts",
       "handler": "handleListMounts",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -3909,6 +4181,7 @@
       "path": "/api/teams/:id/mounts",
       "handler": "handleCreateMount",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "source_workspace_id",
@@ -3940,6 +4213,7 @@
       "path": "/api/teams/:id/mounts/:mountId",
       "handler": "handleDeleteMount",
       "auth": "user",
+      "scope": "teams:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -3958,6 +4232,7 @@
       "path": "/api/teams/:id/plugin-requests",
       "handler": "handleTeamPluginRequestList",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": []
     },
@@ -3966,6 +4241,7 @@
       "path": "/api/teams/:id/plugin-requests",
       "handler": "handleTeamPluginRequestCreate",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "plugin_name",
@@ -3992,6 +4268,7 @@
       "path": "/api/teams/:id/roles",
       "handler": "handleListRoles",
       "auth": "user",
+      "scope": "teams:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -4006,6 +4283,7 @@
       "path": "/api/teams/:id/roles",
       "handler": "handleCreateRole",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "key",
@@ -4033,6 +4311,7 @@
       "path": "/api/teams/:id/roles/:roleId",
       "handler": "handleDeleteRole",
       "auth": "user",
+      "scope": "teams:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -4051,6 +4330,7 @@
       "path": "/api/teams/:id/roles/:roleId",
       "handler": "handleUpdateRole",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "name",
@@ -4078,6 +4358,7 @@
       "path": "/api/teams/:id/transfer",
       "handler": "handleTeamTransfer",
       "auth": "user",
+      "scope": "teams:write",
       "body": [
         {
           "name": "new_owner_user_id",
@@ -4112,6 +4393,7 @@
       "path": "/api/user/icon",
       "handler": "handleUserIconUpload",
       "auth": "user",
+      "scope": "user:write",
       "body": [],
       "query": []
     },
@@ -4120,6 +4402,7 @@
       "path": "/api/users",
       "handler": "handleUserSearch",
       "auth": "user",
+      "scope": "users:read",
       "body": [],
       "query": [
         {
@@ -4133,6 +4416,7 @@
       "path": "/api/users/:id/block",
       "handler": "handleUserBlockDelete",
       "auth": "user",
+      "scope": "users:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -4147,6 +4431,7 @@
       "path": "/api/users/:id/block",
       "handler": "handleUserBlockCreate",
       "auth": "user",
+      "scope": "users:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -4161,6 +4446,7 @@
       "path": "/api/users/:id/follow",
       "handler": "handleUserUnfollow",
       "auth": "user",
+      "scope": "users:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -4175,6 +4461,7 @@
       "path": "/api/users/:id/follow",
       "handler": "handleUserFollow",
       "auth": "user",
+      "scope": "users:write",
       "body": [],
       "query": [],
       "path_params": [
@@ -4189,6 +4476,7 @@
       "path": "/api/users/:id/followers",
       "handler": "handleUserFollowers",
       "auth": "user",
+      "scope": "users:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -4203,6 +4491,7 @@
       "path": "/api/users/:id/following",
       "handler": "handleUserFollowing",
       "auth": "user",
+      "scope": "users:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -4217,6 +4506,7 @@
       "path": "/api/users/:id/profile",
       "handler": "handleUserProfileGet",
       "auth": "user",
+      "scope": "users:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -4231,6 +4521,7 @@
       "path": "/api/users/:id/recommendations",
       "handler": "handleProfileRecommendationUpsert",
       "auth": "user",
+      "scope": "users:write",
       "body": [
         {
           "name": "content",
@@ -4251,6 +4542,7 @@
       "path": "/api/users/me/bookmarks",
       "handler": "handleMyBookmarkList",
       "auth": "user",
+      "scope": "users:read",
       "body": [],
       "query": []
     },
@@ -4259,6 +4551,7 @@
       "path": "/api/users/me/following",
       "handler": "handleMyFollowing",
       "auth": "user",
+      "scope": "users:read",
       "body": [],
       "query": []
     },
@@ -4267,6 +4560,7 @@
       "path": "/api/users/me/invitations",
       "handler": "handleInvitationInbox",
       "auth": "user",
+      "scope": "users:read",
       "body": [],
       "query": []
     },
@@ -4275,6 +4569,7 @@
       "path": "/api/users/me/invitations/count",
       "handler": "handleInvitationInboxCount",
       "auth": "user",
+      "scope": "users:read",
       "body": [],
       "query": []
     },
@@ -4283,6 +4578,7 @@
       "path": "/api/users/me/profile",
       "handler": "handleMyProfileUpdate",
       "auth": "user",
+      "scope": "users:write",
       "body": [
         {
           "name": "bio",
@@ -4300,6 +4596,7 @@
       "path": "/api/video-burn",
       "handler": "handleVideoBurn",
       "auth": "user",
+      "scope": "video-burn:read",
       "body": [],
       "query": []
     },
@@ -4308,6 +4605,7 @@
       "path": "/api/video-shot-calls",
       "handler": "handleVideoShotCallsList",
       "auth": "user",
+      "scope": "video-shot-calls:read",
       "body": [],
       "query": [
         {

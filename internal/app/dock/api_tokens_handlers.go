@@ -36,6 +36,14 @@ func (s *Server) handleAPITokenCreate(c *gin.Context) {
 	if strings.TrimSpace(req.Name) == "" {
 		req.Name = "api-token"
 	}
+	// Validate any requested scopes against the known set so a typo'd scope
+	// can't silently lock a token out of everything. Empty list = full access.
+	for _, sc := range req.Scopes {
+		if !knownScope(strings.TrimSpace(sc)) {
+			jsonError(c, http.StatusBadRequest, "api.unknown_scope")
+			return
+		}
+	}
 	raw, tok, err := s.createAPIToken(ws, userID, req.Name, req.Scopes, req.RateLimitRPM, req.ExpiresAt)
 	if err != nil {
 		jsonError(c, http.StatusInternalServerError, "server.error")
@@ -64,6 +72,17 @@ func (s *Server) handleAPITokenList(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"tokens": toks})
+}
+
+// handleAPITokenScopes — GET /api/api-token-scopes. Returns the grantable
+// scope catalog (grouped by domain) that the create-token UI renders as a
+// picker. Derived from the embedded API catalog so it always matches what the
+// middleware enforces.
+func (s *Server) handleAPITokenScopes(c *gin.Context) {
+	if _, ok := requireUserID(c); !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"groups": apiScopeCatalog(), "wildcard": "*"})
 }
 
 // handleAPITokenRevoke — DELETE /api/api-tokens/:id (scoped to workspace).
