@@ -161,6 +161,14 @@ type Config struct {
 	// user out of the app. Set POLAR_ENFORCE_TEAM_STATUS=true to enable.
 	PolarEnforceTeamStatus bool
 
+	// PolarOpenAPITokens: open-API tokens flag (default off). When true,
+	// AuthMiddleware accepts `Authorization: Bearer polar_…` api_tokens as a
+	// public-API equivalent of a session (workspace-pinned, owner-attributed)
+	// and the /api/api-tokens CRUD is live. Off = polar_ bearers rejected,
+	// feature inert. doc/arch/open-api-tokens.md. P0 = full access (scopes
+	// stored but not enforced until P1). Set POLAR_OPEN_API_TOKENS=true.
+	PolarOpenAPITokens bool
+
 	// PolarAssetsPostsDualWrite: P8 flag. When true, each new post-image
 	// upload that succeeds through the legacy /uploads/ path ALSO
 	// gets registered as an asset (kind=post-image) in the assets

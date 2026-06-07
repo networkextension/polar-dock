@@ -118,6 +118,9 @@ func main() {
 		// pending-approvals queue has been eyeballed.
 		PolarEnforceTeamStatus: os.Getenv("POLAR_ENFORCE_TEAM_STATUS") == "true",
 
+		// Open API tokens (doc/arch/open-api-tokens.md). Default off.
+		PolarOpenAPITokens: os.Getenv("POLAR_OPEN_API_TOKENS") == "true",
+
 		// P8 post-image dual-write to assets module. Flag-gated;
 		// rolls forward when the operator is ready to start
 		// building the post-image asset inventory.

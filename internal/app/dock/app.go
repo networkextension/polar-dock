@@ -110,6 +110,9 @@ type Server struct {
 	// See config.go: PolarEnforceTeamStatus.
 	enforceTeamStatus bool
 
+	// Open API tokens flag. See config.go: PolarOpenAPITokens.
+	openAPITokens bool
+
 	// RBAC flag: require llm:admin permission to write LLM configs.
 	// See config.go: PolarEnforceLLMAdmin. Default off = behavior-preserving.
 	enforceLLMAdmin bool
@@ -263,6 +266,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// per-dock from env, default 32).
 	server.polarAssetsUseProvider = cfg.PolarAssetsUseProvider
 	server.enforceTeamStatus = cfg.PolarEnforceTeamStatus
+	server.openAPITokens = cfg.PolarOpenAPITokens
 	server.enforceLLMAdmin = cfg.PolarEnforceLLMAdmin
 	server.enforceResourceRBAC = cfg.PolarEnforceResourceRBAC
 	server.workspaceMounts = cfg.PolarWorkspaceMounts
@@ -841,6 +845,12 @@ func (s *Server) registerRoutes() {
 		api.POST("/passkey/register/finish", s.AuthMiddleware(), s.handlePasskeyRegisterFinish)
 		api.GET("/passkeys", s.AuthMiddleware(), s.handlePasskeyList)
 		api.DELETE("/passkeys/:credentialId", s.AuthMiddleware(), s.handlePasskeyDelete)
+
+		// Open API tokens — self-service CRUD (doc/arch/open-api-tokens.md).
+		// Logged-in user manages tokens for their active workspace.
+		api.POST("/api-tokens", s.AuthMiddleware(), s.handleAPITokenCreate)
+		api.GET("/api-tokens", s.AuthMiddleware(), s.handleAPITokenList)
+		api.DELETE("/api-tokens/:id", s.AuthMiddleware(), s.handleAPITokenRevoke)
 		api.POST("/passkey/login/begin", s.GuestMiddleware(), s.handlePasskeyLoginBegin)
 		api.POST("/passkey/login/finish", s.GuestMiddleware(), s.handlePasskeyLoginFinish)
 		api.POST("/email-verification/send", s.AuthMiddleware(), s.handleEmailVerificationSend)

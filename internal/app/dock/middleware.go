@@ -120,6 +120,28 @@ func extractRefreshToken(c *gin.Context) string {
 
 func (s *Server) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Open API token path (flag-gated): Authorization: Bearer polar_…
+		// resolves to a workspace-pinned, owner-attributed context — the
+		// public-API equivalent of a session. P0 grants full access (scopes
+		// enforced in P1). When the flag is off, a polar_ bearer just falls
+		// through and is rejected as an invalid access token (no change).
+		if s.openAPITokens {
+			if bt := extractBearerToken(c); strings.HasPrefix(bt, apiTokenPrefix) {
+				if tok := s.resolveAPIToken(bt); tok != nil {
+					c.Set("user_id", tok.OwnerUserID)
+					c.Set("role", "api_token")
+					c.Set("workspace_id", tok.WorkspaceID)
+					c.Set("auth_kind", "api_token")
+					c.Set("api_token_id", tok.ID)
+					go s.touchAPIToken(tok.ID)
+					c.Next()
+					return
+				}
+				jsonError(c, http.StatusUnauthorized, "auth.unauthorized")
+				c.Abort()
+				return
+			}
+		}
 		token := extractAccessToken(c)
 		if token == "" {
 			if isAPIRequest(c) {
