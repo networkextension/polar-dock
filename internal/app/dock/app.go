@@ -376,6 +376,7 @@ func NewServer(cfg Config) (*Server, error) {
 	go server.runChatEventSubscriber(server.backgroundCtx)
 	go server.runPushDeliveryWorker(server.backgroundCtx)
 	go server.runAssetQuotaRecompute(server.backgroundCtx)
+	go server.runAPITokenCallsPrune(server.backgroundCtx)
 	// Qunliao P3 — autonomous bot idle loop. Driver ticks every 30s,
 	// fans per-(room, bot) decisions out into ephemeral goroutines.
 	// Default-off per row, billing-gated, hourly capped — see
