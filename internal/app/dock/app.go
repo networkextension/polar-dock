@@ -113,6 +113,9 @@ type Server struct {
 	// Open API tokens flag. See config.go: PolarOpenAPITokens.
 	openAPITokens bool
 
+	// OAuth2/OIDC provider flag. See config.go: PolarOAuthProvider.
+	oauthProvider bool
+
 	// RBAC flag: require llm:admin permission to write LLM configs.
 	// See config.go: PolarEnforceLLMAdmin. Default off = behavior-preserving.
 	enforceLLMAdmin bool
@@ -268,6 +271,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.polarAssetsUseProvider = cfg.PolarAssetsUseProvider
 	server.enforceTeamStatus = cfg.PolarEnforceTeamStatus
 	server.openAPITokens = cfg.PolarOpenAPITokens
+	server.oauthProvider = cfg.PolarOAuthProvider
 	server.enforceLLMAdmin = cfg.PolarEnforceLLMAdmin
 	server.enforceResourceRBAC = cfg.PolarEnforceResourceRBAC
 	server.workspaceMounts = cfg.PolarWorkspaceMounts
@@ -738,6 +742,14 @@ func (s *Server) registerRoutes() {
 	// of the API surface.
 	s.router.GET("/metrics", s.handleMetrics)
 
+	// OAuth2 / OIDC provider ("Login with Polar"). Outside /api so callbacks
+	// and discovery sit at conventional well-known paths. Each handler is inert
+	// (404) unless POLAR_OAUTH_PROVIDER=true. doc/arch/oauth-provider.md.
+	s.router.GET("/.well-known/openid-configuration", s.handleOAuthDiscovery)
+	s.router.GET("/oauth/authorize", s.handleOAuthAuthorize)
+	s.router.POST("/oauth/token", s.handleOAuthToken)
+	s.router.GET("/oauth/userinfo", s.handleOAuthUserinfo)
+
 	// Phase 1-A — internal API surface (HMAC-gated, plugin-only). All
 	// routes hang off /internal/v1/ and require an X-Polar-Plugin-Sig
 	// header signed with the plugin's stored key hash. Production
@@ -859,6 +871,11 @@ func (s *Server) registerRoutes() {
 		api.GET("/api-tokens/:id/calls", s.AuthMiddleware(), s.handleAPITokenCalls)
 		api.GET("/api-tokens/:id/calls/aggregate", s.AuthMiddleware(), s.handleAPITokenCallsAggregate)
 		api.DELETE("/api-tokens/:id", s.AuthMiddleware(), s.handleAPITokenRevoke)
+
+		// OAuth2/OIDC relying-party registration (admin). Inert unless
+		// POLAR_OAUTH_PROVIDER=true. doc/arch/oauth-provider.md.
+		api.POST("/oauth/clients", s.AuthMiddleware(), s.AdminMiddleware(), s.handleOAuthClientCreate)
+		api.GET("/oauth/clients", s.AuthMiddleware(), s.AdminMiddleware(), s.handleOAuthClientList)
 		api.POST("/passkey/login/begin", s.GuestMiddleware(), s.handlePasskeyLoginBegin)
 		api.POST("/passkey/login/finish", s.GuestMiddleware(), s.handlePasskeyLoginFinish)
 		api.POST("/email-verification/send", s.AuthMiddleware(), s.handleEmailVerificationSend)
