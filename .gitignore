@@ -1,5 +1,6 @@
 .specstory/
 data/
+research/
 ui/node_modules/
 ui/dist/
 ui/public/scripts/*.js.map
