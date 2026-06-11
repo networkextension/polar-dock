@@ -808,6 +808,7 @@ func (s *Server) registerRoutes() {
 		// row lands in ideamesh too; without this, /ws/agent 401s on every
 		// newly-registered host.
 		internal.POST("/agent-tokens/issue", s.handleInternalAgentTokenIssue)
+		internal.POST("/agent-tokens/verify", s.handleInternalAgentTokenVerify)
 		internal.POST("/hosts/issue", s.handleInternalHostIssue)
 
 		// v4 — Agent Identity (doc/arch/agent-identity-v4.md).
