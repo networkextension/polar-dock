@@ -367,8 +367,9 @@ func (s *Server) handlePasskeyLoginFinish(c *gin.Context) {
 	s.recordLoginEvent(c, user.ID, "passkey", deviceType)
 
 	jsonMessage(c, http.StatusOK, "auth.login_success", gin.H{
-		"user_id":  user.ID,
-		"username": user.Username,
+		"user_id":           user.ID,
+		"username":          user.Username,
+		"access_expires_in": int(AccessTokenTTL / time.Second),
 	})
 }
 
