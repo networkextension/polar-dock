@@ -114,7 +114,7 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 	// the agent drains it on reconnect. Push mode still requires the
 	// agent attached, since fire-and-forget can't survive an offline gap.
 	pullMode := agentTaskPullEnabled()
-	conn := s.agentHub.lookup(botUserID)
+	conn := s.routeAgentLookup(botUserID)
 	if conn == nil && !pullMode {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "该 bot 的本地 polar-agent 还没连上。请先在终端 `polar-agent attach --bot=" + botUserID + "` 再点派单。",
@@ -243,8 +243,8 @@ func (s *Server) handleResearchDispatch(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 			return
 		}
-		s.agentHub.dispatchTaskWake(botUserID) // best-effort; offline → drains on reconnect
-	} else if err := s.agentHub.dispatchResearchTask(botUserID, envelope); err != nil {
+		_ = s.routeAgentFrame(botUserID, map[string]any{"kind": "task.wake"}) // best-effort
+	} else if err := s.routeAgentFrame(botUserID, researchTaskToFrame(envelope)); err != nil {
 		log.Printf("research dispatch: ws send: %v", err)
 		// Mark the run failed so the operator sees the dispatch failure
 		// instead of a permanently-queued ghost row.

@@ -19,11 +19,10 @@ import (
 	"strings"
 )
 
-func (a *aiAgent) generateReplyWithPassthrough(task aiAgentTask, conn *agentConn) (string, error) {
-	if a.server == nil || a.server.agentHub == nil {
+func (a *aiAgent) generateReplyWithPassthrough(task aiAgentTask, tool string) (string, error) {
+	if a.server == nil {
 		return "", errors.New("agent hub unavailable")
 	}
-	tool := conn.tool
 	if tool == "" {
 		tool = "tool"
 	}
@@ -31,7 +30,7 @@ func (a *aiAgent) generateReplyWithPassthrough(task aiAgentTask, conn *agentConn
 	if content == "" {
 		return fmt.Sprintf("（空消息，未触发 %s）", tool), nil
 	}
-	reply, err := a.server.agentHub.dispatchChatMessage(conn.botUserID, task.ThreadID, content, task.WorkdirSubpath, task.GitRemoteURL)
+	reply, err := a.server.routeAgentChatMessage(task.ResponderUserID, task.ThreadID, content, task.WorkdirSubpath, task.GitRemoteURL)
 	if err != nil {
 		switch {
 		case errors.Is(err, errAgentNotAttached):
