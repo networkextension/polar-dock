@@ -804,3 +804,30 @@ func (s *Server) handleInternalHeartbeat(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, resp)
 }
+
+// ── Phase 4a: POST /internal/v1/agent-tokens/verify ───────────────────────
+// Called by polar-hosts /ws/agent to resolve a raw polar-agent bearer token
+// without direct access to dock's agent_tokens table.
+// Body: {"token": "<raw>"}
+// Response (valid):   {"valid": true,  "token_id": "...", "user_id": "..."}
+// Response (invalid): {"valid": false}
+
+func (s *Server) handleInternalAgentTokenVerify(c *gin.Context) {
+	var req struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		internalErr(c, http.StatusBadRequest, "token required")
+		return
+	}
+	tokenID, userID, err := s.resolveAgentToken(req.Token)
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "db error")
+		return
+	}
+	if tokenID == "" {
+		c.JSON(http.StatusOK, gin.H{"valid": false})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"valid": true, "token_id": tokenID, "user_id": userID})
+}
