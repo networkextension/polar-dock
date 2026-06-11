@@ -735,12 +735,11 @@ func (s *Server) registerRoutes() {
 	})
 	s.router.GET("/ws/chat", s.handleChatWS)
 	s.router.GET("/ws/agent", s.handleAgentWS)
-	// P2 (Shell): byte-bridge WS between browser xterm and the
-	// agent's pty. Auth + admin check inline because gin middleware
-	// can't run cleanly across an upgrade.
+	// Phase 4c: shell/VNC WS bridges now live in polar-hosts
+	// (hosts-svc-snippet.conf routes /ws/host/* → :8095). These dock-side
+	// routes remain until Phase 5 cleanup so pre-cutover deployments still
+	// work; after the nginx snippet is active they are never reached.
 	s.router.GET("/ws/host/:id/shell/:run_id", s.AuthMiddleware(), s.handleHostShellWS)
-	// VNC byte-bridge WS — same shape as the shell bridge but binary
-	// in both directions (noVNC ↔ agent TCP relay).
 	s.router.GET("/ws/host/:id/vnc/:run_id", s.AuthMiddleware(), s.handleHostVNCWS)
 
 	// Prometheus exposition. Gated inside handleMetrics by METRICS_TOKEN —
@@ -1213,9 +1212,9 @@ func (s *Server) registerRoutes() {
 		api.POST("/agent/bots/:bot_id/dispatch", s.AuthMiddleware(), s.handleAgentDispatch)
 		// hosts REST + console layouts now served by polar-hosts-svc; nginx
 		// routes /api/hosts/*, /api/host-skills/*, /api/console/layouts/* to
-		// the plugin. /ws/host/:id/{shell,vnc}/:run_id remains on dock
-		// (router-level, see /ws routes above) so the shell + VNC bridges
-		// continue to use dock's agent_hub.
+		// the plugin. Phase 4c: /ws/host/:id/{shell,vnc}/:run_id now also in
+		// polar-hosts (nginx snippet routes /ws/host/* → :8095); dock-side
+		// registrations above remain until Phase 5 cleanup.
 		//
 		// projects CRUD + decompose + plan + task lifecycle moved to
 		// github.com/networkextension/polar-projects. Sharpen + retrospect
