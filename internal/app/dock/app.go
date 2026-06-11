@@ -749,6 +749,12 @@ func (s *Server) registerRoutes() {
 	s.router.GET("/oauth/authorize", s.handleOAuthAuthorize)
 	s.router.POST("/oauth/token", s.handleOAuthToken)
 	s.router.GET("/oauth/userinfo", s.handleOAuthUserinfo)
+	// Gitea-compatible facade so Plane's (and other apps') built-in Gitea OAuth
+	// provider can use dock as a generic OAuth2 IdP without a generic-OIDC
+	// provider. Aliases onto the same authorize/token handlers + a Gitea-shaped
+	// user object. Inert unless POLAR_OAUTH_PROVIDER=true.
+	s.router.GET("/login/oauth/authorize", s.handleOAuthAuthorize)
+	s.router.POST("/login/oauth/access_token", s.handleOAuthToken)
 
 	// Phase 1-A — internal API surface (HMAC-gated, plugin-only). All
 	// routes hang off /internal/v1/ and require an X-Polar-Plugin-Sig
@@ -876,6 +882,10 @@ func (s *Server) registerRoutes() {
 		// POLAR_OAUTH_PROVIDER=true. doc/arch/oauth-provider.md.
 		api.POST("/oauth/clients", s.AuthMiddleware(), s.AdminMiddleware(), s.handleOAuthClientCreate)
 		api.GET("/oauth/clients", s.AuthMiddleware(), s.AdminMiddleware(), s.handleOAuthClientList)
+		// Gitea-facade user endpoints (Bearer-authed inside the handler, no
+		// AuthMiddleware so the oauth access token is honored directly).
+		api.GET("/v1/user", s.handleGiteaUser)
+		api.GET("/v1/user/emails", s.handleGiteaUserEmails)
 		api.POST("/passkey/login/begin", s.GuestMiddleware(), s.handlePasskeyLoginBegin)
 		api.POST("/passkey/login/finish", s.GuestMiddleware(), s.handlePasskeyLoginFinish)
 		api.POST("/email-verification/send", s.AuthMiddleware(), s.handleEmailVerificationSend)

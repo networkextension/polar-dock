@@ -48,17 +48,42 @@ pure runtime toggle.
 Code: `oauth_provider.go` (store) + `oauth_handlers.go` (HTTP). Schema in
 `store.go`. Flag in `config.go` + `cmd/dock/main.go`. Routes in `app.go`.
 
-## Wiring an external app (Plane example)
+## Gitea-compatible facade (for apps without a generic-OIDC client)
 
-1. Operator: `POST /api/oauth/clients` with Plane's callback
-   `https://<plane>/auth/oidc/callback/` → returns `client_id` + `client_secret`
-   (shown once).
-2. In Plane `/god-mode/authentication/oidc/`: set CLIENT_ID, CLIENT_SECRET,
-   Authorize URL `https://<dock>/oauth/authorize`, Token URL
-   `https://<dock>/oauth/token`, User-info URL `https://<dock>/oauth/userinfo`.
-3. Plane's free Community edition gates custom OIDC behind Pro ($8/seat); on the
-   free tier you fork the AGPL CE to re-enable the generic OIDC adapter. Not a
-   dock concern.
+Some apps' free tiers ship only named OAuth providers (Google/GitHub/Gitea/…)
+and no generic-OIDC option. Plane's free Community edition is one: it has a
+**Gitea** OAuth provider but no generic OIDC. Since Gitea's provider is just a
+generic OAuth2 client against a configurable host, dock exposes a thin
+**Gitea-compatible facade** so such apps can use Polar unmodified:
+
+| Gitea path | dock handler |
+|---|---|
+| `GET /login/oauth/authorize` | alias → `handleOAuthAuthorize` |
+| `POST /login/oauth/access_token` | alias → `handleOAuthToken` |
+| `GET /api/v1/user` | `handleGiteaUser` — Gitea-shaped `{id, login, full_name, email, avatar_url}` |
+| `GET /api/v1/user/emails` | `handleGiteaUserEmails` — `[{email, primary, verified}]` |
+
+Code in `oauth_handlers.go`; routes in `app.go`. All inert unless the flag is on.
+The reverse proxy must also forward `/login/oauth/` (and `/api/` already goes to
+dock) to the dock upstream.
+
+## Wiring an external app
+
+### Generic-OIDC app
+1. Operator: `POST /api/oauth/clients` with the app's callback → `client_id` +
+   `client_secret` (shown once).
+2. In the app's OIDC config: Authorize `https://<dock>/oauth/authorize`, Token
+   `https://<dock>/oauth/token`, Userinfo `https://<dock>/oauth/userinfo`.
+
+### Plane (via the Gitea facade) — verified end-to-end on opera 2026-06-11
+1. Register a client with redirect `https://<plane>/auth/gitea/callback/`.
+2. Set Plane instance config (god-mode → Authentication → Gitea, or
+   `instance_configuration` rows): `GITEA_HOST=https://<dock>`,
+   `GITEA_CLIENT_ID`, `GITEA_CLIENT_SECRET`, `IS_GITEA_ENABLED=1`. Plane caches
+   `/api/instances/` for 2h — run `manage.py clear_cache` after changing config.
+3. "Sign in with Gitea" now drives the full Polar SSO: Plane → dock authorize →
+   (dock login) → callback → token → `/api/v1/user` → Plane account created/linked.
+   (UI label still reads "Gitea" — cosmetic; would need a Plane web patch.)
 
 ## Deployment note (nginx)
 

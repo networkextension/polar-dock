@@ -219,6 +219,69 @@ func (s *Server) handleOAuthUserinfo(c *gin.Context) {
 	})
 }
 
+// ── Gitea-compatible facade ────────────────────────────────────────────────
+//
+// Plane's free Community edition has no generic-OIDC provider, but its built-in
+// Gitea OAuth provider IS a generic OAuth2 client (configurable host). Pointing
+// Plane's GITEA_HOST at this dock makes "Login with Polar" work UNMODIFIED:
+// Plane calls Gitea's well-known paths, which we alias onto the real /oauth
+// endpoints (handleOAuthAuthorize / handleOAuthToken, registered at
+// /login/oauth/authorize and /login/oauth/access_token in app.go) and serve a
+// Gitea-shaped user object here. See doc/arch/oauth-provider.md.
+
+// giteaUserFromBearer resolves the user behind a Bearer access token, or writes
+// a 401 and returns nil. Shared by the two Gitea facade endpoints.
+func (s *Server) giteaUserFromBearer(c *gin.Context) *User {
+	token := extractBearerToken(c)
+	session := s.getAccessSession(token)
+	if session == nil {
+		c.Header("WWW-Authenticate", `Bearer error="invalid_token"`)
+		oauthError(c, http.StatusUnauthorized, "invalid_token", "missing or invalid access token")
+		return nil
+	}
+	user, err := s.getUserByID(session.UserID)
+	if err != nil || user == nil {
+		oauthError(c, http.StatusUnauthorized, "invalid_token", "user not found")
+		return nil
+	}
+	return user
+}
+
+// GET /api/v1/user — Gitea-shaped current user (what Plane's Gitea provider reads).
+func (s *Server) handleGiteaUser(c *gin.Context) {
+	if !s.oauthEnabled(c) {
+		return
+	}
+	user := s.giteaUserFromBearer(c)
+	if user == nil {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":         user.ID,
+		"login":      user.Username,
+		"full_name":  user.Username,
+		"email":      user.Email,
+		"avatar_url": user.IconURL,
+	})
+}
+
+// GET /api/v1/user/emails — Gitea-shaped email list (fallback path Plane uses
+// when the user object lacks an email).
+func (s *Server) handleGiteaUserEmails(c *gin.Context) {
+	if !s.oauthEnabled(c) {
+		return
+	}
+	user := s.giteaUserFromBearer(c)
+	if user == nil {
+		return
+	}
+	c.JSON(http.StatusOK, []gin.H{{
+		"email":    user.Email,
+		"primary":  true,
+		"verified": user.EmailVerified,
+	}})
+}
+
 // ── admin: client registration ────────────────────────────────────────────
 
 type oauthClientCreateReq struct {
