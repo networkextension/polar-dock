@@ -2847,6 +2847,27 @@ CREATE TABLE IF NOT EXISTS api_token_calls (
 CREATE INDEX IF NOT EXISTS idx_api_token_calls_tok ON api_token_calls(token_id, created_at DESC);
 
 -- ============================================================
+-- OAuth2 / OIDC provider (doc/arch/oauth-provider.md). Registered
+-- relying parties for "Login with Polar" — lets external apps (Plane,
+-- …) authenticate users against dock via the authorization-code flow.
+-- Authorization codes + access tokens live in Redis; only the long-
+-- lived client registry is persisted here. Flag-gated by
+-- POLAR_OAUTH_PROVIDER (table created regardless so the flag is a pure
+-- runtime toggle).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    id            TEXT PRIMARY KEY,                       -- public client_id (oc_…)
+    secret_hash   TEXT NOT NULL,                          -- sha256(client_secret)
+    name          TEXT NOT NULL,
+    redirect_uris JSONB NOT NULL DEFAULT '[]'::jsonb,     -- exact-match allowlist
+    scopes        JSONB NOT NULL DEFAULT '["openid","profile","email"]'::jsonb,
+    created_by    TEXT REFERENCES users(id) ON DELETE SET NULL,
+    status        TEXT NOT NULL DEFAULT 'active',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_created ON oauth_clients(created_at DESC);
+
+-- ============================================================
 -- Asset management: per-workspace file storage + quotas.
 -- Unified store backing platform internals (LLM weights,
 -- polar-agent binaries) AND tenant workloads (S3-style backing

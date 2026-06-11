@@ -169,6 +169,16 @@ type Config struct {
 	// stored but not enforced until P1). Set POLAR_OPEN_API_TOKENS=true.
 	PolarOpenAPITokens bool
 
+	// PolarOAuthProvider: OAuth2/OIDC provider flag (default off). When true,
+	// dock acts as an identity provider ("Login with Polar") — the
+	// /oauth/authorize, /oauth/token, /oauth/userinfo and
+	// /.well-known/openid-configuration endpoints go live, plus the admin
+	// /api/oauth/clients CRUD for registering relying parties (e.g. Plane).
+	// Off = every OAuth endpoint 404s, feature inert. Authorization-code flow;
+	// access tokens reuse the session store. doc/arch/oauth-provider.md. Set
+	// POLAR_OAUTH_PROVIDER=true.
+	PolarOAuthProvider bool
+
 	// PolarAssetsPostsDualWrite: P8 flag. When true, each new post-image
 	// upload that succeeds through the legacy /uploads/ path ALSO
 	// gets registered as an asset (kind=post-image) in the assets

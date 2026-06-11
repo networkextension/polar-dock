@@ -121,6 +121,9 @@ func main() {
 		// Open API tokens (doc/arch/open-api-tokens.md). Default off.
 		PolarOpenAPITokens: os.Getenv("POLAR_OPEN_API_TOKENS") == "true",
 
+		// OAuth2/OIDC provider (doc/arch/oauth-provider.md). Default off.
+		PolarOAuthProvider: os.Getenv("POLAR_OAUTH_PROVIDER") == "true",
+
 		// P8 post-image dual-write to assets module. Flag-gated;
 		// rolls forward when the operator is ready to start
 		// building the post-image asset inventory.
