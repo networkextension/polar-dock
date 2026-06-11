@@ -208,12 +208,12 @@ func (a *aiAgent) dispatchSingleToolCall(botUserID string, call aiToolCallMsg) a
 			return out
 		}
 	}
-	if a.server == nil || a.server.agentHub == nil {
+	if a.server == nil {
 		out.Content = `{"ok":false,"error":"agent hub unavailable"}`
 		return out
 	}
 	callID := generateResourceID()
-	result, err := a.server.agentHub.dispatchToolCall(botUserID, callID, call.Function.Name, args)
+	result, err := a.server.routeAgentToolCall(botUserID, callID, call.Function.Name, args)
 	if err != nil {
 		out.Content = fmt.Sprintf(`{"ok":false,"error":%q}`, err.Error())
 		return out

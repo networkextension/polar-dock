@@ -163,6 +163,11 @@ type Server struct {
 	// See polar_hosts_touch.go.
 	polarHostsTouchURL string
 
+	// polarHostsBaseURL — Phase 4b: base URL for dock→hosts dispatch RPCs.
+	// Derived from polarHostsTouchURL at boot (strip /internal/v1/hosts/touch).
+	// Used by agent_route.go when local agentHub lookup misses (agents on hosts-svc).
+	polarHostsBaseURL string
+
 	// polarWGLinkURL — loopback wg-svc endpoint dock posts to so an agent's
 	// reported wg pubkeys stamp wg_devices.host_id (WG↔Hosts UI cross-link).
 	// See polar_wg_link.go. Empty disables.
@@ -540,6 +545,8 @@ func NewServer(cfg Config) (*Server, error) {
 	server.polarHostsTouchURL = strings.TrimSpace(cfg.PolarHostsTouchURL)
 	if server.polarHostsTouchURL != "" {
 		log.Printf("hosts: skill.advertise forwarding to %s", server.polarHostsTouchURL)
+		// Derive dispatch base from touch URL by stripping the well-known suffix.
+		server.polarHostsBaseURL = strings.TrimSuffix(server.polarHostsTouchURL, "/internal/v1/hosts/touch")
 	}
 	server.polarWGLinkURL = strings.TrimSpace(cfg.PolarWGLinkURL)
 	if server.polarWGLinkURL != "" {

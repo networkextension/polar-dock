@@ -433,8 +433,8 @@ func (a *aiAgent) handleTask(task aiAgentTask) {
 	// reuses the same placeholder + finalize plumbing as
 	// handleStreamingTask but drives one synchronous generateReply
 	// instead of an SSE loop.
-	if a.server != nil && a.server.agentHub != nil && task.ResponderUserID != "" &&
-		a.server.agentHub.lookup(task.ResponderUserID) != nil {
+	if a.server != nil && task.ResponderUserID != "" &&
+		a.server.routeAgentLookup(task.ResponderUserID) != nil {
 		a.handleAgentTask(task, cfg)
 		return
 	}
@@ -778,18 +778,18 @@ func (a *aiAgent) generateReply(task aiAgentTask, runtimeConfig aiRuntimeConfig)
 	//   - tool loop (1.4A) — platform drives an OpenAI-compatible
 	//     tool-calling loop, using read_file/write_file/list_dir/
 	//     run_cmd tools that the agent executes.
-	if a.server != nil && a.server.agentHub != nil && task.ResponderUserID != "" {
-		if conn := a.server.agentHub.lookup(task.ResponderUserID); conn != nil {
-			if conn.hasPassthrough() {
-				toolName := conn.tool
+	if a.server != nil && task.ResponderUserID != "" {
+		if info := a.server.routeAgentLookup(task.ResponderUserID); info != nil {
+			if info.HasPassthrough {
+				toolName := info.Tool
 				if toolName == "" {
 					toolName = "kimi"
 				}
-				log.Printf("[ai-agent] bot=%s using passthrough tool=%s (workdir=%s)", task.ResponderUserID, toolName, conn.workdir)
-				return a.generateReplyWithPassthrough(task, conn)
+				log.Printf("[ai-agent] bot=%s using passthrough tool=%s (workdir=%s)", task.ResponderUserID, toolName, info.Workdir)
+				return a.generateReplyWithPassthrough(task, toolName)
 			}
-			log.Printf("[ai-agent] bot=%s using tool loop (workdir=%s)", task.ResponderUserID, conn.workdir)
-			return a.generateReplyWithTools(task, runtimeConfig, task.ResponderUserID, conn.workdir)
+			log.Printf("[ai-agent] bot=%s using tool loop (workdir=%s)", task.ResponderUserID, info.Workdir)
+			return a.generateReplyWithTools(task, runtimeConfig, task.ResponderUserID, info.Workdir)
 		}
 	}
 
