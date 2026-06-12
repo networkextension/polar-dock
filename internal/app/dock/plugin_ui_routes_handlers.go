@@ -26,9 +26,55 @@ import (
 
 // PluginUIRouteGroup is one plugin's contribution to the sidebar.
 type PluginUIRouteGroup struct {
-	Plugin      string          `json:"plugin"`
-	DisplayName string          `json:"display_name"`
-	Routes      json.RawMessage `json:"routes"`
+	Plugin      string `json:"plugin"`
+	DisplayName string `json:"display_name"`
+	// PublicBaseURL is the module's externally-reachable origin (e.g.
+	// https://music.4950.store:2443). Lets native clients (iOS) reach a
+	// module's own service per-endpoint instead of hardcoding it; empty
+	// when the plugin declared none. Omitted from JSON when blank.
+	PublicBaseURL string          `json:"public_base_url,omitempty"`
+	Routes        json.RawMessage `json:"routes"`
+}
+
+// EndpointModule is one enabled module as reported by GET /api/modules.
+type EndpointModule struct {
+	Plugin        string `json:"plugin"`
+	DisplayName   string `json:"display_name"`
+	PublicBaseURL string `json:"public_base_url,omitempty"`
+	HasUI         bool   `json:"has_ui"`
+}
+
+// handleModules returns every ENABLED module on this endpoint, NOT filtered by
+// workspace_plugin_access. Native clients (iOS) use it to decide which feature
+// tabs to surface — a tab should reflect "does this endpoint have the module"
+// (e.g. music), independent of the active workspace's UI-sidebar grants (which
+// /api/plugin-ui-routes enforces for the web). Authed; no workspace required.
+func (s *Server) handleModules(c *gin.Context) {
+	rows, err := s.db.Query(
+		`SELECT name, display_name, COALESCE(public_base_url, ''), (ui_routes <> '[]'::jsonb)
+		   FROM plugin_modules
+		  WHERE enabled = TRUE
+		  ORDER BY name`,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	defer rows.Close()
+	modules := make([]EndpointModule, 0)
+	for rows.Next() {
+		var m EndpointModule
+		if err := rows.Scan(&m.Plugin, &m.DisplayName, &m.PublicBaseURL, &m.HasUI); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		modules = append(modules, m)
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"modules": modules})
 }
 
 func (s *Server) handlePluginUIRoutes(c *gin.Context) {
@@ -53,7 +99,7 @@ func (s *Server) handlePluginUIRoutes(c *gin.Context) {
 	}
 	if isRoot {
 		r, err := s.db.Query(
-			`SELECT name, display_name, ui_routes::text
+			`SELECT name, display_name, COALESCE(public_base_url, ''), ui_routes::text
 			   FROM plugin_modules
 			  WHERE enabled = TRUE AND ui_routes <> '[]'::jsonb
 			  ORDER BY name`,
@@ -65,7 +111,7 @@ func (s *Server) handlePluginUIRoutes(c *gin.Context) {
 		rows = r
 	} else {
 		r, err := s.db.Query(
-			`SELECT p.name, p.display_name, p.ui_routes::text
+			`SELECT p.name, p.display_name, COALESCE(p.public_base_url, ''), p.ui_routes::text
 			   FROM plugin_modules p
 			   JOIN workspace_plugin_access a
 			     ON a.plugin_name = p.name
@@ -87,7 +133,7 @@ func (s *Server) handlePluginUIRoutes(c *gin.Context) {
 	for rows.Next() {
 		var g PluginUIRouteGroup
 		var raw string
-		if err := rows.Scan(&g.Plugin, &g.DisplayName, &raw); err != nil {
+		if err := rows.Scan(&g.Plugin, &g.DisplayName, &g.PublicBaseURL, &raw); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 			return
 		}
