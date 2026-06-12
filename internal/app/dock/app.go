@@ -1022,6 +1022,11 @@ func (s *Server) registerRoutes() {
 		// pushes its routes via heartbeat → dock aggregates +
 		// filters by workspace_plugin_access for non-root tenants.
 		api.GET("/plugin-ui-routes", s.AuthMiddleware(), s.handlePluginUIRoutes)
+		// Enabled modules on this endpoint (name + public_base_url + has_ui),
+		// NOT workspace-gated — for native clients (iOS) to decide which feature
+		// tabs to surface based on what the endpoint actually offers. See
+		// handleModules in plugin_ui_routes_handlers.go.
+		api.GET("/modules", s.AuthMiddleware(), s.handleModules)
 		// Shared platform nav fragment (core + self-registered modules) for
 		// dock-ui + every module subdomain. See plugin_nav_handlers.go.
 		api.GET("/nav", s.AuthMiddleware(), s.handleNav)
