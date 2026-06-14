@@ -1190,6 +1190,11 @@ func (s *Server) registerRoutes() {
 		api.DELETE("/agent/tokens/:id", s.AuthMiddleware(), s.handleAgentTokenRevoke)
 		api.GET("/agent/whoami", s.handleAgentWhoAmI)
 		api.GET("/agent/binary", s.handleAgentBinary)
+		// Zone Release System (networkextension/polar-zone): serve the
+		// bootstrap binary + a curl|sh installer. Public, same posture as
+		// /agent/binary — artifacts are ed25519-verified by polar-zone before install.
+		api.GET("/zone/binary", s.handleZoneBinary)
+		api.GET("/zone/install.sh", s.handleZoneInstall)
 		// Track 3 (module OTA): serve a published module binary for
 		// self-update. No auth, same posture as /agent/binary — the
 		// binary isn't secret and the SDK fetches it off a heartbeat
