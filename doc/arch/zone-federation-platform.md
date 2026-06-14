@@ -1,220 +1,264 @@
-# Zone Federation Platform — design
+# Zone Federation Platform — design (v2)
 
-**Status:** design (2026-06-14). Builds on **polar-release** (signed binary registry),
+**Status:** design (2026-06-14, v2). Builds on **polar-release** (signed binary registry),
 **polar-zone** (cut/publish/bootstrap/drift CLI), and `polar-zone/scripts/fleet/`
 (build-from-main → test → deploy pipeline, proven standing up the everest zone).
 
+> **v2 changes** (from a design review): a mandatory **stage gate + signed stamp** before
+> any version reaches a real zone; **canary rollout + auto-rollback**; **backup-before-migrate**;
+> a realistic **license threat model** (client-side is friction, server-side is the lever);
+> **federated identity** (zen as IdP) instead of per-zone accounts; explicit **key management**;
+> **correctness** health + alerting; a **dock↔plugin compatibility** rule; and a **zone vs
+> workspace** tenancy rule. The optimistic-path skeleton was sound; v2 designs the failure paths.
+
 ## 1. One-liner
 
-zen becomes a **control plane** that opens, licenses, and watches a fleet of **zones**
-(self-contained Polar replicas). A zone pulls only the modules it is **entitled** to
-(a "purchase"), auto-deploys signed binaries built from `main`, publishes its **health**
-publicly, and **files issues back to zen** when something breaks. End-user iOS/Android
-apps discover zones from a public **config endpoint**, pick an endpoint, and register/login —
-reusing the existing multi-site app shell.
+zen is a **control plane** that opens, licenses, and watches a fleet of **zones**
+(self-contained Polar replicas). Every version flows through a **promotion pipeline** —
+build-from-`main` → unit test → **stage zone full test (incl. migrations)** → **stamp** →
+canary → stable — and **nothing reaches a real zone unstamped**. A zone pulls only the
+modules it's **entitled** to ("purchase"), auto-deploys signed binaries with **health-gated
+rollout + rollback**, exposes health publicly, and **files issues back to zen**. End-user
+iOS/Android apps discover zones from a public **config endpoint** and sign in with **one
+federated identity** (zen as IdP) — reusing the multi-site app shell.
 
 ```
- developer ──push──▶ polar-release (zen)            ┌────────── zone: everest ──────────┐
-                         │  signed binaries          │ polar-zone agent                  │
- zen admin ──open/license──▶ polar-zone (zen) ◀──────┤  • pull license + manifest        │
-                         │  zones · licenses · health │  • OTA deploy entitled modules    │
-                         │  health board · issue intake│  • enforce license               │
- iOS/Android ──discover──▶ /zones/discover           │  • push health / file issues      │
-                                                      │ dock + plugins (entitled only)    │
-                                                      │ GET /zone/health  (public)        │
-                                                      └───────────────────────────────────┘
+ dev push─▶ build@main ─▶ unit test ─▶ publish dev ─▶ STAGE zone (deploy+migrate+smoke)
+                                                          │  result record
+                                                          ▼
+                                                  STAMP (human or AI, signed) ──┐ gate
+                                                          ▼                      │
+ zen control plane (polar-zone): release registry · channels · zones · licenses  │
+   · promotion attestations · health board · issue intake · IdP · discovery      │
+        │ beta→canary zones (health-gated) ───▶ stable→general fleet ◀───────────┘
+        ▼
+ zone: polar-zone agent (pull license+manifest · drift · OTA · rollback · health push · file issues)
+        dock + entitled plugins · GET /zone/health (public)
+ iOS/Android ─discover(signed)─▶ pick endpoint ─▶ SSO via zen IdP
 ```
 
 ## 2. Actors & trust
 
 | Actor | Holds | Trust anchor |
 |---|---|---|
-| **zen control plane** (`polar-zone` module) | zone registry, license authority, health board, issue intake | `zen_license_key` (ed25519) signs licenses; `release_key` signs binaries |
-| **zone** (everest, opera, customer site) | dock + entitled plugins, `polar-zone` agent | `zone_key` (ed25519) generated at bootstrap; pubkey approved by zen ("开zone") |
-| **developer** | publishes binaries to release | release admin token |
-| **end-user app** | endpoint chosen from discovery | zone's dock auth (cookie/Bearer) |
+| **zen control plane** (`polar-zone` module) | release registry, channels, zones, licenses, attestations, health board, issue intake, **IdP** | `release_key`, `license_key`, `promotion_key` (distinct) |
+| **stage zone** | a real zone that tracks `dev`, with realistic seed data | same as any zone; its pass is a precondition to promote |
+| **approver** (human **or AI reviewer agent**) | stamps promotion attestations | `approver_key` (per signer; AI agents have their own) |
+| **zone** (everest, opera, customer site) | dock + entitled plugins, `polar-zone` agent | `zone_key` (ed25519, generated at bootstrap; pubkey approved = "开zone") |
+| **developer** | publishes to `dev` | release admin token |
+| **end-user app** | endpoint from signed discovery | federated identity at zen IdP |
 
-Three independent signature chains, never conflated:
-- **Binaries**: signed by `release_key`, verified by the zone agent before install (already in polar-release/sdk).
-- **Licenses**: signed by `zen_license_key`, verified by the zone's dock offline + by zen online.
-- **Zone identity**: `zone_key` authenticates the zone's calls to zen (health push, issue filing, license/manifest pull). zen approving the pubkey **is** the act of opening a zone.
+**Four independent signature chains**, never conflated:
+1. **Binaries** — `release_key`; verified by the agent before install (polar-release/sdk).
+2. **Promotion stamps** — `promotion_key`/`approver_key`; verified by the registry before a
+   version may advance to a fleet-facing channel.
+3. **Licenses** — `license_key`; verified by the zone's dock offline + zen online.
+4. **Zone identity** — `zone_key`; authenticates the zone's calls to zen.
 
-## 3. Components
+## 3. Release promotion pipeline — the gate (centerpiece)
 
-### 3.1 zen control plane — `polar-zone` module (on zen dock)
-New plugin module (repo `networkextension/polar-zone` already exists; today CLI-only).
-Adds a svc + DB + admin UI. Owns:
-- **zones** registry + lifecycle (open / suspend / revoke).
-- **licenses / entitlements** — manual grant of module set + time window per zone.
-- **health board** — aggregates each zone's public health; per-zone × per-module grid.
-- **issue intake** — receives zone-filed issues; mirrors to GitHub / internal tickets.
-- **manifest service** — computes, per zone, the *resolved* module→version set it should run (channel + entitlement), as a signed bundle the agent pulls.
-- **discovery endpoint** — public list of zones/endpoints for apps.
+**Hard rule: a version (binary + its schema/migrations) cannot be promoted to a
+fleet-facing channel until it has passed the stage zone AND carries a valid stamp.**
+The registry enforces this; it is not convention.
 
-### 3.2 zone agent — `polar-zone` (long-running, on the zone box)
-Extend the existing CLI (cut/publish/bootstrap/drift) into a daemon (`polar-zone agent`):
-- **enroll** once (token → registers `zone_key` pubkey with zen).
-- **reconcile loop** (default 60–300s): pull license + resolved manifest → diff vs running (`drift`) → for entitled+out-of-date modules, pull signed binary from release, verify, deploy via the fleet `deploy.sh` recipe → enforce license (disable expired/unentitled).
-- **health push** + serve the public `/zone/health`.
-- **watchdog** → file issues to zen on anomalies.
-Runs the fleet scripts under the hood; those scripts stay the source of deploy truth.
+### 3.1 Channels
+- **`dev`** — every `main` build lands here automatically (internal/dev zones only).
+- **`stage`** — the **stage zone** tracks `dev`; promotion `dev→stage` triggers the full
+  stage test (real deploy + real migrations on realistic data + smoke/integration suite).
+- **`beta`** — post-stamp; a small set of **canary zones** auto-update, health-gated.
+- **`stable`** — after canary health holds for a soak window; the general fleet.
 
-### 3.3 dock changes (per zone)
-- **license gate**: on plugin activation, dock cross-checks the entitlements blob; un-entitled/expired module → `plugin_modules.enabled=false` + nav hides it.
-- **public health**: `GET /zone/health` (unauth, rate-limited) aggregating dock + each plugin `/healthz` + license summary + drift.
-- **entitlement to UI**: `/api/nav` already self-registers; filter by entitled set so apps only see purchased modules.
+### 3.2 Stage test (must pass)
+On the stage zone, for the candidate version, run the real `deploy.sh` path:
+1. **pg_dump backup** of each target DB first (failure-safe; ties to backup-before-migrate).
+2. Apply migrations; **re-apply once** (idempotency check); assert no error.
+3. Bring the module up; run the module's smoke/integration suite + cross-module contract
+   checks (e.g. dock `/ping`, `/api/nav`, `/zone/health` green).
+4. Hold for a soak window; assert health stays green and no error-log regressions.
+Produces a signed-by-stage **result record**: `{module, version, platform,
+migrations:[...], idempotent:true, tests:{passed,failed}, health_after, backup_ref,
+stage_run_id, finished_at}`.
 
-### 3.4 release registry — `polar-release` (exists)
-No change to the core. A zone box needs a **polar-assets provider** to hold artifact
-bytes before `publish`/`cut` round-trips work *on that zone*; the seed (zen) already has
-assets, so for now zones consume from zen's release/assets, and the fleet pipeline
-rsyncs binaries directly until per-zone assets is stood up.
+### 3.3 Stamp (盖章 — auditable, signer may be AI)
+An **approver** reviews the result record and **stamps** = signs a **promotion attestation**:
+```
+attestation = sign(approver_key, canonical({
+  module, version, platform, from→to,        -- e.g. stage→beta
+  stage_run_id, result_hash, approver, approved_at, notes }))
+```
+- The signer may be a **human** or an **AI reviewer agent** (its own key + recorded
+  reasoning). The stamp must always exist, be signed, and be auditable.
+- **AI stamp criteria are real, not a rubber stamp** — it refuses + escalates to a human if
+  any fail: all tests green · migration applied + idempotent re-run clean · pg_dump backup
+  present · health green across the soak · **no destructive schema change** (`DROP`/`TRUNCATE`/
+  type-narrowing) without an explicit human waiver · diff within a risk budget.
+- `polar-zone promote --module M --version V --to beta|stable` **verifies the attestation
+  signature + that stage passed** before flipping the channel pointer; otherwise it refuses.
 
-### 3.5 apps — discovery + endpoint picker
-Public `GET https://zen.4950.store/zones/discover` → JSON of selectable endpoints
-(name, base_url, region, visibility, modules, login methods). iOS/Android (polar-sdk-swift /
-the ShangDynasty multi-site shell) render a picker → user selects → register/login against
-that zone's dock. One app binary, many endpoints — the multi-site work pays off here.
+### 3.4 Why this shape
+The reactive "zone breaks → file issue → dev fixes" loop is a *backstop*, not the safety
+net. The stage gate + stamp move the failure left of the customer; canary + rollback (next)
+bound the blast radius of anything that slips through.
 
-## 4. Data model (zen `polar_zone` DB)
+## 4. Canary rollout & rollback
+
+- **Roles** on `zones`: `stage` (1), `canary` (a few internal/friendly), `general` (rest).
+- Promotion to `stable` rolls **canary first**; the agent reports post-deploy health; zen
+  **halts the rollout** if any canary goes red within the soak window and **files an issue**.
+- **Binary retention**: the agent keeps the **previous N binaries** per module
+  (`~/.local/bin/<svc>.vN`). After any OTA it runs a post-deploy health check; **red →
+  auto-revert** to the last-good binary + (if a migration ran) flags for human DB review
+  (schema rollback is *not* automatic — forward-only discipline, §5).
+- A zone may **pin** a known-good version (per-zone pin overrides channel head); customers
+  default to pinned/stable, internal zones to channel head.
+
+## 5. Migrations & data safety
+
+- **Backup before migrate, always** ([[feedback-drop-data-ok-backup-first]]): `deploy.sh`
+  takes a `pg_dump` per target DB before applying any migration. No backup ⇒ no migrate.
+- **Forward-only + idempotent**: migrations use `IF NOT EXISTS`/guards, never blind `DROP`.
+  Down-migrations are not auto-run (the stage gate + backup are the safety, not rollback SQL).
+- **Schema version tracking** per zone DB (`schema_versions(module, version, applied_at)`),
+  surfaced in `/zone/health` so drift between code and schema is visible.
+- **Destructive changes require a waiver**: a migration that drops/narrows is blocked by the
+  stamp criteria unless a human explicitly waives it (recorded in the attestation).
+
+## 6. Components
+
+### 6.1 zen control plane — `polar-zone` module (svc + DB + admin UI on zen)
+Owns: release registry + **channels & promotion attestations**; **zones** registry +
+lifecycle; **licenses/entitlements**; **health board**; **issue intake**; **manifest
+service** (per-zone resolved module→version from channel+entitlement+pin); **discovery**
+endpoint; **IdP** (see §10).
+
+### 6.2 zone agent — `polar-zone agent` (daemon on the zone box)
+enroll → reconcile loop (pull license+manifest → `drift` diff → OTA entitled+out-of-date →
+**post-deploy health check + rollback** → enforce license) → serve `/zone/health` + push
+health → watchdog files issues. Runs the fleet `deploy.sh` under the hood.
+
+### 6.3 dock changes (per zone)
+license gate on plugin activation (+ nav filter); public `/api/zone/health` (P1a, shipped);
+schema-version reporting; SSO client to zen IdP.
+
+### 6.4 release registry — `polar-release` (exists)
+Add **channel pointers** + **promotion attestation** storage + the **refuse-unstamped-promotion**
+check. A zone box needs a polar-assets provider for local round-trips; until then the fleet
+pipeline rsyncs binaries directly.
+
+## 7. Data model (zen `polar_zone` DB) — deltas over v1
 
 ```sql
-zones(
-  id TEXT PK,                  -- zn_<rand>
-  name TEXT,                   -- "everest"
-  base_url TEXT,               -- https://dock.everest.4950.store  (or :2443)
-  region TEXT, visibility TEXT,-- public|private|internal  (drives discovery)
-  channel TEXT,                -- dev|beta|stable  (which release channel to track)
-  zone_pubkey TEXT,            -- ed25519, approved at open
-  status TEXT,                 -- pending|active|suspended|revoked
-  last_seen_at TIMESTAMPTZ, last_health JSONB,
-  created_at TIMESTAMPTZ)
+zones( id, name, base_url, region, visibility, channel,
+       role TEXT,                 -- stage|canary|general   (NEW: drives rollout order)
+       pinned_versions JSONB,     -- module→version pin override (NEW)
+       zone_pubkey, status, last_seen_at, last_health JSONB, created_at )
 
-zone_entitlements(            -- the "purchase" / license line items
-  id BIGSERIAL PK,
-  zone_id TEXT REFERENCES zones,
-  module TEXT,                 -- 'lawyer'  (or '*' = whole fleet)
-  valid_from TIMESTAMPTZ, valid_until TIMESTAMPTZ,
-  seats INT NULL, quota JSONB, -- optional limits
-  status TEXT,                 -- active|expired|revoked
-  granted_by TEXT, note TEXT, created_at TIMESTAMPTZ)
+promotion_attestations(           -- the "stamp" (NEW)
+  id, module, version, platform, from_channel, to_channel,
+  stage_run_id, result_hash, approver, approver_kind,  -- human|ai
+  signature, approved_at, notes )
 
-zone_health(                  -- time series of pushed/polled health
-  zone_id TEXT, module TEXT, healthy BOOL, version TEXT,
-  db_ok BOOL, detail JSONB, observed_at TIMESTAMPTZ)
+stage_runs(                       -- stage test results (NEW)
+  id, module, version, platform, migrations JSONB, idempotent BOOL,
+  tests JSONB, health_after JSONB, backup_ref, status, finished_at )
 
-zone_issues(
-  id BIGSERIAL PK, zone_id TEXT, module TEXT, kind TEXT,  -- crashloop|migrate|health|drift|license
-  signature TEXT,             -- dedupe key
-  status TEXT,                -- open|ack|fixed|closed
-  github_url TEXT, detail JSONB, first_seen TIMESTAMPTZ, last_seen TIMESTAMPTZ)
+zone_entitlements( ... )          -- as v1: module, valid_from/until, seats, quota, status
+zone_health( zone_id, module, healthy, version, db_ok, schema_version, detail, observed_at )
+zone_issues( ... )                -- as v1
 ```
 
-A **license** delivered to a zone is the signed projection of its `zone_entitlements`:
-```
-license = ed25519_sign(zen_license_key, canonical({
-  zone_id, issued_at, not_after,            -- short TTL (e.g. 24–72h) → forces re-pull, enables revoke
-  modules: [{name, valid_until, seats}],
-}))
-```
-Short-TTL online license + each line's own `valid_until` = revocation works (stop re-issuing)
-while a zone tolerates being offline up to its line `valid_until`.
+## 8. Health & public exposure — correctness, not just liveness
 
-## 5. Lifecycles
+`GET /api/zone/health` (public, secrets-free, cached ~10s). Beyond heartbeat freshness
+(P1a) it reports **correctness signals**: `db_ok`, `degraded:[...]` (e.g. `no-ollama`),
+`schema_version` vs expected, **cert expiry**, disk headroom, and **version match** vs the
+zone's manifest (drift). zen **polls + zones push** (both). The admin **fleet grid** (zones ×
+modules) colors green/amber(degraded)/red(down|expired|drift) with version + license
+countdown, and an **alert path** (not just a board): red/expiring → notify (DM/webhook),
+deduped.
 
-### 5.1 Open a zone (zen admin, manual)
-1. Admin creates a `zones` row (name, base_url, channel, visibility) → gets an **enrollment token**.
-2. Admin grants `zone_entitlements` (modules + time window) — this is the "购买/授权".
-3. Hands operator the one-line bootstrap: `polar-zone enroll --token <T> --server zen`.
+## 9. Licensing / entitlement — with a real threat model
 
-### 5.2 Bootstrap (on the bare box)
-`polar-zone enroll` → generates `zone_key`, registers pubkey (token-authed) → zen flips
-zone `pending→active` → agent pulls license + resolved manifest → pulls+verifies signed
-binaries → runs `deploy.sh` for entitled modules → reports first health.
+- A purchase = `zone_entitlements` lines (module + window [+ seats/quota]); manual now.
+- **Client-side enforcement is friction, not a wall.** A customer-hosted zone runs on the
+  customer's box with root: they can flip `enabled`, set the clock back, or block revocation
+  polls. dock + plugin self-checks raise the bar (honor system + audit) but don't stop a
+  determined operator.
+- **The real lever is server-side**: gate the *valuable, centralized* capabilities at zen —
+  **the LLM proxy**, **the update/release source**, **cross-zone features**, **the IdP**.
+  Stop re-issuing the license ⇒ short-TTL license expires ⇒ updates stop, proxy stops,
+  federated login stops. That bites even on hardware you don't control.
+- **Two threat models, stated explicitly**: *hosted* zones (we run them — full control,
+  client checks suffice) vs *customer-hosted* zones (adversarial — rely on server-side
+  levers + contracts, treat client checks as tamper-evident only).
 
-### 5.3 Steady state (agent reconcile loop)
-pull license (enforce) → pull manifest → `drift` diff → OTA update changed modules
-(respect a maintenance window) → push health → watchdog files issues.
+## 10. Identity federation (not per-zone accounts)
 
-### 5.4 Developer fix loop
-dev finds/receives an issue → fixes on `main` → CI builds + `publish` to channel →
-channel manifest bumps → zones on that channel auto-update next reconcile. **All deploys
-are prebuilt-from-main binaries** ([[feedback-full-deploy-prebuilt-from-main]]).
+Reuse the dock **OAuth2/OIDC provider** ([[project-oauth-provider]]): **zen is the IdP**,
+each zone's dock is an **SSO relying party**. One identity across all zones; the app picks an
+endpoint but logs in once against zen. This matches the multi-site app expectation and avoids
+fragmented per-zone accounts. **Discovery is signed** (`sign(zen, zone_list)`) and lists only
+vetted, `visibility=public` zones; the app verifies the signature + pins TLS to mitigate
+phishing/MITM. Private/internal zones are unlisted (direct URL).
 
-### 5.5 App access
-app → `/zones/discover` → picker → register/login at chosen zone's dock → sees only
-entitled modules (nav filtered) → uses them.
+## 11. Key management
 
-## 6. Health & public exposure
+Four distinct keys (`release_key`, `license_key`, `promotion_key`/per-approver, `zone_key`),
+rotated independently. The high-value ones (`release_key`, `license_key`) are the fleet's
+crown jewels — **compromise = supply-chain takeover or forged licenses** — so keep them
+**off the always-online zen path** (offline/HSM signing; zen serves already-signed
+artifacts). AI approver keys are scoped to stamping and revocable. `/api/zone/health` and
+discovery leak no secrets by construction.
 
-`GET /zone/health` (public, cached ~10s):
-```json
-{ "zone":"everest","dock":{"version":"b9b9f2f","healthy":true},
-  "modules":[{"name":"lawyer","version":"10b6ee7","healthy":true,"db_ok":true,
-              "entitled_until":"2026-12-31T00:00:00Z","degraded":["no-ollama"]}],
-  "license":{"not_after":"...","modules":12}, "drift":[], "ts":"..." }
-```
-- zen **polls** every zone + zones also **push** (belt & suspenders) → `zone_health`.
-- Admin **fleet board**: zones (rows) × modules (cols) grid, green/amber/red, version, drift,
-  license countdown. Amber = degraded (e.g. RAG without ollama); red = down/crashloop/expired.
+## 12. dock ↔ plugin compatibility
 
-## 7. Auto issue filing
+Each plugin binary declares `min_dock` (and the sdk version it built against); the manifest
+service **won't offer a plugin update a zone's dock can't satisfy**, and dock advertises its
+version so a plugin refuses to run against an incompatible core. Promotion is **coordinated**:
+a breaking dock change + dependent plugin updates promote together (a bundle), not
+independently — preventing the "plugin ran ahead of dock" contract break.
 
-Agent watchdog detects, dedupes by `signature`, and `POST /zone/issues`:
-- module down/crashloop ≥N, migration error, health red > T, **version drift** (running ≠
-  manifest), **license near-expiry**. zen creates a GitHub issue (labels `zone:<name>`,
-  `module:<m>`, `kind:<k>`) or internal ticket, links it on the health board, and
-  auto-closes when the zone reports recovery. Rate-limited + deduped so one flapping
-  module ≠ 100 issues.
+## 13. Zone vs workspace — tenancy rule
 
-## 8. Licensing / entitlement enforcement (the "购买" model)
+Polar already has **workspaces/teams** for multi-tenancy *inside* a deployment. A **zone** is
+a *separate deployment* (own box/Postgres/ops). Rule of thumb:
+- **Workspace** = default tenancy: many customers share a hosted zone, isolated by team. Use
+  for SaaS/self-serve.
+- **Zone** = data residency, air-gap, dedicated SLA, or customer-hosted requirements: one
+  tenant gets their own deployment. Use for enterprise/on-prem/regulated.
+Don't nest the two as a product knob; pick per customer at sale time.
 
-- A purchase = one or more `zone_entitlements` lines (module + window [+ seats/quota]).
-  Manual now (admin grant/extend/revoke); billing/self-serve later.
-- **Enforced in two places** (defense in depth):
-  1. **dock** disables `plugin_modules.enabled` for un-entitled/expired modules and hides
-     them from `/api/nav`.
-  2. **plugin svc** on startup asks dock "am I entitled?" → if no, refuses to serve / runs
-     read-only. (Mirrors the existing plugin `/ping` gate.)
-- **Offline tolerance**: zone trusts the signed license until each line's `valid_until`,
-  re-validating opportunistically. Revocation = zen stops re-issuing + publishes a
-  revocation list the agent polls.
+## 14. Lifecycles (updated)
 
-## 9. Security notes
-- Enrollment token is single-use, short-TTL; the durable trust is `zone_key` pubkey
-  approval. Health-push, issue-filing, license/manifest-pull all signed by `zone_key`.
-- Public `/zone/health` must leak **no secrets** — versions + booleans + degraded tags only.
-- License key + release key are distinct and rotate independently.
-- Discovery only lists `visibility=public` zones; internal/private zones are unlisted
-  (apps reach them by direct URL).
+Open (admin grants entitlements → enrollment token) → bootstrap (`polar-zone enroll`) →
+**steady state**: agent reconciles against its channel, but only ever sees **stamped**
+versions; OTA is health-gated with rollback. Dev loop: fix on `main` → publish `dev` →
+**stage test → stamp** → canary → stable. App access: signed discovery → endpoint pick →
+**SSO via zen** → entitled modules only.
 
-## 10. Phasing
+## 15. Phasing (revised — gate before any auto-OTA)
 
-- **P0 (done)** — polar-release registry; polar-zone CLI (cut/publish/bootstrap/drift);
-  `scripts/fleet/` build-from-main→test→deploy; everest = 15-plugin zone stood up by hand.
-- **P1 — zone registry + health board (read-only).** zones table; zones expose
-  `/zone/health`; zen polls + admin grid UI. No entitlement yet (all-modules). Highest
-  value: visibility across everest/opera/zen.
-- **P2 — entitlement + license.** zone_entitlements + signed license; dock license gate +
-  nav filter; admin grant/revoke UI. Turns zones into licensed products.
-- **P3 — agent reconcile + OTA.** `polar-zone agent` daemon: pull manifest, drift, auto-
-  deploy from release on a channel; maintenance windows. Removes manual deploy.
-- **P4 — auto issue filing.** watchdog → zen issue intake → GitHub mirror + board linkage.
-- **P5 — app discovery.** `/zones/discover` + iOS/Android endpoint picker on the multi-site
-  shell; entitled-module-aware UI.
-- **P6 — per-zone assets + self-serve billing.** assets provider on each zone (full release
-  round-trip locally); purchase flow replaces manual grants.
+- **P0 (done)** — release registry; polar-zone CLI; `scripts/fleet/`; everest by hand.
+- **P1a (done, PR #447)** — public `/api/zone/health`.
+- **P1b** — zone registry + health board (poll+push) + fleet grid. Read-only visibility.
+- **P2 — promotion gate FIRST**: channels + `stage_runs` + `promotion_attestations` +
+  registry refuse-unstamped + a stage zone + the AI/human stamp flow. *No auto-OTA ships
+  before this exists* — it's the safety precondition.
+- **P3 — agent reconcile + canary rollout + rollback** (consumes stamped channels only).
+- **P4 — entitlement + signed license + dock gate + server-side levers.**
+- **P5 — auto issue filing → internal board (+ GitHub mirror opt-in).**
+- **P6 — federated identity (zen IdP) + signed discovery + app endpoint picker.**
+- **P7 — per-zone assets + metered/self-serve billing.**
 
-## 11. Open decisions
-1. **License delivery**: pull-only (agent fetches) vs. also embed a signed blob in the zone
-   bundle. Recommend **pull-only** with short TTL (simplest revoke).
-2. **Issue sink**: GitHub issues vs. internal `zone_issues` only vs. both. Recommend
-   **internal first, GitHub mirror opt-in per zone**.
-3. **Manifest authority**: does zen pin exact versions per zone, or does the zone track a
-   channel head? Recommend **channel head by default, per-zone pin override** for customers.
-4. **Health transport**: poll vs push vs both. Recommend **both** (poll for liveness even if
-   a zone can't reach out; push for timeliness).
+## 16. Open decisions
+1. **Stage data**: synthetic seed vs sanitized prod snapshot. Recommend **synthetic seed**
+   (no PII leaves a zone) + a per-module migration fixture.
+2. **Soak windows**: how long canary holds before `stable`. Recommend **start 30–60 min,
+   tune per module risk.**
+3. **AI stamp autonomy**: auto-promote on green, or always queue for human ack on
+   `stable`. Recommend **AI auto to `beta`; human (or AI-with-higher-bar) for `stable`.**
 
 ## See also
-[[project-zone-release-system]] · [[project-everest-zone]] · [[project-zone-federation-platform]]
-· `polar-zone/scripts/fleet/` · [[feedback-full-deploy-prebuilt-from-main]]
+[[project-zone-federation-platform]] · [[project-zone-release-system]] · [[project-everest-zone]]
+· [[project-oauth-provider]] · [[feedback-full-deploy-prebuilt-from-main]] ·
+[[feedback-drop-data-ok-backup-first]] · `polar-zone/scripts/fleet/`
