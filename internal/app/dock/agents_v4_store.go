@@ -281,12 +281,17 @@ func (s *Server) registerAgent(_ context.Context, req internalAgentRegisterReq) 
 	}, nil
 }
 
-// canonicalServerURL returns the operator-facing URL the agent should
-// use for its WS connect. Read once from $POLAR_PUBLIC_BASE_URL with
-// a localhost fallback so dev boxes still get a usable value.
+// canonicalServerURL returns the operator-facing URL the agent should use for
+// its WS connect. Prefer the dock's configured public base URL (s.publicBaseURL,
+// from $PUBLIC_BASE_URL) — the agent clobbers its --server with this value, so a
+// loopback here left the whole fleet unable to connect. $POLAR_PUBLIC_BASE_URL
+// stays an explicit override; localhost is the last-resort dev fallback.
 func (s *Server) canonicalServerURL() string {
 	if v := strings.TrimSpace(os.Getenv("POLAR_PUBLIC_BASE_URL")); v != "" {
 		return v
+	}
+	if s.publicBaseURL != "" {
+		return s.publicBaseURL
 	}
 	return "http://127.0.0.1:8080"
 }
