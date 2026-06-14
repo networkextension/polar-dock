@@ -15,13 +15,47 @@ package dock
 // repo, so there's no in-tree source to JIT-build.
 
 import (
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+var zoneReleaseProxyClient = &http.Client{Timeout: 10 * time.Second}
+
+// handleReleaseResolveProxy publicly fronts polar-release's read-only endpoints
+// (/release/resolve, /release/pubkey) — which are designed to be public but on a
+// loopback-only release svc. This makes dock the single public seed origin for
+// `polar-zone bootstrap`: it gets the ed25519-signed manifest + signed asset
+// dl_url here, fetches the (already-public) bytes from the provider, and verifies
+// the chain itself. Read-only; writes (publish/finalize) stay internal/admin.
+func (s *Server) handleReleaseResolveProxy(c *gin.Context) {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("POLAR_RELEASE_BASE")), "/")
+	if base == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "release registry not configured (POLAR_RELEASE_BASE unset)"})
+		return
+	}
+	upstream := base + c.Request.URL.Path // /release/resolve or /release/pubkey
+	if q := c.Request.URL.RawQuery; q != "" {
+		upstream += "?" + q
+	}
+	resp, err := zoneReleaseProxyClient.Get(upstream)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "release upstream: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "application/json"
+	}
+	c.Data(resp.StatusCode, ct, body)
+}
 
 func (s *Server) handleZoneBinary(c *gin.Context) {
 	osName := strings.TrimSpace(strings.ToLower(c.Query("os")))

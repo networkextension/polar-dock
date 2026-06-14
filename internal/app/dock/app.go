@@ -748,6 +748,12 @@ func (s *Server) registerRoutes() {
 	// of the API surface.
 	s.router.GET("/metrics", s.handleMetrics)
 
+	// Zone Release System: public read-only proxy to the loopback-only
+	// polar-release registry, so `polar-zone bootstrap --server <dock>` gets the
+	// ed25519-signed manifest + signed asset dl_url from a single public origin.
+	s.router.GET("/release/resolve", s.handleReleaseResolveProxy)
+	s.router.GET("/release/pubkey", s.handleReleaseResolveProxy)
+
 	// OAuth2 / OIDC provider ("Login with Polar"). Outside /api so callbacks
 	// and discovery sit at conventional well-known paths. Each handler is inert
 	// (404) unless POLAR_OAUTH_PROVIDER=true. doc/arch/oauth-provider.md.
