@@ -6743,17 +6743,24 @@ func (s *Server) getOwnedMarkdownEntry(userID string, id int64) (*MarkdownEntry,
 }
 
 // updateMarkdownEntry writes the editable fields. visibility is the
-// new three-tier value; workspaceID is required only for workspace
-// tier (nil otherwise — the function nulls the FK on private/public
-// to keep the index clean). is_public stays mirrored to
+// new three-tier value. Per R1 (Plan B) every entry is team-owned, so
+// workspace_id is NOT NULL for ALL tiers (mirrors saveMarkdownDocument):
+// the "workspace" tier keeps the validated target workspace_id, every
+// other tier (private/public, or a nil from resolveMarkdownVisibility)
+// falls back to the author's personal team. is_public stays mirrored to
 // visibility==public.
 func (s *Server) updateMarkdownEntry(userID string, id int64, title, filePath, summary, coverURL, editorMode, visibility string, workspaceID *string) error {
 	if visibility == "" {
 		visibility = MarkdownVisibilityPrivate
 	}
 	isPublic := visibility == MarkdownVisibilityPublic
-	if visibility != MarkdownVisibilityWorkspace {
-		workspaceID = nil
+	if visibility != MarkdownVisibilityWorkspace || workspaceID == nil || strings.TrimSpace(*workspaceID) == "" {
+		pw, perr := s.ensurePersonalTeam(userID)
+		if perr != nil {
+			return fmt.Errorf("resolve owner workspace: %w", perr)
+		}
+		wid := pw.ID
+		workspaceID = &wid
 	}
 	_, err := s.db.Exec(
 		`UPDATE markdown_entries
