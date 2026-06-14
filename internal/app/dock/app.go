@@ -1206,6 +1206,10 @@ func (s *Server) registerRoutes() {
 		// /agent/binary — artifacts are ed25519-verified by polar-zone before install.
 		api.GET("/zone/binary", s.handleZoneBinary)
 		api.GET("/zone/install.sh", s.handleZoneInstall)
+		// Zone Federation (doc/arch/zone-federation-platform.md): public,
+		// secrets-free health summary the control plane polls + the fleet
+		// board renders. Heartbeat-derived, cheap to hit frequently.
+		api.GET("/zone/health", s.handleZoneHealth)
 		// Track 3 (module OTA): serve a published module binary for
 		// self-update. No auth, same posture as /agent/binary — the
 		// binary isn't secret and the SDK fetches it off a heartbeat
