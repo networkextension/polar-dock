@@ -124,6 +124,12 @@ func main() {
 		// OAuth2/OIDC provider (doc/arch/oauth-provider.md). Default off.
 		PolarOAuthProvider: os.Getenv("POLAR_OAUTH_PROVIDER") == "true",
 
+		// OAuth2/OIDC relying-party / federated login (Zone Federation P6c). Default off.
+		PolarOIDCLogin:        os.Getenv("POLAR_OIDC_LOGIN") == "true",
+		PolarOIDCIssuer:       os.Getenv("POLAR_OIDC_ISSUER"),
+		PolarOIDCClientID:     os.Getenv("POLAR_OIDC_CLIENT_ID"),
+		PolarOIDCClientSecret: os.Getenv("POLAR_OIDC_CLIENT_SECRET"),
+
 		// P8 post-image dual-write to assets module. Flag-gated;
 		// rolls forward when the operator is ready to start
 		// building the post-image asset inventory.
