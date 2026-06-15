@@ -42,6 +42,18 @@ func (s *Server) oidcRedirectURI() string {
 	return strings.TrimRight(s.publicBaseURL, "/") + "/auth/oidc/callback"
 }
 
+// handleAuthMethods is a public hint for the login UI: which auth methods this
+// zone offers, so the page can conditionally show a "Login with Polar" button.
+// Always 200 (unlike the flag-gated /auth/oidc/* routes).
+func (s *Server) handleAuthMethods(c *gin.Context) {
+	out := gin.H{"password": true, "oidc": s.oidcLogin}
+	if s.oidcLogin {
+		out["oidc_login_url"] = "/auth/oidc/login"
+		out["oidc_label"] = "Login with Polar"
+	}
+	c.JSON(http.StatusOK, out)
+}
+
 // safeReturnTo accepts only a local absolute path (prevents an open redirect via
 // ?next=//evil.com or ?next=https://evil). Defaults to the dashboard.
 func safeReturnTo(next string) string {
