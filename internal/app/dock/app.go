@@ -892,6 +892,7 @@ func (s *Server) registerRoutes() {
 
 		api.POST("/register", s.handleRegister)
 		api.POST("/login", s.handleLogin)
+		api.GET("/auth/methods", s.handleAuthMethods) // public: which login methods this zone offers
 		api.POST("/logout", s.handleLogout)
 		api.POST("/token/refresh", s.handleTokenRefresh)
 		api.POST("/passkey/register/begin", s.AuthMiddleware(), s.handlePasskeyRegisterBegin)
