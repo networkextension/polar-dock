@@ -46,6 +46,18 @@ func (s *Server) handleInternalAuthVerify(c *gin.Context) {
 	}
 	sess := s.getAccessSession(token)
 	if sess == nil {
+		// Also accept a polar_ open-API token, so plugin services that verify
+		// via this endpoint (zone-svc, release, …) accept api keys, not just
+		// browser sessions. The token acts as its OWNER: we return the owner's
+		// real role (so an admin-owned token clears admin-gated plugin
+		// endpoints) + the token's workspace. Scope limits are enforced by
+		// dock's own /api middleware, not here — a plugin-svc admin gate only
+		// checks role, so use full-scope tokens for plugin ops.
+		if s.openAPITokens {
+			if tok := s.resolveAPIToken(token); tok != nil && s.writeAPITokenVerify(c, tok) {
+				return
+			}
+		}
 		internalErr(c, http.StatusUnauthorized, "invalid session")
 		return
 	}
@@ -68,6 +80,37 @@ func (s *Server) handleInternalAuthVerify(c *gin.Context) {
 		"workspace_id": workspaceID,
 		"expires_at":   sess.ExpiresAt.UTC().Format(time.RFC3339),
 	})
+}
+
+// writeAPITokenVerify answers /internal/v1/auth/verify for a polar_ open-API
+// token: the token acts as its owner (real role from the users table), scoped
+// to the token's workspace unless the caller forwards a ?workspace_id the owner
+// is a member of. expires_at mirrors the token's expiry (or a short cache TTL
+// when the token never expires). Returns false if the owner can't be resolved.
+func (s *Server) writeAPITokenVerify(c *gin.Context, tok *APIToken) bool {
+	u, err := s.getUserByID(tok.OwnerUserID)
+	if err != nil || u == nil {
+		return false
+	}
+	workspaceID := tok.WorkspaceID
+	if req := strings.TrimSpace(c.Query("workspace_id")); req != "" && req != workspaceID {
+		if m, err := s.getTeamMember(req, tok.OwnerUserID); err == nil && m != nil {
+			workspaceID = req
+		}
+	}
+	exp := time.Now().Add(30 * time.Second) // matches plugin-side AuthVerify cache
+	if tok.ExpiresAt != nil && tok.ExpiresAt.Before(exp) {
+		exp = *tok.ExpiresAt
+	}
+	go s.touchAPIToken(tok.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"user_id":      u.ID,
+		"username":     u.Username,
+		"role":         u.Role,
+		"workspace_id": workspaceID,
+		"expires_at":   exp.UTC().Format(time.RFC3339),
+	})
+	return true
 }
 
 // ── 2. GET /internal/v1/users/:id ──────────────────────────────────────────
