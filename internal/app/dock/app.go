@@ -116,6 +116,13 @@ type Server struct {
 	// OAuth2/OIDC provider flag. See config.go: PolarOAuthProvider.
 	oauthProvider bool
 
+	// OIDC relying-party (federated login) — config.go: PolarOIDCLogin.
+	oidcLogin        bool
+	oidcIssuer       string
+	oidcClientID     string
+	oidcClientSecret string
+	oidcHTTPClient   *http.Client
+
 	// RBAC flag: require llm:admin permission to write LLM configs.
 	// See config.go: PolarEnforceLLMAdmin. Default off = behavior-preserving.
 	enforceLLMAdmin bool
@@ -277,6 +284,14 @@ func NewServer(cfg Config) (*Server, error) {
 	server.enforceTeamStatus = cfg.PolarEnforceTeamStatus
 	server.openAPITokens = cfg.PolarOpenAPITokens
 	server.oauthProvider = cfg.PolarOAuthProvider
+	server.oidcLogin = cfg.PolarOIDCLogin
+	server.oidcIssuer = strings.TrimRight(strings.TrimSpace(cfg.PolarOIDCIssuer), "/")
+	server.oidcClientID = strings.TrimSpace(cfg.PolarOIDCClientID)
+	server.oidcClientSecret = strings.TrimSpace(cfg.PolarOIDCClientSecret)
+	server.oidcHTTPClient = &http.Client{Timeout: 30 * time.Second}
+	if server.oidcLogin {
+		log.Printf("auth: OIDC federated login ENABLED (issuer=%s)", server.oidcIssuer)
+	}
 	server.enforceLLMAdmin = cfg.PolarEnforceLLMAdmin
 	server.enforceResourceRBAC = cfg.PolarEnforceResourceRBAC
 	server.workspaceMounts = cfg.PolarWorkspaceMounts
@@ -767,6 +782,10 @@ func (s *Server) registerRoutes() {
 	// user object. Inert unless POLAR_OAUTH_PROVIDER=true.
 	s.router.GET("/login/oauth/authorize", s.handleOAuthAuthorize)
 	s.router.POST("/login/oauth/access_token", s.handleOAuthToken)
+	// OIDC relying-party (federated login, Zone Federation P6c) — "Login with
+	// Polar" against an external provider (zen). Inert unless POLAR_OIDC_LOGIN=true.
+	s.router.GET("/auth/oidc/login", s.handleOIDCLogin)
+	s.router.GET("/auth/oidc/callback", s.handleOIDCCallback)
 
 	// Phase 1-A — internal API surface (HMAC-gated, plugin-only). All
 	// routes hang off /internal/v1/ and require an X-Polar-Plugin-Sig

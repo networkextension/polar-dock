@@ -179,6 +179,17 @@ type Config struct {
 	// POLAR_OAUTH_PROVIDER=true.
 	PolarOAuthProvider bool
 
+	// PolarOIDCLogin: OAuth2/OIDC relying-party (client) flag (default off).
+	// When true, dock can log a user in via an EXTERNAL provider (zen) —
+	// /auth/oidc/login + /auth/oidc/callback go live ("Login with Polar" on a
+	// zone). Federated identity for Zone Federation P6c. Off = those routes
+	// 404. Needs PolarOIDCIssuer/ClientID/ClientSecret. The redirect_uri is
+	// derived = PublicBaseURL + /auth/oidc/callback. Set POLAR_OIDC_LOGIN=true.
+	PolarOIDCLogin       bool
+	PolarOIDCIssuer      string // e.g. https://zen.4950.store:2443
+	PolarOIDCClientID    string
+	PolarOIDCClientSecret string
+
 	// PolarAssetsPostsDualWrite: P8 flag. When true, each new post-image
 	// upload that succeeds through the legacy /uploads/ path ALSO
 	// gets registered as an asset (kind=post-image) in the assets
