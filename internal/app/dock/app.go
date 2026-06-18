@@ -1080,6 +1080,10 @@ func (s *Server) registerRoutes() {
 		// github.com/networkextension/polar-latch.
 		api.GET("/bots", s.AuthMiddleware(), s.handleBotUserList)
 		api.POST("/bots", s.AuthMiddleware(), s.handleBotUserCreate)
+		// Batch agent-attach status for many bots (mounted under /bots to avoid
+		// the gin POST-tree wildcard clash with /agent/bots/:bot_id/dispatch).
+		api.POST("/bots/status", s.AuthMiddleware(), s.handleAgentStatusBatch)
+		api.GET("/bots/:id", s.AuthMiddleware(), s.handleBotUserGet)
 		api.PUT("/bots/:id", s.AuthMiddleware(), s.handleBotUserUpdate)
 		api.DELETE("/bots/:id", s.AuthMiddleware(), s.handleBotUserDelete)
 		api.GET("/me", s.AuthMiddleware(), s.handleMe)

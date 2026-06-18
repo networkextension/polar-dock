@@ -1,6 +1,8 @@
 package dock
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -350,12 +352,62 @@ func (s *Server) handleBotUserList(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	items, err := s.listBotUsers(workspaceID)
+	q := strings.TrimSpace(c.Query("q"))
+	summary := c.Query("summary") == "1"
+	_, hasLimit := c.GetQuery("limit")
+	_, hasOffset := c.GetQuery("offset")
+	// Paginated mode when the client opts in via q/limit/offset/summary;
+	// otherwise return the full list (back-compat while the UI rolls out).
+	if !summary && q == "" && !hasLimit && !hasOffset {
+		items, err := s.listBotUsers(workspaceID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"bots": items})
+		return
+	}
+	limit := 30
+	if v, err := strconv.Atoi(c.Query("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := 0
+	if v, err := strconv.Atoi(c.Query("offset")); err == nil && v > 0 {
+		offset = v
+	}
+	items, total, err := s.listBotUsersPage(workspaceID, q, limit, offset, summary)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"bots": items})
+	c.JSON(http.StatusOK, gin.H{"bots": items, "total": total, "limit": limit, "offset": offset})
+}
+
+// handleBotUserGet returns one bot with its full system_prompt (the paginated
+// list omits it; the UI lazy-loads here on expand).
+func (s *Server) handleBotUserGet(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	bot, err := s.getBotUser(workspaceID, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Bot 不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"bot": bot})
 }
 
 func (s *Server) handleBotUserCreate(c *gin.Context) {

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -4530,6 +4531,13 @@ func decodePackTunnelJSON(raw []byte, dest any) error {
 // scanned through sql.NullString.
 const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.host_skill_id, COALESCE(b.model_override, ''), b.created_at, b.updated_at`
 
+// botUserSummaryColumns is botUserSelectColumns with system_prompt blanked —
+// used by the paginated list so a workspace with hundreds of bots returns a
+// light payload (the full prompt is fetched per-bot via GET /api/bots/:id on
+// expand). Column order/count matches botUserSelectColumns so scanBotUser works
+// for both.
+const botUserSummaryColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, '' AS system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.host_skill_id, COALESCE(b.model_override, ''), b.created_at, b.updated_at`
+
 // scanBotUser reads one row from a query that selected
 // botUserSelectColumns. nullable scan targets handle passthrough
 // bots whose llm_config_id (and therefore c.name) is NULL.
@@ -4584,6 +4592,62 @@ func (s *Server) listBotUsers(workspaceID string) ([]BotUser, error) {
 		items = append(items, *item)
 	}
 	return items, rows.Err()
+}
+
+// listBotUsersPage returns one page of a workspace's bots plus the total count.
+// q (optional) filters by name/description (ILIKE). When summary is true the
+// system_prompt is omitted from each item (light payload for large libraries).
+func (s *Server) listBotUsersPage(workspaceID, q string, limit, offset int, summary bool) ([]BotUser, int, error) {
+	where := `WHERE b.workspace_id = $1`
+	args := []any{workspaceID}
+	if q != "" {
+		where += ` AND (b.name ILIKE $2 OR b.description ILIKE $2)`
+		args = append(args, "%"+q+"%")
+	}
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM bot_users b `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	cols := botUserSelectColumns
+	if summary {
+		cols = botUserSummaryColumns
+	}
+	pargs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.db.Query(
+		`SELECT `+cols+`
+		   FROM bot_users b
+		   LEFT JOIN llm_configs c ON c.id = b.llm_config_id
+		   `+where+`
+		  ORDER BY b.updated_at DESC, b.id DESC
+		  LIMIT $`+strconv.Itoa(len(args)+1)+` OFFSET $`+strconv.Itoa(len(args)+2),
+		pargs...,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := make([]BotUser, 0, limit)
+	for rows.Next() {
+		item, err := scanBotUser(rows.Scan)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, *item)
+	}
+	return items, total, rows.Err()
+}
+
+// getBotUser returns one bot (full, incl. system_prompt) scoped to the
+// workspace. Returns sql.ErrNoRows when not found.
+func (s *Server) getBotUser(workspaceID string, id int64) (*BotUser, error) {
+	row := s.db.QueryRow(
+		`SELECT `+botUserSelectColumns+`
+		   FROM bot_users b
+		   LEFT JOIN llm_configs c ON c.id = b.llm_config_id
+		  WHERE b.id = $1 AND b.workspace_id = $2`,
+		id, workspaceID,
+	)
+	return scanBotUser(row.Scan)
 }
 
 func (s *Server) ensureBuiltinBotUsers(workspaceID, ownerUserID string, now time.Time) error {

@@ -838,3 +838,45 @@ func (s *Server) handleAgentStatus(c *gin.Context) {
 		"uptime_sec":   uptimeSec,
 	})
 }
+
+// handleAgentStatusBatch returns agent-attach status for many bots in one POST
+// — replaces the UI firing one /status request per bot (which melted the page
+// at hundreds of bots). Capped so per-request work stays bounded.
+func (s *Server) handleAgentStatusBatch(c *gin.Context) {
+	var req struct {
+		BotIDs []string `json:"bot_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	if len(req.BotIDs) > 200 {
+		req.BotIDs = req.BotIDs[:200]
+	}
+	out := make(map[string]gin.H, len(req.BotIDs))
+	for _, id := range req.BotIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		conn := s.agentHub.lookup(id)
+		if conn == nil {
+			out[id] = gin.H{"attached": false}
+			continue
+		}
+		caps := conn.capabilities
+		if caps == nil {
+			caps = []string{}
+		}
+		out[id] = gin.H{
+			"attached":     true,
+			"workdir":      conn.workdir,
+			"capabilities": caps,
+			"tool":         conn.tool,
+			"remote_ip":    remoteIPForRequest(conn.requestRemoteAddr),
+			"attached_at":  conn.attachedAt.UTC().Format(time.RFC3339),
+			"uptime_sec":   int(time.Since(conn.attachedAt).Seconds()),
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"statuses": out})
+}
