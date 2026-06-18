@@ -213,6 +213,12 @@ type Server struct {
 	// IsSiteAdmin(userID) lookups. Lazily initialised on first call;
 	// 30s TTL, invalidated on root-team membership mutations.
 	siteAdminCache *siteAdminCache
+
+	// P1b: in-process cache for the paginated/summary bots list (the
+	// hot path when a workspace holds hundreds of bots). Lazily
+	// initialised; per-workspace version counter gives O(1)
+	// invalidation on bot create/update/delete.
+	botListCache *botListCache
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -246,6 +252,7 @@ func NewServer(cfg Config) (*Server, error) {
 			Password: cfg.RedisPassword,
 			DB:       cfg.RedisDB,
 		}),
+		botListCache: newBotListCache(),
 	}
 	server.backgroundCtx, server.backgroundStop = context.WithCancel(context.Background())
 

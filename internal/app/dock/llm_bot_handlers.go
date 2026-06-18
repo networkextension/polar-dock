@@ -353,12 +353,13 @@ func (s *Server) handleBotUserList(c *gin.Context) {
 		return
 	}
 	q := strings.TrimSpace(c.Query("q"))
+	group := strings.TrimSpace(c.Query("group"))
 	summary := c.Query("summary") == "1"
 	_, hasLimit := c.GetQuery("limit")
 	_, hasOffset := c.GetQuery("offset")
-	// Paginated mode when the client opts in via q/limit/offset/summary;
+	// Paginated mode when the client opts in via q/group/limit/offset/summary;
 	// otherwise return the full list (back-compat while the UI rolls out).
-	if !summary && q == "" && !hasLimit && !hasOffset {
+	if !summary && q == "" && group == "" && !hasLimit && !hasOffset {
 		items, err := s.listBotUsers(workspaceID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
@@ -378,12 +379,65 @@ func (s *Server) handleBotUserList(c *gin.Context) {
 	if v, err := strconv.Atoi(c.Query("offset")); err == nil && v > 0 {
 		offset = v
 	}
-	items, total, err := s.listBotUsersPage(workspaceID, q, limit, offset, summary)
+
+	// Cache the summary path (the hot list page). The full-prompt path is
+	// rare and left uncached. The facet (groups) only rides on the first
+	// page (offset==0) so the UI gets its chips without a second request.
+	cacheable := summary && s.botListCache != nil
+	var ckey string
+	if cacheable {
+		ver := s.botListCache.version(workspaceID)
+		ckey = botListCacheKey(workspaceID, ver, q, group, limit, offset)
+		if v, hit := s.botListCache.get(ckey); hit {
+			resp := gin.H{"bots": v.bots, "total": v.total, "limit": limit, "offset": offset}
+			if offset == 0 {
+				resp["groups"] = v.groups
+			}
+			c.JSON(http.StatusOK, resp)
+			return
+		}
+	}
+
+	items, total, err := s.listBotUsersPage(workspaceID, q, group, limit, offset, summary)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"bots": items, "total": total, "limit": limit, "offset": offset})
+
+	var groups []GroupCount
+	if offset == 0 {
+		if groups, err = s.listBotUserGroups(workspaceID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+	}
+
+	if cacheable {
+		s.botListCache.set(ckey, botListCacheValue{bots: items, total: total, groups: groups})
+	}
+
+	resp := gin.H{"bots": items, "total": total, "limit": limit, "offset": offset}
+	if offset == 0 {
+		resp["groups"] = groups
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// normalizeTags trims, drops empties, and dedups (case-sensitive, order
+// preserved) the tags from a write request. Always returns non-nil so the
+// store writes '{}' rather than NULL.
+func normalizeTags(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
+	for _, t := range in {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
 }
 
 // handleBotUserGet returns one bot with its full system_prompt (the paginated
@@ -425,9 +479,10 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 		Description   string `json:"description"`
 		SystemPrompt  string `json:"system_prompt"`
 		LLMConfigID   int64  `json:"llm_config_id"`
-		BotKind       string `json:"bot_kind"`       // "" → classic
-		PreferredTool string `json:"preferred_tool"` // optional hint
-		ModelOverride string `json:"model_override"` // qunliao β: empty = use cfg.model
+		BotKind       string   `json:"bot_kind"`       // "" → classic
+		PreferredTool string   `json:"preferred_tool"` // optional hint
+		ModelOverride string   `json:"model_override"` // qunliao β: empty = use cfg.model
+		Tags          []string `json:"tags"`           // P1b categories
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
@@ -456,6 +511,7 @@ func (s *Server) handleBotUserCreate(c *gin.Context) {
 		BotKind:       kind,
 		PreferredTool: strings.TrimSpace(req.PreferredTool),
 		ModelOverride: strings.TrimSpace(req.ModelOverride),
+		Tags:          normalizeTags(req.Tags),
 	}, time.Now())
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "uniq_bot_users_workspace_name") {
@@ -498,6 +554,9 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 		// from "non-zero → bind". Validated server-side against the
 		// workspace.
 		HostSkillID *int64 `json:"host_skill_id"`
+		// Tags (P1b): pointer so an omitted field leaves existing tags
+		// untouched, while an explicit (even empty) array replaces them.
+		Tags *[]string `json:"tags"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
@@ -528,6 +587,10 @@ func (s *Server) handleBotUserUpdate(c *gin.Context) {
 	if req.HostSkillID != nil {
 		input.HostSkillIDSet = true
 		input.HostSkillID = *req.HostSkillID
+	}
+	if req.Tags != nil {
+		input.TagsSet = true
+		input.Tags = normalizeTags(*req.Tags)
 	}
 	item, err := s.updateBotUser(workspaceID, id, input, time.Now())
 	if err != nil {
