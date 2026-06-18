@@ -468,9 +468,12 @@ type BotUser struct {
 	// pass this model name to the LLM call instead of cfg.Model.
 	// Lets one llm_configs row power multiple bots running different
 	// model variants under the same api_key.
-	ModelOverride string    `json:"model_override,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ModelOverride string `json:"model_override,omitempty"`
+	// Tags (P1b): free-form categories (e.g. the Cherry Studio groups).
+	// Drives the bots UI filter chips. Always present (defaults to []).
+	Tags      []string  `json:"tags"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Bot kind constants. Defined string literals (not iota) since they
@@ -3545,6 +3548,30 @@ CREATE INDEX IF NOT EXISTS idx_chat_room_agent_loops_due
 ALTER TABLE bot_users
     ADD COLUMN IF NOT EXISTS model_override TEXT;
 
+-- P1b — bot categories/tags. A bot can carry zero or more free-form tags
+-- (e.g. the Cherry Studio "groups": 职业/编程/翻译…); the bots UI renders
+-- them as filter chips with counts. The GIN index powers the ?group=
+-- facet filter via tags @> ARRAY[$g]. Backfilled on zen from
+-- ~/cherry-bots/bots-optimized.json (one-off, matched by name).
+ALTER TABLE bot_users
+    ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS idx_bot_users_tags ON bot_users USING gin (tags);
+
+-- P1b — trigram index for fast name search once a workspace holds
+-- hundreds of bots. pg_trgm is a "trusted" extension (PG13+) so the DB
+-- owner can create it without superuser. Wrapped defensively: if the
+-- role somehow lacks privilege the index is skipped (ILIKE still works
+-- via seq scan) instead of bricking boot on a locked-down DB.
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    CREATE INDEX IF NOT EXISTS idx_bot_users_name_trgm
+        ON bot_users USING gin (name gin_trgm_ops);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_trgm setup skipped: %', SQLERRM;
+END
+$$;
+
 -- Qunliao β2 — per-message LLM call metrics so the rooms UI can show
 -- model/latency/tokens/cost pills (default hidden, user toggles on).
 -- Snapshot at insert time so a later llm_configs edit doesn't rewrite
@@ -4529,14 +4556,14 @@ func decodePackTunnelJSON(raw []byte, dest any) error {
 // every bot_users read. Joined with llm_configs via LEFT JOIN
 // (passthrough bots may not have an llm_config_id), so c.name is
 // scanned through sql.NullString.
-const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.host_skill_id, COALESCE(b.model_override, ''), b.created_at, b.updated_at`
+const botUserSelectColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, b.system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.host_skill_id, COALESCE(b.model_override, ''), COALESCE(b.tags, '{}'), b.created_at, b.updated_at`
 
 // botUserSummaryColumns is botUserSelectColumns with system_prompt blanked —
 // used by the paginated list so a workspace with hundreds of bots returns a
 // light payload (the full prompt is fetched per-bot via GET /api/bots/:id on
 // expand). Column order/count matches botUserSelectColumns so scanBotUser works
 // for both.
-const botUserSummaryColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, '' AS system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.host_skill_id, COALESCE(b.model_override, ''), b.created_at, b.updated_at`
+const botUserSummaryColumns = `b.id, b.owner_user_id, COALESCE(b.workspace_id, ''), b.bot_user_id, b.name, b.description, '' AS system_prompt, b.llm_config_id, c.name, COALESCE(b.bot_kind, 'classic'), COALESCE(b.preferred_tool, ''), COALESCE(b.is_auto_registered, FALSE), b.host_skill_id, COALESCE(b.model_override, ''), COALESCE(b.tags, '{}'), b.created_at, b.updated_at`
 
 // scanBotUser reads one row from a query that selected
 // botUserSelectColumns. nullable scan targets handle passthrough
@@ -4551,11 +4578,14 @@ func scanBotUser(scanFn func(...any) error) (*BotUser, error) {
 		&item.Name, &item.Description, &item.SystemPrompt,
 		&llmConfigID, &configName,
 		&item.BotKind, &item.PreferredTool, &item.IsAutoRegistered,
-		&hostSkillID, &item.ModelOverride,
+		&hostSkillID, &item.ModelOverride, pq.Array(&item.Tags),
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if item.Tags == nil {
+		item.Tags = []string{}
 	}
 	if llmConfigID.Valid {
 		item.LLMConfigID = llmConfigID.Int64
@@ -4594,15 +4624,27 @@ func (s *Server) listBotUsers(workspaceID string) ([]BotUser, error) {
 	return items, rows.Err()
 }
 
+// GroupCount is one entry of the bots tag/category facet: a tag name and
+// how many bots in the workspace carry it. Drives the UI filter chips.
+type GroupCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
 // listBotUsersPage returns one page of a workspace's bots plus the total count.
-// q (optional) filters by name/description (ILIKE). When summary is true the
-// system_prompt is omitted from each item (light payload for large libraries).
-func (s *Server) listBotUsersPage(workspaceID, q string, limit, offset int, summary bool) ([]BotUser, int, error) {
+// q (optional) filters by name/description (ILIKE). group (optional) filters to
+// bots tagged with that exact tag (tags @> ARRAY[group]). When summary is true
+// the system_prompt is omitted from each item (light payload for large libraries).
+func (s *Server) listBotUsersPage(workspaceID, q, group string, limit, offset int, summary bool) ([]BotUser, int, error) {
 	where := `WHERE b.workspace_id = $1`
 	args := []any{workspaceID}
 	if q != "" {
-		where += ` AND (b.name ILIKE $2 OR b.description ILIKE $2)`
 		args = append(args, "%"+q+"%")
+		where += ` AND (b.name ILIKE $` + strconv.Itoa(len(args)) + ` OR b.description ILIKE $` + strconv.Itoa(len(args)) + `)`
+	}
+	if group != "" {
+		args = append(args, pq.Array([]string{group}))
+		where += ` AND b.tags @> $` + strconv.Itoa(len(args))
 	}
 	var total int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM bot_users b `+where, args...).Scan(&total); err != nil {
@@ -4635,6 +4677,33 @@ func (s *Server) listBotUsersPage(workspaceID, q string, limit, offset int, summ
 		items = append(items, *item)
 	}
 	return items, total, rows.Err()
+}
+
+// listBotUserGroups returns the tag/category facet for a workspace: each
+// distinct tag and the number of bots carrying it, busiest first. Backed by
+// the GIN index on tags. Used to render the UI filter chips on the first page.
+func (s *Server) listBotUserGroups(workspaceID string) ([]GroupCount, error) {
+	rows, err := s.db.Query(
+		`SELECT g, COUNT(*)
+		   FROM bot_users b, unnest(b.tags) AS g
+		  WHERE b.workspace_id = $1
+		  GROUP BY g
+		  ORDER BY COUNT(*) DESC, g ASC`,
+		workspaceID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]GroupCount, 0)
+	for rows.Next() {
+		var gc GroupCount
+		if err := rows.Scan(&gc.Name, &gc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, gc)
+	}
+	return out, rows.Err()
 }
 
 // getBotUser returns one bot (full, incl. system_prompt) scoped to the
@@ -4728,6 +4797,7 @@ type CreateBotUserInput struct {
 	BotKind       string // "" → "classic"; "passthrough" → llm_config_id may be 0
 	PreferredTool string // freeform hint; "kimi"/"claude"/"codex" recommended
 	ModelOverride string // qunliao β: empty = use llm_configs.model
+	Tags          []string // P1b categories; nil/empty → '{}'
 }
 
 func (s *Server) createBotUser(in CreateBotUserInput, now time.Time) (*BotUser, error) {
@@ -4784,10 +4854,13 @@ func (s *Server) createBotUser(in CreateBotUserInput, now time.Time) (*BotUser, 
 	} else {
 		llmConfigArg = nil
 	}
+	if in.Tags == nil {
+		in.Tags = []string{}
+	}
 	if _, err = tx.Exec(
-		`INSERT INTO bot_users (owner_user_id, workspace_id, bot_user_id, name, description, system_prompt, llm_config_id, bot_kind, preferred_tool, model_override, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
-		in.OwnerUserID, in.WorkspaceID, botUserID, in.Name, in.Description, in.SystemPrompt, llmConfigArg, in.BotKind, in.PreferredTool, in.ModelOverride, now,
+		`INSERT INTO bot_users (owner_user_id, workspace_id, bot_user_id, name, description, system_prompt, llm_config_id, bot_kind, preferred_tool, model_override, tags, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
+		in.OwnerUserID, in.WorkspaceID, botUserID, in.Name, in.Description, in.SystemPrompt, llmConfigArg, in.BotKind, in.PreferredTool, in.ModelOverride, pq.Array(in.Tags), now,
 	); err != nil {
 		return nil, err
 	}
@@ -4795,6 +4868,7 @@ func (s *Server) createBotUser(in CreateBotUserInput, now time.Time) (*BotUser, 
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.bumpBotListCache(in.WorkspaceID)
 	// Re-read via the canonical projection so callers get the full
 	// BotUser shape (including ConfigName from the LEFT JOIN).
 	row := s.db.QueryRow(
@@ -5092,6 +5166,12 @@ type UpdateBotUserInput struct {
 	HostSkillIDSet bool
 	HostSkillID    int64
 	ModelOverride  string // qunliao β: empty = use llm_configs.model
+	// TagsSet: when true, Tags below replaces the bot's tags (empty =
+	// clear). When false, the update leaves existing tags untouched —
+	// same opt-in pattern as HostSkillIDSet so legacy callers that
+	// don't manage tags don't accidentally wipe them.
+	TagsSet bool
+	Tags    []string
 }
 
 func (s *Server) updateBotUser(workspaceID string, id int64, in UpdateBotUserInput, now time.Time) (*BotUser, error) {
@@ -5179,9 +5259,22 @@ func (s *Server) updateBotUser(workspaceID string, id int64, in UpdateBotUserInp
 			return nil, err
 		}
 	}
+	if in.TagsSet {
+		tags := in.Tags
+		if tags == nil {
+			tags = []string{}
+		}
+		if _, err = tx.Exec(
+			`UPDATE bot_users SET tags = $3 WHERE id = $1 AND workspace_id = $2`,
+			id, workspaceID, pq.Array(tags),
+		); err != nil {
+			return nil, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.bumpBotListCache(workspaceID)
 	row := s.db.QueryRow(
 		`SELECT `+botUserSelectColumns+`
 		   FROM bot_users b
@@ -5219,6 +5312,7 @@ func (s *Server) deleteBotUser(workspaceID string, id int64) (bool, error) {
 	if err = tx.Commit(); err != nil {
 		return false, err
 	}
+	s.bumpBotListCache(workspaceID)
 	return true, nil
 }
 
