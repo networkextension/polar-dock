@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>polar.alertmanager</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/alertmanager</string>
+        <string>--config.file=/opt/homebrew/etc/alertmanager.yml</string>
+        <string>--storage.path=/opt/homebrew/var/alertmanager</string>
+        <string>--web.listen-address=127.0.0.1:9093</string>
+        <string>--cluster.listen-address=</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/opt/homebrew/var/log/alertmanager.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/homebrew/var/log/alertmanager.err.log</string>
+</dict>
+</plist>

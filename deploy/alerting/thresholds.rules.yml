@@ -1,0 +1,57 @@
+# Threshold alerts — host CPU / mem / disk / 温度. Metric names verified against
+# zen Prometheus 2026-06-21 (macmon_{cpu,gpu}_temp_celsius; macOS node_exporter
+# uses node_memory_free_bytes/total_bytes, NOT Linux MemAvailable).
+groups:
+  - name: host-thresholds
+    interval: 30s
+    rules:
+      - alert: HostCPUHigh
+        expr: 100 - (avg by (host, instance, job, tier) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 10m
+        labels: { severity: warning, component: host }
+        annotations:
+          summary: "{{ $labels.host }} CPU >90% 持续 10m"
+          description: "host={{ $labels.host }} CPU 使用率 {{ printf \"%.0f\" $value }}%"
+
+      - alert: HostMemHigh
+        expr: (1 - node_memory_free_bytes / node_memory_total_bytes) * 100 > 90
+        for: 10m
+        labels: { severity: warning, component: host }
+        annotations:
+          summary: "{{ $labels.host }} 内存 >90% 持续 10m"
+          description: "host={{ $labels.host }} 内存使用 {{ printf \"%.0f\" $value }}%"
+
+      - alert: HostDiskHigh
+        expr: (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|devfs|autofs|overlay"} / node_filesystem_size_bytes) * 100 > 85
+        for: 5m
+        labels: { severity: warning, component: host }
+        annotations:
+          summary: "{{ $labels.host }} 磁盘 {{ $labels.mountpoint }} >85%"
+          description: "{{ $labels.host }}:{{ $labels.mountpoint }} 用量 {{ printf \"%.0f\" $value }}%"
+
+      - alert: HostDiskCritical
+        expr: (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|devfs|autofs|overlay"} / node_filesystem_size_bytes) * 100 > 95
+        for: 5m
+        labels: { severity: critical, component: host }
+        annotations:
+          summary: "{{ $labels.host }} 磁盘 {{ $labels.mountpoint }} >95% (critical)"
+          description: "{{ $labels.host }}:{{ $labels.mountpoint }} 用量 {{ printf \"%.0f\" $value }}%"
+
+  - name: thermal-thresholds
+    interval: 30s
+    rules:
+      - alert: AppleChipHot
+        expr: max by (host, instance, tier) (macmon_cpu_temp_celsius or macmon_gpu_temp_celsius) > 90
+        for: 3m
+        labels: { severity: warning, component: thermal }
+        annotations:
+          summary: "{{ $labels.host }} Apple 芯片温度 >90℃"
+          description: "host={{ $labels.host }} 温度 {{ printf \"%.0f\" $value }}℃"
+
+      - alert: Swift64Hot
+        expr: max by (host, instance) (node_acpi_thermal_celsius) > 80
+        for: 3m
+        labels: { severity: warning, component: thermal }
+        annotations:
+          summary: "{{ $labels.host }} ACPI 温度 >80℃"
+          description: "host={{ $labels.host }} 最高温区 {{ printf \"%.0f\" $value }}℃"

@@ -1,0 +1,38 @@
+# Alertmanager for the Polar lab. Loopback only (:9093). Routes everything to the
+# local receiver (:9095 → macOS notify + Plane + dock in-app); Watchdog goes to
+# the external deadman heartbeat on opera (push-based: zen → opera is reachable,
+# opera → zen loopback is not, given home NAT).
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: polar-local
+  group_by: ['alertname', 'host']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: ['alertname="Watchdog"']
+      receiver: deadman
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m      # heartbeat cadence to the external watcher
+
+receivers:
+  - name: polar-local
+    webhook_configs:
+      - url: http://127.0.0.1:9095/alert
+        send_resolved: true
+  - name: deadman
+    # blackhole until P0a-4 wires the opera heartbeat receiver:
+    #   webhook_configs:
+    #     - url: http://<opera>:9096/hb?token=<secret>
+    #       send_resolved: false
+    webhook_configs: []
+
+# When a host is fully down (InstanceDown), suppress its other alerts (CPU/温度/…)
+# so one dead box is one notification, not a storm.
+inhibit_rules:
+  - source_matchers: ['alertname="InstanceDown"']
+    target_matchers: ['alertname!="InstanceDown"']
+    equal: ['host']

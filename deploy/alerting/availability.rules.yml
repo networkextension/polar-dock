@@ -1,0 +1,18 @@
+# Availability alerts — any registered scrape target unreachable.
+# 用户决定:所有在册机 down 都按 critical。for: 5m 略压笔记本休眠瞬断。
+groups:
+  - name: availability
+    interval: 30s
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: availability
+        annotations:
+          summary: "{{ $labels.host }} / {{ $labels.job }} 不可达 (up=0 ≥5m)"
+          description: >
+            target {{ $labels.instance }} (job={{ $labels.job }},
+            host={{ $labels.host }}, tier={{ $labels.tier }})
+            已连续 5 分钟抓取失败。

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>polar.alert-receiver</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/local/bin/alert-receiver.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ALERT_PLANE_PROJECT</key>
+        <string>6ed4164e-ab38-4342-a19e-8f39751ea227</string>
+        <key>PLANE_SECRETS</key>
+        <string>/Users/local/plane-secrets.env</string>
+        <key>STATE_FILE</key>
+        <string>/Users/local/var/alert-state.json</string>
+        <key>POLAR_API_BASE</key>
+        <string>http://127.0.0.1:8080</string>
+        <key>POLAR_OPS_TOKEN</key>
+        <string>__OPS_TOKEN__</string>
+        <key>POLAR_WS</key>
+        <string>e6f3b862446e6f211d042c3bd2281ac2</string>
+        <key>ALERT_ROOM_ID</key>
+        <string>5</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/opt/homebrew/var/log/alert-receiver.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/homebrew/var/log/alert-receiver.err.log</string>
+</dict>
+</plist>

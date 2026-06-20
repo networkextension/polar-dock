@@ -1,0 +1,14 @@
+# Watchdog — always firing. Alertmanager routes it to the deadman heartbeat;
+# the external watcher (opera cron) alarms when this STOPS arriving, i.e. when
+# zen/Prometheus/Alertmanager themselves are down. Who-watches-the-watcher.
+groups:
+  - name: watchdog
+    interval: 30s
+    rules:
+      - alert: Watchdog
+        expr: vector(1)
+        for: 0m
+        labels: { severity: none, component: watchdog }
+        annotations:
+          summary: "Watchdog — 告警链路存活心跳 (恒为 firing)"
+          description: "若此告警停止抵达外部接收端,说明 zen 监控栈整体失联。"
