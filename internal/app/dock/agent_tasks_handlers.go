@@ -70,7 +70,11 @@ func (s *Server) handleComputeTaskGet(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, task)
+	arts, _ := s.listTaskArtifacts(task.ID)
+	for i := range arts {
+		arts[i].DownloadURL = s.assetDownloadURL(arts[i].AssetID, workspaceID)
+	}
+	c.JSON(http.StatusOK, gin.H{"task": task, "artifacts": arts})
 }
 
 func (s *Server) handleComputeTaskList(c *gin.Context) {
@@ -125,9 +129,15 @@ func (s *Server) handleComputeTaskClaim(c *gin.Context) {
 }
 
 type taskResultRequest struct {
-	OK     bool            `json:"ok"`
-	Output json.RawMessage `json:"output"`
-	Error  string          `json:"error"`
+	OK        bool            `json:"ok"`
+	Output    json.RawMessage `json:"output"`
+	Error     string          `json:"error"`
+	Artifacts []struct {
+		Kind    string `json:"kind"`
+		AssetID int64  `json:"asset_id"`
+		Mime    string `json:"mime"`
+		Bytes   int64  `json:"bytes"`
+	} `json:"artifacts"`
 }
 
 func (s *Server) handleComputeTaskResult(c *gin.Context) {
@@ -153,6 +163,16 @@ func (s *Server) handleComputeTaskResult(c *gin.Context) {
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found, not running, or not yours"})
 		return
+	}
+	taskID := strings.TrimSpace(c.Param("id"))
+	for _, a := range req.Artifacts {
+		if a.AssetID <= 0 {
+			continue
+		}
+		if err := s.insertTaskArtifact(taskID, a.Kind, a.AssetID, a.Mime, a.Bytes); err != nil {
+			// non-fatal: the task is done; artifact row is recoverable
+			c.Header("X-Artifact-Insert", "failed")
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

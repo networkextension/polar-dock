@@ -1270,6 +1270,10 @@ func (s *Server) registerRoutes() {
 		// a static path siblinging a :param, so result is /complete/:id not /:id/result).
 		api.POST("/agent/compute-tasks/claim", s.PolarAgentAuthMiddleware(), s.handleComputeTaskClaim)
 		api.POST("/agent/compute-tasks/complete/:id", s.PolarAgentAuthMiddleware(), s.handleComputeTaskResult)
+		// Dock-brokered asset upload for task artifacts (agent token → grant a
+		// signed PUT to polar-assets + finalize). See polar-task T2c.
+		api.POST("/agent/assets/grant", s.PolarAgentAuthMiddleware(), s.handleAgentAssetGrant)
+		api.POST("/agent/assets/finalize", s.PolarAgentAuthMiddleware(), s.handleAgentAssetFinalize)
 		// P-recovery-0a: knowledge-base device upsert via agent token.
 		api.POST("/agent/library/devices/upsert", s.PolarAgentAuthMiddleware(), s.handleAgentRevDeviceUpsert)
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
