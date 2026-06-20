@@ -1257,6 +1257,9 @@ func (s *Server) registerRoutes() {
 		api.GET("/skill-updates", s.AuthMiddleware(), s.handleSkillUpdatesList)
 		api.GET("/agent/bots/:bot_id/config", s.PolarAgentAuthMiddleware(), s.handleAgentBotConfig)
 		api.POST("/agent/auto-register", s.PolarAgentAuthMiddleware(), s.handleAgentAutoRegister)
+		// Compute-agent self-register: an agent token persists its own host+agent
+		// in the token owner's personal workspace (no enroll token). See T1b.
+		api.POST("/agent/self-register", s.PolarAgentAuthMiddleware(), s.handleAgentSelfRegister)
 		// P-recovery-0a: knowledge-base device upsert via agent token.
 		api.POST("/agent/library/devices/upsert", s.PolarAgentAuthMiddleware(), s.handleAgentRevDeviceUpsert)
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
