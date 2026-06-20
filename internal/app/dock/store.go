@@ -1466,6 +1466,30 @@ CREATE INDEX IF NOT EXISTS idx_research_runs_open ON project_research_runs(statu
 -- and is delivered on reconnect-drain instead of fire-and-forget push.
 ALTER TABLE project_research_runs ADD COLUMN IF NOT EXISTS claimed_at       TIMESTAMPTZ;
 ALTER TABLE project_research_runs ADD COLUMN IF NOT EXISTS dispatch_payload TEXT;
+
+-- agent_tasks: the general on-device task queue (polar-task T0). A user/plugin
+-- submits {skill, input}; a connected compute agent claims it (FOR UPDATE SKIP
+-- LOCKED), runs it on-device (OCR/STT/…), and posts the result. Distinct from
+-- project_research_runs (research/LLM-specific). agent_id is a soft ref (no FK
+-- so schema ordering is unconstrained). status: queued|running|done|failed|canceled.
+CREATE TABLE IF NOT EXISTS agent_tasks (
+	id           TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	created_by   TEXT NOT NULL,
+	skill        TEXT NOT NULL,
+	input_json   JSONB NOT NULL DEFAULT '{}'::jsonb,
+	constraints_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+	priority     INTEGER NOT NULL DEFAULT 0,
+	status       TEXT NOT NULL DEFAULT 'queued',
+	agent_id     TEXT,
+	result_json  JSONB,
+	error        TEXT NOT NULL DEFAULT '',
+	created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+	claimed_at   TIMESTAMPTZ,
+	updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_claim ON agent_tasks(workspace_id, skill, priority DESC, created_at) WHERE status = 'queued';
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_ws ON agent_tasks(workspace_id, created_at DESC);
 -- claim picks the oldest queued run for a bot; this index keeps that cheap.
 CREATE INDEX IF NOT EXISTS idx_research_runs_queued_bot
 	ON project_research_runs(bot_user_id, created_at) WHERE status = 'queued';

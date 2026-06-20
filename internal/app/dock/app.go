@@ -1260,6 +1260,16 @@ func (s *Server) registerRoutes() {
 		// Compute-agent self-register: an agent token persists its own host+agent
 		// in the token owner's personal workspace (no enroll token). See T1b.
 		api.POST("/agent/self-register", s.PolarAgentAuthMiddleware(), s.handleAgentSelfRegister)
+		// General on-device compute task queue (polar-task T0): submit (user/api-token),
+		// agent claim + result (agent token). Distinct /compute-tasks namespace to
+		// avoid the marketplace /tasks and the research /agent/tasks/claim. See doc/02.
+		api.POST("/compute-tasks", s.AuthMiddleware(), s.handleComputeTaskSubmit)
+		api.GET("/compute-tasks", s.AuthMiddleware(), s.handleComputeTaskList)
+		api.GET("/compute-tasks/:id", s.AuthMiddleware(), s.handleComputeTaskGet)
+		// claim + complete are static siblings under /agent/compute-tasks/ (gin forbids
+		// a static path siblinging a :param, so result is /complete/:id not /:id/result).
+		api.POST("/agent/compute-tasks/claim", s.PolarAgentAuthMiddleware(), s.handleComputeTaskClaim)
+		api.POST("/agent/compute-tasks/complete/:id", s.PolarAgentAuthMiddleware(), s.handleComputeTaskResult)
 		// P-recovery-0a: knowledge-base device upsert via agent token.
 		api.POST("/agent/library/devices/upsert", s.PolarAgentAuthMiddleware(), s.handleAgentRevDeviceUpsert)
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
