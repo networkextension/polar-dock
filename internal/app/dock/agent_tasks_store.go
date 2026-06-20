@@ -90,6 +90,42 @@ func (s *Server) claimTask(workspaceID, agentID string, skills []string) (*Agent
 	return s.getTask(workspaceID, id)
 }
 
+// TaskArtifact is a file output of a task (stored in polar-assets).
+type TaskArtifact struct {
+	Kind        string `json:"kind"`
+	AssetID     int64  `json:"asset_id"`
+	Mime        string `json:"mime"`
+	Bytes       int64  `json:"bytes"`
+	DownloadURL string `json:"download_url,omitempty"`
+}
+
+// insertTaskArtifact records one artifact for a task.
+func (s *Server) insertTaskArtifact(taskID, kind string, assetID int64, mime string, bytes int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO task_artifacts (task_id, kind, asset_id, mime, bytes) VALUES ($1,$2,$3,$4,$5)`,
+		taskID, kind, assetID, mime, bytes)
+	return err
+}
+
+// listTaskArtifacts returns a task's artifacts (asset_id only; caller mints URLs).
+func (s *Server) listTaskArtifacts(taskID string) ([]TaskArtifact, error) {
+	rows, err := s.db.Query(
+		`SELECT kind, asset_id, mime, bytes FROM task_artifacts WHERE task_id=$1 ORDER BY id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TaskArtifact{}
+	for rows.Next() {
+		var a TaskArtifact
+		if err := rows.Scan(&a.Kind, &a.AssetID, &a.Mime, &a.Bytes); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // finalizeTask records a terminal result. Only the claiming agent may finalize.
 func (s *Server) finalizeTask(workspaceID, taskID, agentID string, ok bool, result json.RawMessage, taskErr string) (bool, error) {
 	status := "done"

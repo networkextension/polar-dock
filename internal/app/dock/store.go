@@ -1490,6 +1490,20 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_claim ON agent_tasks(workspace_id, skill, priority DESC, created_at) WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_ws ON agent_tasks(workspace_id, created_at DESC);
+
+-- task_artifacts: file outputs of a compute task, stored in polar-assets (the
+-- agent uploaded via a dock-brokered grant). Keep the asset_id ref only; the
+-- bytes live on the asset provider. See polar-task T2c.
+CREATE TABLE IF NOT EXISTS task_artifacts (
+	id         BIGSERIAL PRIMARY KEY,
+	task_id    TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+	kind       TEXT NOT NULL DEFAULT '',
+	asset_id   BIGINT NOT NULL,
+	mime       TEXT NOT NULL DEFAULT '',
+	bytes      BIGINT NOT NULL DEFAULT 0,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_task_artifacts_task ON task_artifacts(task_id);
 -- claim picks the oldest queued run for a bot; this index keeps that cheap.
 CREATE INDEX IF NOT EXISTS idx_research_runs_queued_bot
 	ON project_research_runs(bot_user_id, created_at) WHERE status = 'queued';
