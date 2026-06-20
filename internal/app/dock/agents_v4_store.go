@@ -420,3 +420,80 @@ func (s *Server) ensureBotForAgent(workspaceID, ownerUserID, name, description s
 	_ = llmConfig
 	return bot.BotUserID, true, nil
 }
+
+// registerAgentSelf is the self-service register path for a compute agent that
+// authenticates with its own agent token (polar_agent_…) — no enroll token, no
+// HMAC. The workspace is the token owner's personal team (resolved by the
+// handler), so an agent token can only ever create a host in its own owner's
+// workspace. Unlike registerAgent it does NOT mint a new token: it links the
+// PRESENTED token to the host (hosts.agent_token_id) so the WS hello /
+// skill.advertise path (getHostByAgentToken) resolves the host and materializes
+// host_skills — the bit v4 registerAgent leaves unset. See doc/06 + T1b plan.
+func (s *Server) registerAgentSelf(workspaceID, ownerUserID, name, machineUUIDRaw, agentOS, agentArch, agentTokenID string) (map[string]any, error) {
+	name = strings.TrimSpace(name)
+	workspaceID = strings.TrimSpace(workspaceID)
+	agentTokenID = strings.TrimSpace(agentTokenID)
+	if name == "" || workspaceID == "" || agentTokenID == "" {
+		return nil, errors.New("name, workspace_id, agent_token_id required")
+	}
+	hostID, err := hashHostID(machineUUIDRaw)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+
+	// 1. UPSERT host, then link the presented token (the linchpin).
+	if err := s.upsertHostV4(hostID, workspaceID, name, agentOS, agentArch, now); err != nil {
+		return nil, fmt.Errorf("upsert host: %w", err)
+	}
+	if _, err := s.db.Exec(`UPDATE hosts SET agent_token_id = $1 WHERE id = $2`, agentTokenID, hostID); err != nil {
+		return nil, fmt.Errorf("link host token: %w", err)
+	}
+
+	// 2. Idempotency: same (workspace, name) → re-point the agent + host to the
+	//    presented token (the owner may have minted a fresh one) and return it.
+	if existingID, existingHost, existingBot, lookupErr := s.getAgentByWorkspaceName(workspaceID, name); lookupErr == nil && existingID != "" {
+		if existingHost != hostID {
+			_, _ = s.db.Exec(`UPDATE agents SET host_id = $2 WHERE id = $1`, existingID, hostID)
+		}
+		_, _ = s.db.Exec(`UPDATE agents SET agent_token_id = $2 WHERE id = $1`, existingID, agentTokenID)
+		return map[string]any{
+			"agent_id":     existingID,
+			"host_id":      hostID,
+			"bot_user_id":  existingBot,
+			"workspace_id": workspaceID,
+			"idempotent":   true,
+		}, nil
+	} else if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+		return nil, fmt.Errorf("agent lookup: %w", lookupErr)
+	}
+
+	// 3. Proxy token + bot (reuse v4 helpers) so the WS can attach with a bot_id.
+	proxyTokenID, _, err := s.ensureWorkspaceProxyToken(workspaceID, ownerUserID, "agent-pool")
+	if err != nil {
+		return nil, fmt.Errorf("ensure proxy token: %w", err)
+	}
+	botName := fmt.Sprintf("bot-%s-%s", slugifyAgentName(name), shortAgentID(""))
+	botUserID, _, err := s.ensureBotForAgent(
+		workspaceID, ownerUserID, botName, "Auto-created for compute agent "+name,
+		map[string]any{"proxy_token_id": proxyTokenID},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ensure bot: %w", err)
+	}
+
+	// 4. Mint the agent row, reusing the PRESENTED token id (no new token).
+	agentID, err := newAgentID()
+	if err != nil {
+		return nil, fmt.Errorf("agent_id: %w", err)
+	}
+	if err := s.mintAgent(agentID, workspaceID, hostID, name, agentTokenID, botUserID, agentOS, agentArch, now); err != nil {
+		return nil, fmt.Errorf("insert agent: %w", err)
+	}
+	return map[string]any{
+		"agent_id":     agentID,
+		"host_id":      hostID,
+		"bot_user_id":  botUserID,
+		"workspace_id": workspaceID,
+	}, nil
+}

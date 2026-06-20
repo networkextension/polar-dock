@@ -801,6 +801,59 @@ func (s *Server) handleAgentAutoRegister(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"bots": out})
 }
 
+// agentSelfRegisterRequest is the body for POST /api/agents/self-register.
+type agentSelfRegisterRequest struct {
+	MachineUUIDRaw string `json:"machine_uuid_raw"`
+	Name           string `json:"name"`
+	OS             string `json:"os"`
+	Arch           string `json:"arch"`
+}
+
+// handleAgentSelfRegister lets a compute agent persist itself as a host+agent
+// using only its own agent token (no enroll token). The workspace is the token
+// owner's personal team — never taken from the request — so an agent token can
+// only create a host in its own owner's workspace. Materializes the
+// host+agent+bot and links the token to the host so the WS skill.advertise path
+// records host_skills (→ visible in /api/agents, routable). See T1b plan / doc/06.
+func (s *Server) handleAgentSelfRegister(c *gin.Context) {
+	tokenIDVal, _ := c.Get("agent_token_id")
+	tokenID, _ := tokenIDVal.(string)
+	userIDVal, _ := c.Get("agent_user_id")
+	userID, _ := userIDVal.(string)
+	if tokenID == "" || userID == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "agent context missing"})
+		return
+	}
+
+	var req agentSelfRegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input"})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "polar-agent"
+	}
+	if strings.TrimSpace(req.MachineUUIDRaw) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "machine_uuid_raw required"})
+		return
+	}
+
+	workspaceID, err := s.personalWorkspaceForUser(userID)
+	if err != nil || workspaceID == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "personal workspace lookup failed"})
+		return
+	}
+
+	out, err := s.registerAgentSelf(workspaceID, userID, name, req.MachineUUIDRaw, req.OS, req.Arch, tokenID)
+	if err != nil {
+		log.Printf("[agent self-register] token=%s name=%q failed: %v", tokenID, name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "self-register failed: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
 // handleAgentStatus tells the UI whether a bot has an agent attached
 // and which capabilities the agent declared at hello time. The UI
 // uses capabilities to render passthrough mode badges (e.g. "本地
