@@ -876,6 +876,10 @@ func (s *Server) registerRoutes() {
 		internal.GET("/compute-tasks", s.handleInternalComputeTaskList)
 		internal.GET("/compute-tasks/:id", s.handleInternalComputeTaskGet)
 		internal.POST("/compute-tasks/:id/release", s.handleInternalComputeTaskRelease)
+		internal.POST("/compute-tasks/:id/pause", s.handleInternalComputeTaskPause)
+		internal.POST("/compute-tasks/:id/resume", s.handleInternalComputeTaskResume)
+		internal.POST("/compute-tasks/:id/cancel", s.handleInternalComputeTaskCancel)
+		internal.POST("/compute-tasks/:id/priority", s.handleInternalComputeTaskPriority)
 	}
 
 	// iOS distribution OTA endpoints + public share/plaza/install pages
@@ -1271,6 +1275,12 @@ func (s *Server) registerRoutes() {
 		api.POST("/compute-tasks", s.AuthMiddleware(), s.handleComputeTaskSubmit)
 		api.GET("/compute-tasks", s.AuthMiddleware(), s.handleComputeTaskList)
 		api.GET("/compute-tasks/:id", s.AuthMiddleware(), s.handleComputeTaskGet)
+		// P2b: site-admin lifecycle control over any task (also backs the P5 UI).
+		api.POST("/compute-tasks/:id/release", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminComputeTaskRelease)
+		api.POST("/compute-tasks/:id/pause", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminComputeTaskPause)
+		api.POST("/compute-tasks/:id/resume", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminComputeTaskResume)
+		api.POST("/compute-tasks/:id/cancel", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminComputeTaskCancel)
+		api.POST("/compute-tasks/:id/priority", s.AuthMiddleware(), s.AdminMiddleware(), s.handleAdminComputeTaskSetPriority)
 		// claim + complete are static siblings under /agent/compute-tasks/ (gin forbids
 		// a static path siblinging a :param, so result is /complete/:id not /:id/result).
 		api.POST("/agent/compute-tasks/claim", s.PolarAgentAuthMiddleware(), s.handleComputeTaskClaim)

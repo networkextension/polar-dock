@@ -231,5 +231,11 @@ func (s *Server) handleComputeTaskResult(c *gin.Context) {
 			c.Header("X-Artifact-Insert", "failed")
 		}
 	}
+	// P3: if a module originated this task with a callback, push the result back
+	// (signed, async, best-effort). Read the finalized row for requester info.
+	if t, terr := s.getTask(workspaceID, taskID); terr == nil && t != nil && t.RequesterModule != "" && t.CallbackPath != "" {
+		arts, _ := s.listTaskArtifacts(taskID)
+		go s.fireTaskCallback(t, arts)
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
