@@ -1490,6 +1490,13 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_claim ON agent_tasks(workspace_id, skill, priority DESC, created_at) WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_ws ON agent_tasks(workspace_id, created_at DESC);
+-- polar-task P2: module-originated tasks (requester = plugin) + default-hold lifecycle.
+ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS requester_module TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS callback_path    TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS requester_ref    TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS callback_status  TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS released_at      TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_requester ON agent_tasks(requester_module, created_at DESC);
 
 -- task_artifacts: file outputs of a compute task, stored in polar-assets (the
 -- agent uploaded via a dock-brokered grant). Keep the asset_id ref only; the
