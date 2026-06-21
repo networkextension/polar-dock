@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -125,7 +126,63 @@ func (s *Server) handleComputeTaskClaim(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 		return
 	}
+	s.injectInputAssetURL(task, workspaceID)
 	c.JSON(http.StatusOK, task)
+}
+
+// injectInputAssetURL: if a claimed task's input carries an asset_id, mint a
+// short-lived signed download URL and add it as input.url so the skill can fetch
+// the input straight from polar-assets (vision.* read input.url via ImageSource;
+// speech.stt via localFile). The DB row keeps asset_id canonical — the url is
+// ephemeral (per-claim, short TTL) and never persisted. See polar-task doc/07 P1.
+func (s *Server) injectInputAssetURL(task *AgentTask, workspaceID string) {
+	if task == nil || len(task.Input) == 0 {
+		return
+	}
+	var m map[string]any
+	if json.Unmarshal(task.Input, &m) != nil || m == nil {
+		return
+	}
+	if _, has := m["url"]; has { // an explicit url wins; leave it
+		return
+	}
+	aid := jsonInt64(m["asset_id"])
+	if aid <= 0 {
+		return
+	}
+	a, err := s.getAssetByID(aid) // ownership guard: never hand out another ws's asset
+	if err != nil || a == nil {
+		return
+	}
+	if a.WorkspaceID != nil && *a.WorkspaceID != workspaceID {
+		return
+	}
+	if u := s.assetDownloadURL(aid, workspaceID); u != "" {
+		m["url"] = u
+		if b, err := json.Marshal(m); err == nil {
+			task.Input = b
+		}
+	}
+}
+
+// jsonInt64 coerces a value decoded from JSON (float64 / json.Number / string)
+// into an int64; 0 if not a positive integer.
+func jsonInt64(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case string:
+		i, _ := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
+		return i
+	}
+	return 0
 }
 
 type taskResultRequest struct {
