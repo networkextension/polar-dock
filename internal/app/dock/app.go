@@ -871,6 +871,11 @@ func (s *Server) registerRoutes() {
 		internal.DELETE("/assets/:id", s.handleInternalAssetDelete)
 		internal.POST("/assets/upload-grant", s.handleInternalAssetUploadGrant)
 		internal.POST("/assets/finalize", s.handleInternalAssetFinalize)
+		// polar-task P2: module-originated compute tasks (requester = plugin, default hold).
+		internal.POST("/compute-tasks", s.handleInternalComputeTaskSubmit)
+		internal.GET("/compute-tasks", s.handleInternalComputeTaskList)
+		internal.GET("/compute-tasks/:id", s.handleInternalComputeTaskGet)
+		internal.POST("/compute-tasks/:id/release", s.handleInternalComputeTaskRelease)
 	}
 
 	// iOS distribution OTA endpoints + public share/plaza/install pages

@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +31,19 @@ type AgentTask struct {
 	CreatedAt   time.Time       `json:"created_at"`
 	ClaimedAt   *time.Time      `json:"claimed_at,omitempty"`
 	UpdatedAt   time.Time       `json:"updated_at"`
+	// P2 — module origination + default-hold lifecycle.
+	RequesterModule string     `json:"requester_module,omitempty"`
+	RequesterRef    string     `json:"requester_ref,omitempty"`
+	CallbackPath    string     `json:"callback_path,omitempty"`
+	CallbackStatus  string     `json:"callback_status,omitempty"`
+	ReleasedAt      *time.Time `json:"released_at,omitempty"`
 }
+
+// agentTaskCols is the canonical column list for every SELECT that feeds
+// scanAgentTaskRows (keep this in sync with the scan order below).
+const agentTaskCols = `id, workspace_id, created_by, skill, input_json, constraints_json, priority,
+	status, COALESCE(agent_id,''), result_json, error, created_at, claimed_at, updated_at,
+	requester_module, requester_ref, callback_path, callback_status, released_at`
 
 // enqueueTask inserts a queued task. input/constraints are raw JSON objects.
 func (s *Server) enqueueTask(workspaceID, createdBy, skill string, input, constraints json.RawMessage, priority int) (*AgentTask, error) {
@@ -151,9 +164,7 @@ func (s *Server) finalizeTask(workspaceID, taskID, agentID string, ok bool, resu
 
 func (s *Server) getTask(workspaceID, id string) (*AgentTask, error) {
 	return scanAgentTask(s.db.QueryRow(
-		`SELECT id, workspace_id, created_by, skill, input_json, constraints_json, priority,
-		        status, COALESCE(agent_id,''), result_json, error, created_at, claimed_at, updated_at
-		 FROM agent_tasks WHERE id=$1 AND workspace_id=$2`, id, workspaceID))
+		`SELECT `+agentTaskCols+` FROM agent_tasks WHERE id=$1 AND workspace_id=$2`, id, workspaceID))
 }
 
 func (s *Server) listTasks(workspaceID string, limit int) ([]AgentTask, error) {
@@ -161,9 +172,8 @@ func (s *Server) listTasks(workspaceID string, limit int) ([]AgentTask, error) {
 		limit = 50
 	}
 	rows, err := s.db.Query(
-		`SELECT id, workspace_id, created_by, skill, input_json, constraints_json, priority,
-		        status, COALESCE(agent_id,''), result_json, error, created_at, claimed_at, updated_at
-		 FROM agent_tasks WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT $2`, workspaceID, limit)
+		`SELECT `+agentTaskCols+` FROM agent_tasks WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT $2`,
+		workspaceID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +189,89 @@ func (s *Server) listTasks(workspaceID string, limit int) ([]AgentTask, error) {
 	return out, rows.Err()
 }
 
+// enqueueModuleTask inserts a task originated by a plugin module. status is
+// "hold" (default) until released, or "queued" when auto_start. requester_module
+// scopes the requester self-query; callback_path/requester_ref are echoed back in
+// the P3 completion callback. See polar-task doc/07 P2.
+func (s *Server) enqueueModuleTask(workspaceID, createdBy, skill string, input, constraints json.RawMessage,
+	priority int, requesterModule, requesterRef, callbackPath, status string) (*AgentTask, error) {
+	id := "tk_" + generateResourceID()
+	if len(input) == 0 {
+		input = json.RawMessage("{}")
+	}
+	if len(constraints) == 0 {
+		constraints = json.RawMessage("{}")
+	}
+	if status != "queued" {
+		status = "hold"
+	}
+	var releasedAt any
+	if status == "queued" {
+		releasedAt = time.Now().UTC()
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO agent_tasks
+		   (id, workspace_id, created_by, skill, input_json, constraints_json, priority, status,
+		    requester_module, requester_ref, callback_path, released_at)
+		 VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11,$12)`,
+		id, workspaceID, createdBy, skill, string(input), string(constraints), priority, status,
+		requesterModule, requesterRef, callbackPath, releasedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return s.getTask(workspaceID, id)
+}
+
+// listTasksByRequester returns a module's own tasks (newest first), optionally
+// filtered by status. Scoped to requester_module so a module never sees another's.
+func (s *Server) listTasksByRequester(module, status string, limit int) ([]AgentTask, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `SELECT ` + agentTaskCols + ` FROM agent_tasks WHERE requester_module=$1`
+	args := []any{module}
+	if strings.TrimSpace(status) != "" {
+		q += ` AND status=$2`
+		args = append(args, status)
+	}
+	q += ` ORDER BY created_at DESC LIMIT $` + strconv.Itoa(len(args)+1)
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentTask{}
+	for rows.Next() {
+		t, err := scanAgentTaskRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *t)
+	}
+	return out, rows.Err()
+}
+
+// getTaskByRequester fetches one task scoped to the owning module.
+func (s *Server) getTaskByRequester(module, id string) (*AgentTask, error) {
+	return scanAgentTask(s.db.QueryRow(
+		`SELECT `+agentTaskCols+` FROM agent_tasks WHERE id=$1 AND requester_module=$2`, id, module))
+}
+
+// releaseTask flips a held task to queued (claimable). Owner-scoped to the
+// requester_module; returns true only if a held task was actually released.
+func (s *Server) releaseTask(module, id string) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE agent_tasks SET status='queued', released_at=now(), updated_at=now()
+		 WHERE id=$1 AND requester_module=$2 AND status='hold'`, id, module)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 func scanAgentTask(r rowScanner) (*AgentTask, error) {
 	t, err := scanAgentTaskRows(r)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -190,9 +283,10 @@ func scanAgentTask(r rowScanner) (*AgentTask, error) {
 func scanAgentTaskRows(r rowScanner) (*AgentTask, error) {
 	var t AgentTask
 	var input, constraints, result []byte
-	var claimedAt sql.NullTime
+	var claimedAt, releasedAt sql.NullTime
 	if err := r.Scan(&t.ID, &t.WorkspaceID, &t.CreatedBy, &t.Skill, &input, &constraints, &t.Priority,
-		&t.Status, &t.AgentID, &result, &t.Error, &t.CreatedAt, &claimedAt, &t.UpdatedAt); err != nil {
+		&t.Status, &t.AgentID, &result, &t.Error, &t.CreatedAt, &claimedAt, &t.UpdatedAt,
+		&t.RequesterModule, &t.RequesterRef, &t.CallbackPath, &t.CallbackStatus, &releasedAt); err != nil {
 		return nil, err
 	}
 	t.Input = json.RawMessage(input)
@@ -202,6 +296,9 @@ func scanAgentTaskRows(r rowScanner) (*AgentTask, error) {
 	}
 	if claimedAt.Valid {
 		t.ClaimedAt = &claimedAt.Time
+	}
+	if releasedAt.Valid {
+		t.ReleasedAt = &releasedAt.Time
 	}
 	return &t, nil
 }
