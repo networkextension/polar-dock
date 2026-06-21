@@ -259,17 +259,68 @@ func (s *Server) getTaskByRequester(module, id string) (*AgentTask, error) {
 		`SELECT `+agentTaskCols+` FROM agent_tasks WHERE id=$1 AND requester_module=$2`, id, module))
 }
 
-// releaseTask flips a held task to queued (claimable). Owner-scoped to the
-// requester_module; returns true only if a held task was actually released.
-func (s *Server) releaseTask(module, id string) (bool, error) {
-	res, err := s.db.Exec(
-		`UPDATE agent_tasks SET status='queued', released_at=now(), updated_at=now()
-		 WHERE id=$1 AND requester_module=$2 AND status='hold'`, id, module)
+// scopeArgs appends a requester_module filter when module != "" (a plugin acting
+// on its own tasks). module == "" means admin / no requester filter.
+func scopeArgs(module string, nextIdx int) (string, []any) {
+	if module == "" {
+		return "", nil
+	}
+	return " AND requester_module=$" + strconv.Itoa(nextIdx), []any{module}
+}
+
+// taskTransition sets newStatus (+ optional extraSet) only when the row is in one
+// of `from` states, owner-scoped by module. Returns true iff a row changed.
+func (s *Server) taskTransition(module, id, extraSet string, from []string, newStatus string) (bool, error) {
+	q := `UPDATE agent_tasks SET status='` + newStatus + `', updated_at=now()` + extraSet +
+		` WHERE id=$1 AND status = ANY($2)`
+	args := []any{id, pq.Array(from)}
+	frag, more := scopeArgs(module, 3)
+	q += frag
+	args = append(args, more...)
+	res, err := s.db.Exec(q, args...)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// Lifecycle transitions (P2b). Owner-scoped when module != "" (admin passes "").
+// releaseTask: hold→queued · pauseTask: queued→paused · resumeTask: paused→queued
+// · cancelTask: any non-terminal→cancelled (cancelling a running task flips it
+// immediately; the agent's later finalize no-ops since finalizeTask requires
+// status='running', so the late result is discarded — see doc/07).
+func (s *Server) releaseTask(module, id string) (bool, error) {
+	return s.taskTransition(module, id, ", released_at=now()", []string{"hold"}, "queued")
+}
+func (s *Server) pauseTask(module, id string) (bool, error) {
+	return s.taskTransition(module, id, "", []string{"queued"}, "paused")
+}
+func (s *Server) resumeTask(module, id string) (bool, error) {
+	return s.taskTransition(module, id, ", released_at=COALESCE(released_at, now())", []string{"paused"}, "queued")
+}
+func (s *Server) cancelTask(module, id string) (bool, error) {
+	return s.taskTransition(module, id, "", []string{"hold", "queued", "paused", "running"}, "cancelled")
+}
+
+// setTaskPriority changes a not-yet-running task's priority (claim order).
+func (s *Server) setTaskPriority(module, id string, prio int) (bool, error) {
+	q := `UPDATE agent_tasks SET priority=$2, updated_at=now() WHERE id=$1 AND status = ANY($3)`
+	args := []any{id, prio, pq.Array([]string{"hold", "queued", "paused"})}
+	frag, more := scopeArgs(module, 4)
+	q += frag
+	args = append(args, more...)
+	res, err := s.db.Exec(q, args...)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// setTaskCallbackStatus records the P3 callback delivery outcome (best-effort).
+func (s *Server) setTaskCallbackStatus(id, status string) {
+	_, _ = s.db.Exec(`UPDATE agent_tasks SET callback_status=$2 WHERE id=$1`, id, status)
 }
 
 func scanAgentTask(r rowScanner) (*AgentTask, error) {

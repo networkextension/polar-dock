@@ -135,3 +135,63 @@ func (s *Server) handleInternalComputeTaskRelease(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
+
+// lifecycleResult writes the standard ok/404 response for a transition.
+func lifecycleResult(c *gin.Context, ok bool, err error) {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found, not yours, or not in a valid state"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) handleInternalComputeTaskPause(c *gin.Context) {
+	module := pluginNameFromCtx(c)
+	if module == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "plugin context missing"})
+		return
+	}
+	ok, err := s.pauseTask(module, strings.TrimSpace(c.Param("id")))
+	lifecycleResult(c, ok, err)
+}
+
+func (s *Server) handleInternalComputeTaskResume(c *gin.Context) {
+	module := pluginNameFromCtx(c)
+	if module == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "plugin context missing"})
+		return
+	}
+	ok, err := s.resumeTask(module, strings.TrimSpace(c.Param("id")))
+	lifecycleResult(c, ok, err)
+}
+
+func (s *Server) handleInternalComputeTaskCancel(c *gin.Context) {
+	module := pluginNameFromCtx(c)
+	if module == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "plugin context missing"})
+		return
+	}
+	ok, err := s.cancelTask(module, strings.TrimSpace(c.Param("id")))
+	lifecycleResult(c, ok, err)
+}
+
+func (s *Server) handleInternalComputeTaskPriority(c *gin.Context) {
+	module := pluginNameFromCtx(c)
+	if module == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "plugin context missing"})
+		return
+	}
+	var req struct {
+		Priority int `json:"priority"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "priority required"})
+		return
+	}
+	ok, err := s.setTaskPriority(module, strings.TrimSpace(c.Param("id")), req.Priority)
+	lifecycleResult(c, ok, err)
+}
