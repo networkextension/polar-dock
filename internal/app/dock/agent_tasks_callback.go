@@ -71,7 +71,13 @@ func (s *Server) fireTaskCallback(t *AgentTask, arts []TaskArtifact) {
 		s.setTaskCallbackStatus(t.ID, "failed:marshal")
 		return
 	}
-	url := strings.TrimRight(mod.Endpoint, "/") + cbPath
+	// plugin_modules.endpoint may be stored scheme-less (e.g. "127.0.0.1:8102");
+	// default to http:// so http.NewRequest gets a valid URL.
+	endpoint := strings.TrimRight(mod.Endpoint, "/")
+	if !strings.Contains(endpoint, "://") {
+		endpoint = "http://" + endpoint
+	}
+	url := endpoint + cbPath
 
 	var lastStatus int
 	for attempt := 0; attempt < 3; attempt++ {
