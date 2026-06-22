@@ -113,6 +113,9 @@ type Server struct {
 	// Open API tokens flag. See config.go: PolarOpenAPITokens.
 	openAPITokens bool
 
+	// Shared token-verification cache flag. See config.go: PolarVerifyCache.
+	verifyCache bool
+
 	// OAuth2/OIDC provider flag. See config.go: PolarOAuthProvider.
 	oauthProvider bool
 
@@ -290,6 +293,7 @@ func NewServer(cfg Config) (*Server, error) {
 	server.polarAssetsUseProvider = cfg.PolarAssetsUseProvider
 	server.enforceTeamStatus = cfg.PolarEnforceTeamStatus
 	server.openAPITokens = cfg.PolarOpenAPITokens
+	server.verifyCache = cfg.PolarVerifyCache
 	server.oauthProvider = cfg.PolarOAuthProvider
 	server.oidcLogin = cfg.PolarOIDCLogin
 	server.oidcIssuer = strings.TrimRight(strings.TrimSpace(cfg.PolarOIDCIssuer), "/")
@@ -807,6 +811,7 @@ func (s *Server) registerRoutes() {
 		// Phase 1-B — documented v1 contract. See
 		// doc/arch/internal-api-v1.md for shapes + error codes.
 		internal.GET("/auth/verify", s.handleInternalAuthVerify)
+		internal.GET("/auth/verify-agent", s.handleInternalAuthVerifyAgent)
 		internal.GET("/users/:id", s.handleInternalUserGet)
 		internal.GET("/users/:id/workspace", s.handleInternalUserWorkspace)
 		internal.GET("/teams/:id", s.handleInternalTeamGet)

@@ -121,6 +121,10 @@ func main() {
 		// Open API tokens (doc/arch/open-api-tokens.md). Default off.
 		PolarOpenAPITokens: os.Getenv("POLAR_OPEN_API_TOKENS") == "true",
 
+		// Shared token-verification cache (doc/arch/control-plane-data-plane-split.md).
+		// Default ON; kill switch is POLAR_VERIFY_CACHE=false.
+		PolarVerifyCache: os.Getenv("POLAR_VERIFY_CACHE") != "false",
+
 		// OAuth2/OIDC provider (doc/arch/oauth-provider.md). Default off.
 		PolarOAuthProvider: os.Getenv("POLAR_OAUTH_PROVIDER") == "true",
 
