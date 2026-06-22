@@ -125,6 +125,12 @@ func main() {
 		// Default ON; kill switch is POLAR_VERIFY_CACHE=false.
 		PolarVerifyCache: os.Getenv("POLAR_VERIFY_CACHE") != "false",
 
+		// Delegate in-app LLM dispatch to polar-llm (doc/arch/chat-llm-extraction.md).
+		// Default off; needs POLAR_LLM_INTERNAL_SECRET set on both sides to engage.
+		PolarLLMRemote:         os.Getenv("POLAR_LLM_REMOTE") == "true",
+		PolarLLMCompleteURL:    llmCompleteURL(),
+		PolarLLMInternalSecret: os.Getenv("POLAR_LLM_INTERNAL_SECRET"),
+
 		// OAuth2/OIDC provider (doc/arch/oauth-provider.md). Default off.
 		PolarOAuthProvider: os.Getenv("POLAR_OAUTH_PROVIDER") == "true",
 
@@ -208,6 +214,16 @@ func parseEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+// llmCompleteURL resolves polar-llm's in-app completion endpoint dock
+// delegates to when POLAR_LLM_REMOTE is on. Defaults to the zen double-serve
+// loopback address.
+func llmCompleteURL() string {
+	if v := os.Getenv("POLAR_LLM_COMPLETE_URL"); v != "" {
+		return v
+	}
+	return "http://127.0.0.1:8113/internal/v1/llm/complete"
 }
 
 func envBoolDefault(key string, fallback bool) bool {

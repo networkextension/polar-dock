@@ -178,6 +178,29 @@ type Config struct {
 	// POLAR_VERIFY_CACHE=false (e.g. if a revocation-latency issue surfaces).
 	PolarVerifyCache bool
 
+	// PolarLLMRemote: route dock's in-app aiAgent dispatch through the
+	// polar-llm gateway instead of dispatching upstream in-process (default
+	// OFF). When true, requestChatCompletionInner /
+	// requestStreamingChatCompletionInner POST the resolved runtime config +
+	// messages to PolarLLMCompleteURL (HMAC-free shared-secret auth) and
+	// polar-llm dispatches + writes the single cost-ledger row. dock then
+	// skips its own recordAgentLLMCall so the ledger is not double-written.
+	// P2a-2 of the control/data-plane split (doc/arch/chat-llm-extraction.md).
+	// Default OFF = dock dispatches locally, behavior unchanged. Set
+	// POLAR_LLM_REMOTE=true. Requires PolarLLMInternalSecret to take effect.
+	PolarLLMRemote bool
+
+	// PolarLLMCompleteURL: polar-llm's in-app completion endpoint dock
+	// delegates to when PolarLLMRemote is on. Default
+	// http://127.0.0.1:8113/internal/v1/llm/complete (zen double-serve).
+	PolarLLMCompleteURL string
+
+	// PolarLLMInternalSecret: shared bearer secret dock sends to polar-llm's
+	// /internal/v1/llm/complete (X-Polar-Internal-Secret header) and polar-llm
+	// verifies. Must be set on both sides for PolarLLMRemote to engage; empty
+	// disables remote delegation regardless of the flag.
+	PolarLLMInternalSecret string
+
 	// PolarOAuthProvider: OAuth2/OIDC provider flag (default off). When true,
 	// dock acts as an identity provider ("Login with Polar") — the
 	// /oauth/authorize, /oauth/token, /oauth/userinfo and

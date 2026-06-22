@@ -118,6 +118,12 @@ func (a *aiAgent) requestStreamingChatCompletionWithUsage(ctx context.Context, r
 }
 
 func (a *aiAgent) requestStreamingChatCompletionInner(ctx context.Context, runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest, onDelta streamChunkCallback) (string, *aiUsage, error) {
+	// P2a-2: when POLAR_LLM_REMOTE is engaged, relay the stream from the
+	// polar-llm gateway (it dispatches + writes the ledger) instead of
+	// dispatching upstream in-process.
+	if a.llmRemoteEngaged() {
+		return a.callPolarLLMCompleteStream(ctx, runtimeConfig, payload, onDelta)
+	}
 	switch detectAIProvider(runtimeConfig.BaseURL) {
 	case aiProviderAnthropic:
 		return a.streamAnthropic(ctx, runtimeConfig, payload, onDelta)
