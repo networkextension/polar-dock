@@ -208,6 +208,18 @@ func (s *Server) resolveAgentToken(raw string) (string, string, error) {
 		return "", "", nil
 	}
 	h := hashAgentToken(raw)
+
+	// Verify-cache (Phase 1 of the control/data-plane split). Keyed by the
+	// token HASH, never the raw secret. A negative entry short-circuits
+	// repeated invalid bearers. See verify_cache.go.
+	var cached agentTokenIdentity
+	if neg, hit := s.verifyCacheGet("agent", h, &cached); hit {
+		if neg {
+			return "", "", nil
+		}
+		return cached.ID, cached.UserID, nil
+	}
+
 	var id, userID string
 	err := s.db.QueryRow(
 		`SELECT id, user_id FROM agent_tokens
@@ -215,9 +227,20 @@ func (s *Server) resolveAgentToken(raw string) (string, string, error) {
 		h,
 	).Scan(&id, &userID)
 	if errors.Is(err, sql.ErrNoRows) {
+		s.verifyCacheSetNegative("agent", h)
 		return "", "", nil
 	}
-	return id, userID, err
+	if err != nil {
+		return "", "", err // transient DB error — do not cache
+	}
+	s.verifyCacheSet("agent", h, agentTokenIdentity{ID: id, UserID: userID})
+	return id, userID, nil
+}
+
+// agentTokenIdentity is the cached positive result of resolveAgentToken.
+type agentTokenIdentity struct {
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
 }
 
 func (s *Server) touchAgentTokenUsed(tokenID string) error {
@@ -226,20 +249,22 @@ func (s *Server) touchAgentTokenUsed(tokenID string) error {
 }
 
 func (s *Server) revokeAgentToken(tokenID, userID string) error {
-	res, err := s.db.Exec(
+	// RETURNING token_hash so we can evict the verify-cache entry (keyed by
+	// hash) — bounds the post-revoke acceptance window to the positive TTL
+	// at worst, and to ~0 in the common online case.
+	var tokenHash string
+	err := s.db.QueryRow(
 		`UPDATE agent_tokens SET revoked_at = NOW()
-		 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+		 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+		 RETURNING token_hash`,
 		tokenID, userID,
-	)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
+	).Scan(&tokenHash)
+	if errors.Is(err, sql.ErrNoRows) {
 		return sql.ErrNoRows
 	}
+	if err != nil {
+		return err
+	}
+	s.verifyCacheDel("agent", tokenHash)
 	return nil
 }

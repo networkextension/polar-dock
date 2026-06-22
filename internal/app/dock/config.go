@@ -169,6 +169,15 @@ type Config struct {
 	// stored but not enforced until P1). Set POLAR_OPEN_API_TOKENS=true.
 	PolarOpenAPITokens bool
 
+	// PolarVerifyCache: shared token-verification cache (default ON). When
+	// true, the per-request Postgres token lookups (agent / llm_proxy /
+	// plugin / api tokens) are fronted by a short-TTL redis cache so the
+	// auth hot path stops hitting Postgres and credential verification can
+	// be served outside the dock process. Phase 1 of the control/data-plane
+	// split (doc/arch/control-plane-data-plane-split.md). Kill switch:
+	// POLAR_VERIFY_CACHE=false (e.g. if a revocation-latency issue surfaces).
+	PolarVerifyCache bool
+
 	// PolarOAuthProvider: OAuth2/OIDC provider flag (default off). When true,
 	// dock acts as an identity provider ("Login with Polar") — the
 	// /oauth/authorize, /oauth/token, /oauth/userinfo and
@@ -185,9 +194,9 @@ type Config struct {
 	// zone). Federated identity for Zone Federation P6c. Off = those routes
 	// 404. Needs PolarOIDCIssuer/ClientID/ClientSecret. The redirect_uri is
 	// derived = PublicBaseURL + /auth/oidc/callback. Set POLAR_OIDC_LOGIN=true.
-	PolarOIDCLogin       bool
-	PolarOIDCIssuer      string // e.g. https://zen.4950.store:2443
-	PolarOIDCClientID    string
+	PolarOIDCLogin        bool
+	PolarOIDCIssuer       string // e.g. https://zen.4950.store:2443
+	PolarOIDCClientID     string
 	PolarOIDCClientSecret string
 
 	// PolarAssetsPostsDualWrite: P8 flag. When true, each new post-image

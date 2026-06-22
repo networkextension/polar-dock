@@ -82,6 +82,39 @@ func (s *Server) handleInternalAuthVerify(c *gin.Context) {
 	})
 }
 
+// ── 1b. GET /internal/v1/auth/verify-agent?token=<polar_agent_…> ───────────
+// Verify an AGENT bearer token on behalf of a plugin. Agent tokens were
+// previously verifiable only inside dock (resolveAgentToken hits agent_tokens
+// directly), which forced any agent-authenticated surface — e.g. the
+// compute-task claim API — to live in dock. This endpoint + the SDK's
+// AuthVerifyAgent lift that restriction: a plugin can authenticate an agent
+// without being inside dock. Backed by the same redis verify-cache, so the
+// hot path is a redis GET, not a Postgres query.
+func (s *Server) handleInternalAuthVerifyAgent(c *gin.Context) {
+	token := strings.TrimSpace(c.Query("token"))
+	if token == "" {
+		internalErr(c, http.StatusBadRequest, "token query required")
+		return
+	}
+	tokenID, userID, err := s.resolveAgentToken(token)
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "agent token lookup failed")
+		return
+	}
+	if tokenID == "" {
+		internalErr(c, http.StatusUnauthorized, "invalid agent token")
+		return
+	}
+	// Default workspace = the token owner's personal workspace; an agent acts
+	// as its owner. (Per-task workspace targeting is the caller's concern.)
+	workspaceID, _ := s.personalWorkspaceForUser(userID)
+	c.JSON(http.StatusOK, gin.H{
+		"token_id":     tokenID,
+		"user_id":      userID,
+		"workspace_id": workspaceID,
+	})
+}
+
 // writeAPITokenVerify answers /internal/v1/auth/verify for a polar_ open-API
 // token: the token acts as its owner (real role from the users table), scoped
 // to the token's workspace unless the caller forwards a ?workspace_id the owner
