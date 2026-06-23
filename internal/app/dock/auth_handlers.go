@@ -313,3 +313,45 @@ func (s *Server) handleLoginHistory(c *gin.Context) {
 		"records": records,
 	})
 }
+
+// handleChangePassword — self-service password change for the logged-in user.
+// POST /api/me/password {old_password, new_password}. Verifies the current
+// password before setting the new one (admins change others' via
+// PUT /api/admin/users/:id/password).
+func (s *Server) handleChangePassword(c *gin.Context) {
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		OldPassword string `json:"old_password" binding:"required"`
+		NewPassword string `json:"new_password" binding:"required,min=6"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		jsonError(c, http.StatusBadRequest, "common.invalid_input")
+		return
+	}
+	if req.OldPassword == req.NewPassword {
+		jsonError(c, http.StatusBadRequest, "common.invalid_input")
+		return
+	}
+	user, err := s.getUserByID(userID)
+	if err != nil {
+		jsonError(c, http.StatusInternalServerError, "common.server_error")
+		return
+	}
+	if user == nil || !checkPassword(req.OldPassword, user.Password) {
+		jsonError(c, http.StatusUnauthorized, "auth.invalid_credentials")
+		return
+	}
+	hash, err := hashPassword(req.NewPassword)
+	if err != nil {
+		jsonError(c, http.StatusInternalServerError, "common.server_error")
+		return
+	}
+	if ok, err := s.updateUserPasswordHash(userID, hash); err != nil || !ok {
+		jsonError(c, http.StatusInternalServerError, "common.server_error")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "密码已更新"})
+}
