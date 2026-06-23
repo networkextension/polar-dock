@@ -1119,6 +1119,7 @@ func (s *Server) registerRoutes() {
 		api.POST("/devices/push-token", s.AuthMiddleware(), s.handleDevicePushTokenUpdate)
 		api.DELETE("/devices/push-token", s.AuthMiddleware(), s.handleDevicePushTokenDelete)
 		api.GET("/login-history", s.AuthMiddleware(), s.handleLoginHistory)
+		api.POST("/me/password", s.AuthMiddleware(), s.handleChangePassword)
 		api.POST("/markdown", s.AuthMiddleware(), s.handleMarkdownSubmit)
 		api.POST("/markdown/assist-with-bot", s.AuthMiddleware(), s.handleMarkdownAssistWithBot)
 		api.GET("/markdown", s.AuthMiddleware(), s.handleMarkdownList)
