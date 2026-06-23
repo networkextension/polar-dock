@@ -895,7 +895,9 @@ func (a *aiAgent) requestChatCompletion(runtimeConfig aiRuntimeConfig, payload a
 		// attribution (workspace + llm_config). Best-effort: errors
 		// from the recorder are swallowed — chat reply path must not
 		// fail because of a ledger write hiccup.
-		if runtimeConfig.WorkspaceID != "" && runtimeConfig.LLMConfigID > 0 {
+		// When delegating to polar-llm, the gateway writes the single cost
+		// ledger row — dock must not double-write.
+		if !a.llmRemoteEngaged() && runtimeConfig.WorkspaceID != "" && runtimeConfig.LLMConfigID > 0 {
 			statusCode := http.StatusOK
 			errText := ""
 			if err != nil {
@@ -921,6 +923,11 @@ func (a *aiAgent) requestChatCompletion(runtimeConfig aiRuntimeConfig, payload a
 }
 
 func (a *aiAgent) requestChatCompletionInner(runtimeConfig aiRuntimeConfig, payload aiChatCompletionRequest) (*aiChatCompletionResponse, error) {
+	// P2a-2: when POLAR_LLM_REMOTE is engaged, delegate the whole dispatch
+	// (gate + upstream + ledger) to the polar-llm gateway.
+	if a.llmRemoteEngaged() {
+		return a.callPolarLLMComplete(runtimeConfig, payload)
+	}
 	switch detectAIProvider(runtimeConfig.BaseURL) {
 	case aiProviderAnthropic:
 		return a.requestAnthropicMessages(runtimeConfig, payload)

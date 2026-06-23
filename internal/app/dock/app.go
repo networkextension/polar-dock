@@ -116,6 +116,11 @@ type Server struct {
 	// Shared token-verification cache flag. See config.go: PolarVerifyCache.
 	verifyCache bool
 
+	// Delegate in-app LLM dispatch to polar-llm. See config.go: PolarLLMRemote.
+	polarLLMRemote         bool
+	polarLLMCompleteURL    string
+	polarLLMInternalSecret string
+
 	// OAuth2/OIDC provider flag. See config.go: PolarOAuthProvider.
 	oauthProvider bool
 
@@ -294,6 +299,9 @@ func NewServer(cfg Config) (*Server, error) {
 	server.enforceTeamStatus = cfg.PolarEnforceTeamStatus
 	server.openAPITokens = cfg.PolarOpenAPITokens
 	server.verifyCache = cfg.PolarVerifyCache
+	server.polarLLMRemote = cfg.PolarLLMRemote
+	server.polarLLMCompleteURL = cfg.PolarLLMCompleteURL
+	server.polarLLMInternalSecret = cfg.PolarLLMInternalSecret
 	server.oauthProvider = cfg.PolarOAuthProvider
 	server.oidcLogin = cfg.PolarOIDCLogin
 	server.oidcIssuer = strings.TrimRight(strings.TrimSpace(cfg.PolarOIDCIssuer), "/")
