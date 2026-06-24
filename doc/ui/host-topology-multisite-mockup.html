@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Polar · 多站点网络拓扑 (设计稿 v2)</title>
+<style>
+  :root{
+    --bg:#0b0f17;--panel:#111722;--line:#1f2937;--txt:#e6edf3;--dim:#8b98a9;
+    --lan:#34d399;--wg:#60a5fa;--public:#f59e0b;--hub:#fbbf24;--bad:#f87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.4 -apple-system,"PingFang SC",Segoe UI,Roboto,sans-serif}
+  header{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:650}
+  .badge{font-size:12px;color:var(--dim)}
+  .chips{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+  .chip{padding:5px 11px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:12.5px}
+  .chip b{color:var(--txt)} .chip.warn{border-color:var(--bad);color:var(--bad)} .chip.warn b{color:var(--bad)}
+  .legend{display:flex;gap:14px;padding:10px 22px;font-size:12px;color:var(--dim);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  #wrap{padding:18px 22px}
+  svg{width:100%;height:auto;display:block}
+  .site-box{fill:#0e1420;stroke:#263244;stroke-width:1.5;rx:14}
+  .site-name{font-size:14px;font-weight:700;fill:var(--txt)}
+  .site-loc{font-size:11px;fill:var(--dim)}
+  .site-wan{font-size:11px;fill:var(--public);font-family:ui-monospace,Menlo,monospace}
+  .lane-tag{font-size:10.5px;fill:var(--dim);font-weight:600;letter-spacing:.04em}
+  .node .nm{font-size:12px;font-weight:650;fill:var(--txt)}
+  .node .ip{font-size:10.5px;fill:var(--dim);font-family:ui-monospace,Menlo,monospace}
+  .node{cursor:pointer} .node:hover rect{filter:drop-shadow(0 0 7px rgba(255,255,255,.28))}
+  .bridge{stroke:#5b6b82;stroke-width:1.4;stroke-dasharray:4 4;fill:none;opacity:.85}
+  .mesh-link{stroke:var(--wg);stroke-width:1.2;opacity:.30}
+  .spine{fill:var(--wg);opacity:.08}
+  .spine-tag{font-size:12.5px;font-weight:700;fill:var(--wg)}
+  .spine-cidr{font-size:11px;fill:var(--dim);font-family:ui-monospace,Menlo,monospace}
+  #tip{position:fixed;pointer-events:none;background:#0f1623;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:12px;max-width:280px;box-shadow:0 8px 26px rgba(0,0,0,.5);opacity:0;transition:opacity .08s;z-index:9}
+  #tip h4{margin:0 0 5px;font-size:12.5px} #tip .r{color:var(--dim);font-family:ui-monospace,Menlo,monospace;font-size:11px} #tip .warn{color:var(--bad)}
+  footer{padding:10px 22px;color:var(--dim);font-size:11.5px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🌐 多站点网络拓扑</h1>
+  <span class="badge">设计稿 v2 · 假数据 · 站点为卡片 · WireGuard overlay 为跨站点骨干</span>
+  <div class="chips" id="chips"></div>
+</header>
+<div class="legend" id="legend"></div>
+<div id="wrap"><svg id="svg"></svg></div>
+<div id="tip"></div>
+<footer>每个站点 = 一张卡片(含本站公网/LAN + 主机) · 底部全宽蓝带 = WireGuard overlay 10.88.0.0/24 跨站点骨干 · 虚线 = 主机的 wg 接入 · 淡蓝 = 到 hub 的星型 mesh · 红 = IP 冲突 · 灰 = 心跳过期。</footer>
+
+<script>
+const COL={public:'#f59e0b',lan:'#34d399',wg:'#60a5fa',hub:'#fbbf24',bad:'#f87171'};
+const SITES=[
+  {id:'zen',  name:'zen-home', loc:'上海 · 家庭实验室', wan:'58.37.118.182', lan:'192.168.11.0/24'},
+  {id:'opera',name:'opera',    loc:'腾讯云 · x86 Ubuntu', wan:'124.220.94.18', lan:'—'},
+  {id:'stage',name:'stage/dev',loc:'内网 · 备用区',      wan:'—',             lan:'192.168.2.0/24'},
+];
+// each host belongs to a site; lan/wan = local pill; wg = node on the overlay spine
+const HOSTS=[
+  {site:'zen',name:'zen',online:true,local:{kind:'lan',ip:'192.168.11.57',iface:'en10',mac:'a4:..:57'},wg:{ip:'10.88.0.1',hub:true},ifaces:[['en10','192.168.11.57'],['en0','192.168.11.65'],['wgc0','10.88.0.1 (hub)']]},
+  {site:'zen',name:'build .79',online:true,local:{kind:'lan',ip:'192.168.11.79',iface:'en5',mac:'5c:..:79'},ifaces:[['en5','192.168.11.79'],['tun0','100.64.0.3 (mesh)']]},
+  {site:'zen',name:'devbox',online:true,local:{kind:'lan',ip:'192.168.11.80',iface:'en0',mac:'b2:..:80',conflict:true},wg:{ip:'10.88.0.5'},ifaces:[['en0','192.168.11.80 ⚠'],['wgc0','10.88.0.5']]},
+  {site:'zen',name:'locals-Mac-9 (?)',online:true,local:{kind:'lan',ip:'192.168.11.80',iface:'en0',mac:'9e:..:f0',conflict:true},ifaces:[['en0','192.168.11.80 ⚠ 冲突']]},
+  {site:'zen',name:'everest',online:true,local:{kind:'lan',ip:'192.168.11.82',iface:'en0',mac:'a0:..:82'},wg:{ip:'10.88.0.9',stale:true},ifaces:[['en0','192.168.11.82'],['wgc0','10.88.0.9 (stale)']]},
+  {site:'zen',name:'swift-64',online:true,local:{kind:'lan',ip:'192.168.11.64',iface:'dpaa0',mac:'00:..:64'},ifaces:[['dpaa0','192.168.11.64']]},
+  {site:'opera',name:'opera',online:true,local:{kind:'public',ip:'124.220.94.18',iface:'eth0',mac:'fa:..:18'},wg:{ip:'10.88.0.7'},ifaces:[['eth0','124.220.94.18'],['wgc0','10.88.0.7']]},
+  {site:'stage',name:'stage',online:true,local:{kind:'lan',ip:'192.168.2.3',iface:'en0',mac:'c8:..:03'},wg:{ip:'10.88.0.4'},ifaces:[['en0','192.168.2.3'],['wgc0','10.88.0.4'],['tun0','100.64.0.2 (mesh)']]},
+];
+
+const NS='http://www.w3.org/2000/svg';
+const el=(t,a={})=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+const W=1180, MX=24, GAP=22, HEAD=70, PILL_W=190, PILL_H=44, PILL_GAP=10, CARD_PAD=14, SPINE_H=150, SPINE_GAP=46;
+
+// IP conflicts (within zen LAN here)
+const ipMap={}; HOSTS.forEach(h=>{const k=h.site+'|'+h.local.ip;(ipMap[k]=ipMap[k]||[]).push(h)});
+const conflictIPs=new Set(); for(const k in ipMap) if(ipMap[k].length>1) conflictIPs.add(k);
+
+const N=SITES.length, cardW=(W-2*MX-(N-1)*GAP)/N;
+const bySite={}; SITES.forEach(s=>bySite[s.id]=HOSTS.filter(h=>h.site===s.id));
+const maxRows=Math.max(...SITES.map(s=>bySite[s.id].length));
+const cardH=HEAD+CARD_PAD+maxRows*(PILL_H+PILL_GAP)+6;
+const spineY=cardH+SPINE_GAP, H=spineY+SPINE_H+20;
+
+const svg=document.getElementById('svg'); svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+const wgPos={}; // host.name -> {x,y} on spine
+
+// ---- overlay spine (draw first, behind) ----
+svg.appendChild(el('rect',{x:MX,y:spineY,width:W-2*MX,height:SPINE_H,rx:14,class:'spine'}));
+svg.appendChild(el('rect',{x:MX,y:spineY,width:5,height:SPINE_H,rx:2,fill:COL.wg}));
+const st=el('text',{x:MX+16,y:spineY+26,class:'spine-tag'}); st.textContent='WireGuard overlay · 跨站点骨干'; svg.appendChild(st);
+const sc=el('text',{x:MX+16,y:spineY+44,class:'spine-cidr'}); sc.textContent='10.88.0.0/24'; svg.appendChild(sc);
+
+// ---- site cards ----
+SITES.forEach((s,si)=>{
+  const cx=MX+si*(cardW+GAP);
+  svg.appendChild(el('rect',{x:cx,y:0,width:cardW,height:cardH,class:'site-box',rx:14}));
+  const nm=el('text',{x:cx+16,y:26,class:'site-name'}); nm.textContent='🏢 '+s.name; svg.appendChild(nm);
+  const lo=el('text',{x:cx+16,y:44,class:'site-loc'}); lo.textContent='📍 '+s.loc; svg.appendChild(lo);
+  const wan=el('text',{x:cx+16,y:60,class:'site-wan'}); wan.textContent='WAN '+s.wan+'   LAN '+s.lan; svg.appendChild(wan);
+  // host pills
+  bySite[s.id].forEach((h,ri)=>{
+    const px=cx+(cardW-PILL_W)/2, py=HEAD+CARD_PAD+ri*(PILL_H+PILL_GAP);
+    const conf=h.local.conflict && conflictIPs.has(h.site+'|'+h.local.ip);
+    const stale=!h.online;
+    const c=COL[h.local.kind]||COL.lan;
+    const g=el('g',{class:'node'});
+    g.appendChild(el('rect',{x:px,y:py,width:PILL_W,height:PILL_H,rx:9,fill:'#0f1623',
+      stroke:conf?COL.bad:(h.wg&&h.wg.hub?COL.hub:c),'stroke-width':conf?2:1.5,opacity:stale?.55:1}));
+    const t1=el('text',{x:px+12,y:py+18,class:'nm'}); t1.textContent=(h.wg&&h.wg.hub?'★ ':'')+h.name+(conf?'  ⚠':''); if(conf)t1.setAttribute('fill',COL.bad); g.appendChild(t1);
+    const t2=el('text',{x:px+12,y:py+35,class:'ip'}); t2.textContent=h.local.iface+' · '+h.local.ip; g.appendChild(t2);
+    g.addEventListener('mousemove',e=>showTip(e,h)); g.addEventListener('mouseleave',hideTip);
+    svg.appendChild(g);
+    // remember bottom-center anchor for the wg bridge
+    h._anchor={x:px+PILL_W/2,y:py+PILL_H};
+  });
+  // place this site's wg peers on the spine, spread under the card
+  const peers=bySite[s.id].filter(h=>h.wg);
+  peers.forEach((h,k)=>{
+    const segW=cardW/(peers.length+1);
+    wgPos[h.name]={x:cx+segW*(k+1), y:spineY+SPINE_H/2+8};
+  });
+});
+
+// ---- mesh star (hub → peers) behind nodes ----
+const hub=HOSTS.find(h=>h.wg&&h.wg.hub);
+if(hub) Object.entries(wgPos).forEach(([nm,p])=>{ if(nm!==hub.name)
+  svg.appendChild(el('line',{x1:wgPos[hub.name].x,y1:wgPos[hub.name].y,x2:p.x,y2:p.y,class:'mesh-link'})); });
+
+// ---- bridges (host pill → its wg node) + wg nodes ----
+HOSTS.filter(h=>h.wg).forEach(h=>{
+  const a=h._anchor, b=wgPos[h.name];
+  if(a&&b) svg.appendChild(el('path',{class:'bridge',d:`M${a.x},${a.y} C${a.x},${(a.y+b.y)/2} ${b.x},${(a.y+b.y)/2} ${b.x},${b.y}`}));
+  const stale=h.wg.stale, hubn=h.wg.hub;
+  const g=el('g',{class:'node'});
+  g.appendChild(el('circle',{cx:b.x,cy:b.y,r:16,fill:'#0f1623',stroke:hubn?COL.hub:COL.wg,'stroke-width':hubn?2.4:1.6,opacity:stale?.5:1}));
+  const ipt=el('text',{x:b.x,y:b.y+30,'text-anchor':'middle',class:'ip'}); ipt.textContent=h.wg.ip; g.appendChild(ipt);
+  const inl=el('text',{x:b.x,y:b.y+4,'text-anchor':'middle',class:'nm','font-size':'10'}); inl.textContent=hubn?'HUB':h.name.slice(0,4); g.appendChild(inl);
+  g.addEventListener('mousemove',e=>showTip(e,h)); g.addEventListener('mouseleave',hideTip);
+  svg.appendChild(g);
+});
+
+// chips + legend
+const chips=document.getElementById('chips');
+[['站点',SITES.length,''],['主机',HOSTS.length,''],['wg 节点',Object.keys(wgPos).length,''],['IP 冲突',conflictIPs.size,conflictIPs.size?'warn':'']]
+ .forEach(([k,v,cls])=>{const c=document.createElement('span');c.className='chip '+cls;c.innerHTML=`${k} <b>${v}</b>`;chips.appendChild(c);});
+const lg=document.getElementById('legend');
+[['公网','public'],['LAN','lan'],['WireGuard overlay','wg'],['hub','hub'],['IP 冲突/异常','bad']]
+ .forEach(([n,k])=>{const s=document.createElement('span');s.innerHTML=`<i style="background:${COL[k]}"></i>${n}`;lg.appendChild(s);});
+const stl=document.createElement('span');stl.innerHTML=`<i style="background:#4b5563"></i>心跳过期`;lg.appendChild(stl);
+
+// tooltip
+const tip=document.getElementById('tip');
+function showTip(e,h){
+  const rows=h.ifaces.map(([i,ip])=>`<div class="r ${/⚠|stale/.test(ip)?'warn':''}">${i} · ${ip}</div>`).join('');
+  tip.innerHTML=`<h4>${h.name} <span class="r">@${h.site}</span></h4>${rows}`;
+  tip.style.left=Math.min(e.clientX+14,innerWidth-300)+'px'; tip.style.top=(e.clientY+14)+'px'; tip.style.opacity=1;
+}
+function hideTip(){tip.style.opacity=0;}
+</script>
+</body>
+</html>

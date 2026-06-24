@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Polar · 主机网络拓扑 (设计稿)</title>
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#111722; --line:#1f2937; --txt:#e6edf3; --dim:#8b98a9;
+    --lan:#34d399; --wg:#60a5fa; --mesh:#22d3ee; --public:#f59e0b; --hub:#fbbf24;
+    --bad:#f87171; --stale:#4b5563;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.4 -apple-system,"PingFang SC",Segoe UI,Roboto,sans-serif}
+  header{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:650}
+  .badge{font-size:12px;color:var(--dim)}
+  .chips{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+  .chip{padding:5px 11px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:12.5px}
+  .chip b{color:var(--txt)}
+  .chip.warn{border-color:var(--bad);color:var(--bad)} .chip.warn b{color:var(--bad)}
+  .legend{display:flex;gap:14px;padding:10px 22px;font-size:12px;color:var(--dim);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  #wrap{padding:18px 22px}
+  svg{width:100%;height:auto;display:block}
+  .lane-band{opacity:.10}
+  .lane-label{font-size:12.5px;font-weight:650}
+  .lane-cidr{font-size:11px;fill:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .node rect{rx:9;stroke-width:1.5}
+  .node .nm{font-size:12.5px;font-weight:650;fill:var(--txt)}
+  .node .ip{font-size:11px;fill:var(--dim);font-family:ui-monospace,Menlo,monospace}
+  .node{cursor:pointer}
+  .node:hover rect{filter:drop-shadow(0 0 7px rgba(255,255,255,.25))}
+  .bridge{stroke:#64748b;stroke-width:1.4;stroke-dasharray:4 4;fill:none;opacity:.8}
+  .bridge-lbl{font-size:10.5px;fill:#94a3b8}
+  .conflict-x{stroke:var(--bad);stroke-width:2}
+  #tip{position:fixed;pointer-events:none;background:#0f1623;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:12px;max-width:280px;box-shadow:0 8px 26px rgba(0,0,0,.5);opacity:0;transition:opacity .08s;z-index:9}
+  #tip h4{margin:0 0 5px;font-size:12.5px}
+  #tip .r{color:var(--dim);font-family:ui-monospace,Menlo,monospace;font-size:11px}
+  #tip .warn{color:var(--bad)}
+  footer{padding:10px 22px;color:var(--dim);font-size:11.5px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🌐 主机网络拓扑</h1>
+  <span class="badge">设计稿 · 假数据 · 按网段分层(泳道)渲染</span>
+  <div class="chips" id="chips"></div>
+</header>
+<div class="legend" id="legend"></div>
+<div id="wrap"><svg id="svg"></svg></div>
+<div id="tip"></div>
+<footer>悬停节点看全部网卡 · 虚线=同一台多宿主主机跨网段桥接 · 红色=IP 冲突 · 灰=心跳过期。布局口径与 doc/arch/host-network-topology.md §5a 一致。</footer>
+
+<script>
+const SEG_COLOR={public:'#f59e0b',lan:'#34d399',wg:'#60a5fa',mesh:'#22d3ee'};
+const SEGMENTS=[
+  {id:'public',label:'公网 / WAN',cidr:'58.37.118.182/29',gw:'ISP'},
+  {id:'lan',   label:'LAN',        cidr:'192.168.11.0/24', gw:'192.168.11.1'},
+  {id:'wg',    label:'overlay · WireGuard',cidr:'10.88.0.0/24',gw:'10.88.0.1 (zen hub)'},
+  {id:'mesh',  label:'mesh',       cidr:'100.64.0.0/10',   gw:'—'},
+];
+const SEG_KIND={public:'public',lan:'lan',wg:'wg',mesh:'mesh'};
+// fleet (assembled from real boxes; 192.168.11.80 conflict + everest wg .9 stale are intentional)
+const HOSTS=[
+  {id:'zen',name:'zen',online:true,ifaces:[
+    {seg:'public',iface:'wan',ip:'58.37.118.182',mac:'(router)',hub:true},
+    {seg:'lan',iface:'en10',ip:'192.168.11.57',mac:'a4:83:e7:..:57'},
+    {seg:'wg',iface:'wgc0',ip:'10.88.0.1',mac:'—',hub:true}]},
+  {id:'devbox',name:'devbox',online:true,ifaces:[
+    {seg:'lan',iface:'en0',ip:'192.168.11.80',mac:'b2:9c:4f:..:80',conflict:true},
+    {seg:'wg',iface:'wgc0',ip:'10.88.0.5',mac:'—'}]},
+  {id:'dup',name:'locals-Mac-9 (?)',online:true,ifaces:[
+    {seg:'lan',iface:'en0',ip:'192.168.11.80',mac:'9e:11:aa:..:f0',conflict:true}]},
+  {id:'build',name:'build .79',online:true,ifaces:[
+    {seg:'lan',iface:'en5',ip:'192.168.11.79',mac:'5c:e9:1e:..:79'},
+    {seg:'mesh',iface:'tun0',ip:'100.64.0.3',mac:'—'}]},
+  {id:'everest',name:'everest',online:true,ifaces:[
+    {seg:'lan',iface:'en0',ip:'192.168.11.82',mac:'a0:78:17:..:82'},
+    {seg:'wg',iface:'wgc0',ip:'10.88.0.9',mac:'—',stale:true}]},
+  {id:'stage',name:'stage',online:true,ifaces:[
+    {seg:'wg',iface:'wgc0',ip:'10.88.0.4',mac:'—'},
+    {seg:'mesh',iface:'tun0',ip:'100.64.0.2',mac:'—'}]},
+  {id:'n77',name:'node-77',online:true,ifaces:[{seg:'lan',iface:'en0',ip:'192.168.11.77',mac:'f0:18:98:..:77'}]},
+  {id:'n81',name:'node-81',online:false,ifaces:[{seg:'lan',iface:'en0',ip:'192.168.11.81',mac:'f0:18:98:..:81',stale:true}]},
+  {id:'sw64',name:'swift-64',online:true,ifaces:[{seg:'lan',iface:'dpaa0',ip:'192.168.11.64',mac:'00:1b:..:64'}]},
+];
+
+const NS='http://www.w3.org/2000/svg';
+const el=(t,a={})=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+const W=1180, GUT=190, LANE_H=132, PAD_TOP=14, NODE_W=158, NODE_H=46, GAP=22;
+
+// detect IP conflicts per segment
+const conflicts=new Set();
+SEGMENTS.forEach(s=>{const m={};HOSTS.forEach(h=>h.ifaces.filter(i=>i.seg===s.id).forEach(i=>{(m[i.ip]=m[i.ip]||[]).push(h)}));
+  for(const ip in m) if(m[ip].length>1) conflicts.add(s.id+'|'+ip);});
+
+const H=PAD_TOP*2+SEGMENTS.length*LANE_H;
+const svg=document.getElementById('svg'); svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+const laneY={}; SEGMENTS.forEach((s,i)=>laneY[s.id]=PAD_TOP+i*LANE_H);
+const pos={}; // host.id+'|'+seg -> {x,y}
+
+// lanes
+SEGMENTS.forEach(s=>{
+  const y=laneY[s.id], c=SEG_COLOR[s.id];
+  svg.appendChild(el('rect',{x:0,y:y,width:W,height:LANE_H-12,rx:12,fill:c,class:'lane-band'}));
+  svg.appendChild(el('rect',{x:0,y:y,width:5,height:LANE_H-12,rx:2,fill:c}));
+  const lbl=el('text',{x:16,y:y+26,class:'lane-label',fill:c}); lbl.textContent=s.label; svg.appendChild(lbl);
+  const cidr=el('text',{x:16,y:y+44,class:'lane-cidr'}); cidr.textContent=s.cidr; svg.appendChild(cidr);
+  const gw=el('text',{x:16,y:y+62,class:'lane-cidr'}); gw.textContent='gw '+s.gw; svg.appendChild(gw);
+});
+
+// nodes per lane
+SEGMENTS.forEach(s=>{
+  const items=[]; HOSTS.forEach(h=>h.ifaces.filter(i=>i.seg===s.id).forEach(i=>items.push({h,i})));
+  const startX=GUT, y=laneY[s.id]+(LANE_H-12)/2-NODE_H/2;
+  items.forEach((it,k)=>{
+    const x=startX+k*(NODE_W+GAP);
+    pos[it.h.id+'|'+s.id]={x:x+NODE_W/2,y:y+NODE_H/2};
+    const conf=it.i.conflict && conflicts.has(s.id+'|'+it.i.ip);
+    const stale=it.i.stale||!it.h.online;
+    const c=SEG_COLOR[s.id];
+    const g=el('g',{class:'node'});
+    const stroke=conf?'var(--bad)':(it.i.hub?'var(--hub)':c);
+    const fill=stale?'#161b22':'#0f1623';
+    const r=el('rect',{x:x,y:y,width:NODE_W,height:NODE_H,rx:9,fill:fill,stroke:stroke,'stroke-width':conf?2:1.5,opacity:stale?.55:1});
+    g.appendChild(r);
+    const nm=el('text',{x:x+12,y:y+19,class:'nm'});
+    nm.textContent=(it.i.hub?'★ ':'')+it.h.name+(conf?'  ⚠':''); if(conf)nm.setAttribute('fill','var(--bad)');
+    g.appendChild(nm);
+    const ip=el('text',{x:x+12,y:y+36,class:'ip'}); ip.textContent=it.i.iface+' · '+it.i.ip; g.appendChild(ip);
+    g.addEventListener('mousemove',e=>showTip(e,it.h,s));
+    g.addEventListener('mouseleave',hideTip);
+    svg.appendChild(g);
+  });
+});
+
+// bridges: connect a host's interfaces across lanes (multi-homed)
+HOSTS.filter(h=>h.ifaces.length>1).forEach(h=>{
+  const segOrder=SEGMENTS.map(s=>s.id);
+  const pts=h.ifaces.map(i=>i.seg).sort((a,b)=>segOrder.indexOf(a)-segOrder.indexOf(b))
+            .map(seg=>pos[h.id+'|'+seg]).filter(Boolean);
+  for(let k=0;k<pts.length-1;k++){
+    const a=pts[k],b=pts[k+1];
+    const path=el('path',{class:'bridge',d:`M${a.x},${a.y} C${a.x},${(a.y+b.y)/2} ${b.x},${(a.y+b.y)/2} ${b.x},${b.y}`});
+    svg.appendChild(path);
+  }
+  // label near top point
+  if(pts[0]){const t=el('text',{x:pts[0].x+8,y:pts[0].y-6,class:'bridge-lbl'});t.textContent=h.name;svg.appendChild(t);}
+});
+
+// chips
+const multi=HOSTS.filter(h=>new Set(h.ifaces.map(i=>i.seg)).size>1).length;
+const chips=document.getElementById('chips');
+[['主机',HOSTS.length,''],['网段',SEGMENTS.length,''],['多宿主',multi,''],['IP 冲突',conflicts.size,conflicts.size?'warn':'']]
+ .forEach(([k,v,cls])=>{const c=document.createElement('span');c.className='chip '+cls;c.innerHTML=`${k} <b>${v}</b>`;chips.appendChild(c);});
+const lg=document.getElementById('legend');
+[['公网','public'],['LAN','lan'],['WireGuard','wg'],['mesh','mesh']].forEach(([n,k])=>{
+  const s=document.createElement('span');s.innerHTML=`<i style="background:${SEG_COLOR[k]}"></i>${n}`;lg.appendChild(s);});
+const x=document.createElement('span');x.innerHTML=`<i style="background:var(--bad)"></i>IP 冲突 / 异常`;lg.appendChild(x);
+const st=document.createElement('span');st.innerHTML=`<i style="background:#4b5563"></i>心跳过期`;lg.appendChild(st);
+
+// tooltip
+const tip=document.getElementById('tip');
+function showTip(e,h,seg){
+  let rows=h.ifaces.map(i=>{
+    const conf=i.conflict&&conflicts.has(i.seg+'|'+i.ip);
+    return `<div class="r ${conf?'warn':''}">${i.iface} · ${i.ip} · ${i.mac}${conf?'  ⚠ 冲突':''}${i.stale?'  · stale':''}</div>`;
+  }).join('');
+  tip.innerHTML=`<h4>${h.name} ${h.online?'':'<span class="warn">· 离线</span>'}</h4>${rows}`;
+  tip.style.left=Math.min(e.clientX+14,innerWidth-300)+'px';
+  tip.style.top=(e.clientY+14)+'px'; tip.style.opacity=1;
+}
+function hideTip(){tip.style.opacity=0;}
+</script>
+</body>
+</html>
