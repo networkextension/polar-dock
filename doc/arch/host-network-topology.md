@@ -1,12 +1,51 @@
-# Host Network Topology — design draft (polar-hosts)
+# Host Network Topology — polar-hosts
 
-Status: **DESIGN DRAFT** (2026-06-18). A web view in polar-hosts that draws the fleet's
+Status: **SHIPPED (2026-06-24)** — see §0. A web view in polar-hosts that draws the fleet's
 network topology from each host's NIC data (MAC + IP per interface), styled like the
 wg-tokens Status topology. Goal: see at a glance which boxes share a subnet/LAN, spot
 IP conflicts / rogue or multi-homed hosts, and deep-link into host + wg detail.
 
-Not built yet — this draft pins the data model, the gaps to fill, the graph model, the
-UI, and the phases. Implementation follows sign-off.
+(§1–§7 below are the original 2026-06-18 design draft; §0 records what actually shipped,
+which **revises the §5/§5a swimlane layout** into per-network tabs with a central switch.)
+
+---
+
+## 0. What shipped (2026-06-24)
+
+The chosen UI is **not** the single 4-lane swimlane of §5a. Per product direction it's
+**three network tabs**, each a **star around a central 交换机/hub** — reusing the existing
+neon-topo star render (the same kit as the wg-tokens Status topology and the hosts 全部
+fleet view), with a tab/segmented switch to flip between them:
+
+| Tab | Network | Center node | Source |
+|---|---|---|---|
+| ⚡ 雷电 | Thunderbolt fabric (`bridge0` + `en1/en2/en3`) | 雷电交换机 (Thunderbolt Bridge) | agent `iface_kind=thunderbolt` + `bridge_members` (IP-less — keyed by MAC) |
+| 🏠 局域网 | home LAN (Wi-Fi + wired merged) | 局域网交换机 (the gateway) | agent `iface_kind=wifi/ethernet` + private `ipv4_cidr` |
+| 🔒 WG Link | WireGuard overlay `10.88.0.0/24` | WG Hub (`10.88.0.1`) | CIDR-classified (overlay is a server-side constant) |
+
+**Agent side (polar-agent 0.4, PR #25).** `host_info` gained, all `omitempty`:
+`mac_by_iface`, `ipv4_cidr_by_iface` (IP **with prefix**), `iface_kind`
+(`thunderbolt|wifi|ethernet|wg|mesh|other`), `bridge_members` (`bridge0→[en1,en2,en3]`),
+`default_gw`. **Key fix:** the old collector kept only NICs with a non-link-local IP, so a
+provisioned-but-uncabled Thunderbolt `bridge0` (no IP) was invisible. 0.4 enumerates **all**
+NICs and tags physical kind via `networksetup -listallhardwareports` even with no IP — so the
+雷电 fabric shows (un-cabled ports render on dashed spokes labeled 未连接, lighting up when cabled).
+
+**Server side (polar-hosts, PR #32).** `GET /api/hosts/topology` (workspace-scoped,
+`AuthVerifyWS`) parses every host's `host_info` into the three networks via `classifyIface`:
+CIDR is authoritative for the overlay (`10.88.0.0/24`→wg) and CGNAT mesh (`100.64/10`→dropped)
+ranges; the agent's `iface_kind` is authoritative for thunderbolt (no IP to derive from).
+Old-agent hosts (pre-0.4, no `iface_kind`) fall back to "private IPv4 → LAN" with docker/VM
+bridges filtered, so the LAN tab is populated before the fleet finishes upgrading. Per-network
+IP-conflict detection on lan + wg (caught a real `10.88.0.4` overlay dup live).
+
+**Tabs intentionally isolate networks** (a multi-homed host like zen simply appears in each tab
+it has a NIC on) — the §2/§5a "multi-homed host bridges lanes" all-at-once view was dropped in
+favor of the simpler switchable star.
+
+Verified live on zen: 雷电 = zen's TB fabric (stale/uncabled), 局域网 = 13 boxes + gateway
+center, WG = 10 peers ★hub `10.88.0.1`. Page: https://hosts.4950.store:2443/hosts.html.
+Follow-up: roll 0.4 to the rest of the fleet → more 雷电 nodes + cleaner LAN tagging.
 
 ---
 
