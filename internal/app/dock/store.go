@@ -2424,6 +2424,36 @@ CREATE INDEX IF NOT EXISTS idx_agents_host      ON agents(host_id);
 CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id, last_hello_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agents_bot       ON agents(bot_user_id) WHERE bot_user_id IS NOT NULL;
 
+-- agent_jobs: generic durable work queue for fleet agents (P3 of
+-- doc/arch/agent-proxy-and-task-dispatch.md, generalized beyond research
+-- runs). A producer (e.g. polar-film) enqueues a 'queued' row; an agent
+-- claims the oldest row whose required_arch matches its own host arch
+-- (NULL = any), runs it, and reports the result. Capability routing is the
+-- claim WHERE clause: filmscan_extract jobs (required_arch NULL) run on any
+-- agent so they never stall; filmscan_analyze jobs (required_arch 'arm64')
+-- run only on Apple-silicon hosts (Neural Engine).
+CREATE TABLE IF NOT EXISTS agent_jobs (
+	id BIGSERIAL PRIMARY KEY,
+	workspace_id        TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+	kind                TEXT NOT NULL,
+	status              TEXT NOT NULL DEFAULT 'queued',   -- queued|running|done|error
+	required_arch       TEXT,                              -- NULL = any; 'arm64' = ANE-only
+	assigned_agent_id   TEXT,                              -- NULL = any capable agent
+	payload             JSONB NOT NULL DEFAULT '{}'::jsonb,
+	result              JSONB,
+	error_message       TEXT NOT NULL DEFAULT '',
+	claimed_by_agent_id TEXT,
+	created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+	claimed_at          TIMESTAMPTZ,
+	completed_at        TIMESTAMPTZ,
+	updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Claim hot path: oldest queued row (capability filter applied in the query).
+CREATE INDEX IF NOT EXISTS idx_agent_jobs_claim
+	ON agent_jobs(created_at) WHERE status = 'queued';
+CREATE INDEX IF NOT EXISTS idx_agent_jobs_workspace
+	ON agent_jobs(workspace_id, created_at DESC);
+
 -- host_skills: operator-enabled skill on a host. Schema exists in P0
 -- so future phase migrations don't need to add the table; nothing
 -- writes to this in P0 (Phase 1 adds the coder skill handlers).
