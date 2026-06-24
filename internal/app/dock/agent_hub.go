@@ -683,6 +683,25 @@ func (h *agentHub) dispatchResearchTask(botUserID string, task agentResearchTask
 	}
 }
 
+// dispatchTaskWake rings a non-blocking {"kind":"task.wake"} doorbell to the
+// agent attached to botUserID, if online. Best-effort: a missed wake is harmless
+// because the agent also drains the claim queue on every (re)connect.
+func (h *agentHub) dispatchTaskWake(botUserID string) {
+	conn := h.lookup(botUserID)
+	if conn == nil {
+		return
+	}
+	payload, err := json.Marshal(map[string]string{"kind": "task.wake"})
+	if err != nil {
+		return
+	}
+	select {
+	case conn.send <- payload:
+	case <-conn.close:
+	case <-time.After(2 * time.Second):
+	}
+}
+
 // agentChatTimeout caps how long the platform waits for a
 // chat_reply. Must comfortably exceed polar-agent's own kimi
 // timeout (30min default, configurable via POLAR_KIMI_TIMEOUT) so

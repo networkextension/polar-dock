@@ -659,6 +659,9 @@ func (s *Server) registerRoutes() {
 		internal.POST("/llm/chat-completion", s.handleInternalLLMChatCompletion)
 		internal.POST("/notify", s.handleInternalNotify)
 		internal.POST("/plugin-registry/heartbeat", s.handleInternalHeartbeat)
+		// Producers (e.g. polar-film) enqueue durable fleet jobs here; agents
+		// pull them via /api/agent/tasks/claim. See agent_jobs_handlers.go.
+		internal.POST("/agent-tasks/enqueue", s.handleAgentJobEnqueue)
 
 		// Issue #344: read-only view of the wg_peer_status samples
 		// the agent reports via skill.event{metric}. polar-wg polls
@@ -980,6 +983,11 @@ func (s *Server) registerRoutes() {
 		api.GET("/skill-updates", s.AuthMiddleware(), s.handleSkillUpdatesList)
 		api.GET("/agent/bots/:bot_id/config", s.PolarAgentAuthMiddleware(), s.handleAgentBotConfig)
 		api.POST("/agent/auto-register", s.PolarAgentAuthMiddleware(), s.handleAgentAutoRegister)
+		// Durable fleet-job queue (agent_jobs): agents pull + report. Capability
+		// routing + extract→analyze chaining live in agent_jobs_handlers.go.
+		api.POST("/agent/tasks/claim", s.PolarAgentAuthMiddleware(), s.handleAgentTaskClaim)
+		api.POST("/agent/tasks/:id/complete", s.PolarAgentAuthMiddleware(), s.handleAgentJobComplete)
+		api.POST("/agent/tasks/:id/fail", s.PolarAgentAuthMiddleware(), s.handleAgentJobFail)
 		// P-recovery-0a: knowledge-base device upsert via agent token.
 		api.POST("/agent/library/devices/upsert", s.PolarAgentAuthMiddleware(), s.handleAgentRevDeviceUpsert)
 		api.GET("/agent/bots/:bot_id/status", s.AuthMiddleware(), s.handleAgentStatus)
