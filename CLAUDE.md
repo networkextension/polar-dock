@@ -39,7 +39,7 @@ Nearly all backend code is in **one Go package** `internal/app/dock` (~150 files
 
 ### Schema lives in code, not migration files
 
-The Postgres schema is **embedded in `internal/app/dock/store.go` (`openDB()`)** as `CREATE TABLE IF NOT EXISTS` + idempotent `ALTER TABLE` statements applied at boot — there is no migration-runner framework. To add a column or table, edit `openDB()`. The top-level `migrations/` dir is old one-off SQL; `scripts/migrate/` is the active per-plugin **extraction** tooling (`<plugin>-schema.sql` / `<plugin>-data.sh`) that carves owned tables into each plugin's own database per `doc/arch/database-ownership.md` — neither is a dock-core migration step.
+The Postgres schema is **embedded in `internal/app/dock/store.go` (`openDB()`)** as `CREATE TABLE IF NOT EXISTS` + idempotent `ALTER TABLE` statements applied at boot — there is no migration-runner framework. To add a column or table, edit `openDB()`. **Ordering matters on a fresh database:** a `REFERENCES` clause must appear *after* the target table's `CREATE TABLE` in the schema string, or first boot against an empty DB fails — verify new tables against a fresh database. The top-level `migrations/` dir is old one-off SQL; `scripts/migrate/` is the active per-plugin **extraction** tooling (`<plugin>-schema.sql` / `<plugin>-data.sh`) that carves owned tables into each plugin's own database per `doc/arch/database-ownership.md` — neither is a dock-core migration step.
 
 ### Workspace model is pervasive
 
@@ -47,7 +47,7 @@ A workspace == a team. **Every domain table carries `workspace_id`**, and routes
 
 ### Sessions, not JWTs
 
-Auth is Redis-backed sessions (30-min access cookie + 30-day rotating refresh), not JWTs — chosen for atomic revocation. Middleware: `AuthMiddleware()` (required), `GuestMiddleware()`. See `doc/auth.md` and `doc/auth-refresh.md`.
+Auth is Redis-backed sessions (30-min access cookie + 30-day rotating refresh), not JWTs — chosen for atomic revocation. Middleware: `AuthMiddleware()` (required), `GuestMiddleware()`, `AdminMiddleware()` (site-admin gate, writes `admin_audit_log`), `PolarAgentAuthMiddleware()` (agent-token auth for the polar-agent CLI). See `doc/auth.md` and `doc/auth-refresh.md`.
 
 ### Three route surfaces (`app.go:registerRoutes`)
 
@@ -67,6 +67,12 @@ When a bot has a `polar-agent` CLI paired to it, the dock just routes bytes: cha
 ### Graceful degradation by design
 
 Missing optional infra degrades rather than crashes: no GeoLite2 → login works without geolocation; no R2 creds → uploads use local filesystem; no SMTP → email verification disabled but auth core lives. Optional secrets (`IOSDIST_RESOURCE_KEY`, `POLAR_CREDENTIAL_KEY`) are AES-256-GCM at-rest keys — when unset, data is stored cleartext with a warning flag rather than failing.
+
+## Conventions
+
+- Branches: `feat/<topic>` (or `fix/`, `docs/`), one topic per PR, target `main`, ship via the `gh` CLI. CI (`.github/workflows/go.yml`) runs `go mod tidy` + build + test on every PR.
+- When the main checkout is dirty, commit from a clean worktree under `~/worktrees/<name>` rather than stashing.
+- Comments and commit messages mix English and Chinese; either is fine.
 
 ## Key references
 
