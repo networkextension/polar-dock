@@ -170,6 +170,16 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 					c.Set("user_id", tok.OwnerUserID)
 					c.Set("role", "api_token")
 					c.Set("workspace_id", tok.WorkspaceID)
+					// Honor X-Workspace-Id like the session path does: if the
+					// token's owner is a member of the requested team, switch
+					// the active workspace; otherwise stay pinned to the
+					// token's home workspace (soft fallback, same as sessions).
+					if requested := strings.TrimSpace(c.GetHeader("X-Workspace-Id")); requested != "" && requested != tok.WorkspaceID {
+						if member, err := s.getTeamMember(requested, tok.OwnerUserID); err == nil && member != nil {
+							c.Set("workspace_id", requested)
+							c.Set("workspace_role", member.Role)
+						}
+					}
 					c.Set("auth_kind", "api_token")
 					c.Set("api_token_id", tok.ID)
 					go s.touchAPIToken(tok.ID)
