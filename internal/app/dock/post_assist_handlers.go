@@ -176,6 +176,9 @@ func (s *Server) handleReplyAssistWithBot(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的帖子"})
 		return
 	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
+		return
+	}
 	post, err := s.getPostByID(userIDStr, postID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})

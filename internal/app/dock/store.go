@@ -7123,6 +7123,22 @@ func (s *Server) deletePost(postID int64) (bool, error) {
 	return rowsAffected > 0, nil
 }
 
+// getPostWorkspaceID returns the post's workspace_id and whether the post
+// exists. Cheap primary-key lookup used by the handler-level membership
+// gate so mutation handlers (like/reply/bookmark/task-*) don't have to
+// hydrate the full Post first.
+func (s *Server) getPostWorkspaceID(postID int64) (string, bool, error) {
+	var workspaceID sql.NullString
+	err := s.db.QueryRow(`SELECT workspace_id FROM posts WHERE id = $1`, postID).Scan(&workspaceID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return workspaceID.String, true, nil
+}
+
 func (s *Server) addPostImage(postID int64, imageItem PostImage, createdAt time.Time) error {
 	_, err := s.db.Exec(
 		`INSERT INTO post_images (post_id, file_url, small_url, medium_url, created_at)
@@ -7180,7 +7196,7 @@ func legacyPostImageURL(item PostImage) string {
 	return item.SmallURL
 }
 
-func (s *Server) listPosts(userID string, limit, offset int, filterTagID *int64, filterPostType, scope string) ([]Post, bool, error) {
+func (s *Server) listPosts(userID, workspaceID string, limit, offset int, filterTagID *int64, filterPostType, scope string) ([]Post, bool, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -7194,7 +7210,7 @@ func (s *Server) listPosts(userID string, limit, offset int, filterTagID *int64,
 		scope = "all"
 	}
 	rows, err := s.db.Query(
-		`SELECT p.id, p.user_id, u.username, u.icon_url, p.tag_id, p.post_type, p.content, p.created_at,
+		`SELECT p.id, p.user_id, u.username, u.icon_url, p.tag_id, p.post_type, p.content, p.created_at, p.workspace_id,
 		        COALESCE(l.like_count, 0) AS like_count,
 		        COALESCE(r.reply_count, 0) AS reply_count,
 		        (pl.user_id IS NOT NULL) AS liked_by_me
@@ -7211,7 +7227,8 @@ func (s *Server) listPosts(userID string, limit, offset int, filterTagID *int64,
 		      GROUP BY post_id
 		   ) r ON r.post_id = p.id
 		   LEFT JOIN post_likes pl ON pl.post_id = p.id AND pl.user_id = $1
-		  WHERE ($2::BIGINT IS NULL OR p.tag_id = $2)
+		  WHERE p.workspace_id = $7
+		    AND ($2::BIGINT IS NULL OR p.tag_id = $2)
 		    AND ($3 = 'all' OR p.post_type = $3)
 		    AND (
 		          $6 <> 'following'
@@ -7229,6 +7246,7 @@ func (s *Server) listPosts(userID string, limit, offset int, filterTagID *int64,
 		limit+1,
 		offset,
 		scope,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, false, err
@@ -7239,6 +7257,7 @@ func (s *Server) listPosts(userID string, limit, offset int, filterTagID *int64,
 	postIDs := make([]int64, 0, limit+1)
 	for rows.Next() {
 		var post Post
+		var postWorkspaceID sql.NullString
 		if err := rows.Scan(
 			&post.ID,
 			&post.UserID,
@@ -7248,12 +7267,14 @@ func (s *Server) listPosts(userID string, limit, offset int, filterTagID *int64,
 			&post.PostType,
 			&post.Content,
 			&post.CreatedAt,
+			&postWorkspaceID,
 			&post.LikeCount,
 			&post.ReplyCount,
 			&post.LikedByMe,
 		); err != nil {
 			return nil, false, err
 		}
+		post.WorkspaceID = postWorkspaceID.String
 		posts = append(posts, post)
 		postIDs = append(postIDs, post.ID)
 	}
@@ -7420,8 +7441,9 @@ func (s *Server) attachPostAttachments(posts []Post, postIDs []int64) error {
 
 func (s *Server) getPostByID(userID string, postID int64) (*Post, error) {
 	var post Post
+	var postWorkspaceID sql.NullString
 	err := s.db.QueryRow(
-		`SELECT p.id, p.user_id, u.username, u.icon_url, p.tag_id, p.post_type, p.content, p.created_at,
+		`SELECT p.id, p.user_id, u.username, u.icon_url, p.tag_id, p.post_type, p.content, p.created_at, p.workspace_id,
 		        COALESCE(l.like_count, 0) AS like_count,
 		        COALESCE(r.reply_count, 0) AS reply_count,
 		        (pl.user_id IS NOT NULL) AS liked_by_me
@@ -7450,6 +7472,7 @@ func (s *Server) getPostByID(userID string, postID int64) (*Post, error) {
 		&post.PostType,
 		&post.Content,
 		&post.CreatedAt,
+		&postWorkspaceID,
 		&post.LikeCount,
 		&post.ReplyCount,
 		&post.LikedByMe,
@@ -7460,6 +7483,7 @@ func (s *Server) getPostByID(userID string, postID int64) (*Post, error) {
 		}
 		return nil, err
 	}
+	post.WorkspaceID = postWorkspaceID.String
 
 	rows, err := s.db.Query(
 		`SELECT file_url, small_url, medium_url FROM post_images WHERE post_id = $1 ORDER BY id ASC`,
@@ -7758,7 +7782,7 @@ func (s *Server) listBookmarkedPosts(userID string, limit, offset int) ([]Post, 
 		offset = 0
 	}
 	rows, err := s.db.Query(
-		`SELECT p.id, p.user_id, u.username, u.icon_url, p.tag_id, p.post_type, p.content, p.created_at,
+		`SELECT p.id, p.user_id, u.username, u.icon_url, p.tag_id, p.post_type, p.content, p.created_at, p.workspace_id,
 		        COALESCE(l.like_count, 0) AS like_count,
 		        COALESCE(r.reply_count, 0) AS reply_count,
 		        (pl.user_id IS NOT NULL) AS liked_by_me
@@ -7777,6 +7801,7 @@ func (s *Server) listBookmarkedPosts(userID string, limit, offset int) ([]Post, 
 		   ) r ON r.post_id = p.id
 		   LEFT JOIN post_likes pl ON pl.post_id = p.id AND pl.user_id = $1
 		  WHERE b.user_id = $1
+		    AND p.workspace_id IN (SELECT tm.team_id FROM team_members tm WHERE tm.user_id = $1)
 		  ORDER BY b.created_at DESC
 		  LIMIT $2 OFFSET $3`,
 		userID,
@@ -7792,6 +7817,7 @@ func (s *Server) listBookmarkedPosts(userID string, limit, offset int) ([]Post, 
 	postIDs := make([]int64, 0, limit+1)
 	for rows.Next() {
 		var post Post
+		var postWorkspaceID sql.NullString
 		if err := rows.Scan(
 			&post.ID,
 			&post.UserID,
@@ -7801,12 +7827,14 @@ func (s *Server) listBookmarkedPosts(userID string, limit, offset int) ([]Post, 
 			&post.PostType,
 			&post.Content,
 			&post.CreatedAt,
+			&postWorkspaceID,
 			&post.LikeCount,
 			&post.ReplyCount,
 			&post.LikedByMe,
 		); err != nil {
 			return nil, false, err
 		}
+		post.WorkspaceID = postWorkspaceID.String
 		posts = append(posts, post)
 		postIDs = append(postIDs, post.ID)
 	}

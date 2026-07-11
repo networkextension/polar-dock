@@ -27,6 +27,9 @@ func (s *Server) handleTaskResultsList(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的任务"})
 		return
 	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
+		return
+	}
 
 	results, err := s.listTaskResults(postID, userIDStr)
 	if err != nil {
@@ -55,6 +58,9 @@ func (s *Server) handleTaskResultCreate(c *gin.Context) {
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的任务"})
+		return
+	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
 		return
 	}
 
