@@ -23,6 +23,9 @@ func (s *Server) handleTaskApply(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的任务"})
 		return
 	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
+		return
+	}
 
 	if err := s.applyTask(postID, userIDStr, time.Now()); err != nil {
 		switch {
@@ -56,6 +59,9 @@ func (s *Server) handleTaskWithdraw(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的任务"})
 		return
 	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
+		return
+	}
 
 	ok, err = s.withdrawTaskApplication(postID, userIDStr, time.Now())
 	if err != nil {
@@ -81,6 +87,9 @@ func (s *Server) handleTaskApplications(c *gin.Context) {
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的任务"})
+		return
+	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
 		return
 	}
 
@@ -120,6 +129,9 @@ func (s *Server) handleTaskClose(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的任务"})
 		return
 	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
+		return
+	}
 
 	ok, err = s.closeTaskApplications(postID, userIDStr)
 	if err != nil {
@@ -145,6 +157,9 @@ func (s *Server) handleTaskSelectCandidate(c *gin.Context) {
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的任务"})
+		return
+	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
 		return
 	}
 

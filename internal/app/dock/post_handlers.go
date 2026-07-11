@@ -14,6 +14,53 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// postAccessAllowed is the pure access decision for workspace-scoped
+// posts: site admins bypass; everyone else must hold a membership in
+// the post's workspace.
+func postAccessAllowed(siteRole string, member *TeamMember) bool {
+	if siteRole == "admin" {
+		return true
+	}
+	return member != nil
+}
+
+// requirePostAccess enforces that the caller may access postID: member
+// of the post's workspace, or site admin. Non-members (and posts with
+// an empty legacy workspace_id) get 404 rather than 403 so post IDs
+// don't leak across teams. The gate uses the POST's workspace, not the
+// active-workspace header, so deep links into the caller's other teams
+// keep working. Returns false after writing the response.
+func (s *Server) requirePostAccess(c *gin.Context, userID string, postID int64) bool {
+	workspaceID, found, err := s.getPostWorkspaceID(postID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return false
+	}
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到帖子"})
+		return false
+	}
+	role, _ := c.Get("role")
+	roleStr, _ := role.(string)
+	if roleStr == "admin" {
+		return true
+	}
+	if workspaceID == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到帖子"})
+		return false
+	}
+	member, err := s.getTeamMember(workspaceID, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return false
+	}
+	if !postAccessAllowed(roleStr, member) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到帖子"})
+		return false
+	}
+	return true
+}
+
 func (s *Server) handlePostCreate(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	userIDStr, ok := userID.(string)
@@ -357,7 +404,12 @@ func (s *Server) handlePostList(c *gin.Context) {
 		return
 	}
 
-	posts, hasMore, err := s.listPosts(userIDStr, limit, offset, tagID, postType, scope)
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+
+	posts, hasMore, err := s.listPosts(userIDStr, workspaceID, limit, offset, tagID, postType, scope)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -382,6 +434,9 @@ func (s *Server) handlePostRead(c *gin.Context) {
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的帖子"})
+		return
+	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
 		return
 	}
 
@@ -412,6 +467,9 @@ func (s *Server) handlePostDelete(c *gin.Context) {
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的帖子"})
+		return
+	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
 		return
 	}
 
@@ -456,6 +514,10 @@ func (s *Server) handlePostLike(c *gin.Context) {
 		return
 	}
 
+	if !s.requirePostAccess(c, userIDStr, postID) {
+		return
+	}
+
 	if err := s.likePost(postID, userIDStr, time.Now()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -478,6 +540,10 @@ func (s *Server) handlePostUnlike(c *gin.Context) {
 		return
 	}
 
+	if !s.requirePostAccess(c, userIDStr, postID) {
+		return
+	}
+
 	if err := s.unlikePost(postID, userIDStr); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -497,6 +563,9 @@ func (s *Server) handleReplyCreate(c *gin.Context) {
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的帖子"})
+		return
+	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
 		return
 	}
 
@@ -527,9 +596,19 @@ func (s *Server) handleReplyCreate(c *gin.Context) {
 }
 
 func (s *Server) handleReplyList(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	userIDStr, ok := userID.(string)
+	if !ok || userIDStr == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的帖子"})
+		return
+	}
+	if !s.requirePostAccess(c, userIDStr, postID) {
 		return
 	}
 
@@ -588,6 +667,10 @@ func (s *Server) handlePostBookmark(c *gin.Context) {
 		return
 	}
 
+	if !s.requirePostAccess(c, userIDStr, postID) {
+		return
+	}
+
 	if err := s.bookmarkPost(postID, userIDStr, time.Now()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
 		return
@@ -607,6 +690,10 @@ func (s *Server) handlePostUnbookmark(c *gin.Context) {
 	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || postID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的帖子"})
+		return
+	}
+
+	if !s.requirePostAccess(c, userIDStr, postID) {
 		return
 	}
 

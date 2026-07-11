@@ -1,6 +1,13 @@
 {
-  "count": 301,
+  "count": 350,
   "endpoints": [
+    {
+      "method": "GET",
+      "path": "/.well-known/openid-configuration",
+      "handler": "handleOAuthDiscovery",
+      "body": [],
+      "query": []
+    },
     {
       "method": "GET",
       "path": "/api/_catalog",
@@ -671,6 +678,50 @@
     },
     {
       "method": "POST",
+      "path": "/api/agent/assets/finalize",
+      "handler": "handleAgentAssetFinalize",
+      "auth": "user",
+      "scope": "agent:write",
+      "body": [
+        {
+          "name": "asset_id",
+          "type": "int64"
+        },
+        {
+          "name": "provider_id",
+          "type": "int64"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent/assets/grant",
+      "handler": "handleAgentAssetGrant",
+      "auth": "user",
+      "scope": "agent:write",
+      "body": [
+        {
+          "name": "sha256",
+          "type": "string"
+        },
+        {
+          "name": "size_bytes",
+          "type": "int64"
+        },
+        {
+          "name": "mime",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
       "path": "/api/agent/auto-register",
       "handler": "handleAgentAutoRegister",
       "auth": "user",
@@ -763,6 +814,52 @@
     },
     {
       "method": "POST",
+      "path": "/api/agent/compute-tasks/claim",
+      "handler": "handleComputeTaskClaim",
+      "auth": "user",
+      "scope": "agent:write",
+      "body": [
+        {
+          "name": "skills",
+          "type": "[]string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent/compute-tasks/complete/:id",
+      "handler": "handleComputeTaskResult",
+      "auth": "user",
+      "scope": "agent:write",
+      "body": [
+        {
+          "name": "ok",
+          "type": "bool"
+        },
+        {
+          "name": "output",
+          "type": "json.RawMessage"
+        },
+        {
+          "name": "error",
+          "type": "string"
+        },
+        {
+          "name": "artifacts",
+          "type": "[]struct {\n\tKind\tstring\t`json:\"kind\"`\n\tAssetID\tint64\t`json:\"asset_id\"`\n\tMime\tstring\t`json:\"mime\"`\n\tBytes\tint64\t`json:\"bytes\"`\n}"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/api/agent/library/devices/upsert",
       "handler": "handleAgentRevDeviceUpsert",
       "auth": "user",
@@ -819,6 +916,32 @@
         {
           "name": "metadata_json",
           "type": "json.RawMessage"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent/self-register",
+      "handler": "handleAgentSelfRegister",
+      "auth": "user",
+      "scope": "agent:write",
+      "body": [
+        {
+          "name": "machine_uuid_raw",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "os",
+          "type": "string"
+        },
+        {
+          "name": "arch",
+          "type": "string"
         }
       ],
       "query": []
@@ -934,6 +1057,10 @@
           "type": "[]string"
         },
         {
+          "name": "ip_allowlist",
+          "type": "[]string"
+        },
+        {
           "name": "rate_limit_rpm",
           "type": "int"
         },
@@ -948,6 +1075,61 @@
       "method": "DELETE",
       "path": "/api/api-tokens/:id",
       "handler": "handleAPITokenRevoke",
+      "auth": "user",
+      "scope": "api-tokens:write",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/api-tokens/:id/calls",
+      "handler": "handleAPITokenCalls",
+      "auth": "user",
+      "scope": "api-tokens:read",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/api-tokens/:id/calls/aggregate",
+      "handler": "handleAPITokenCallsAggregate",
+      "auth": "user",
+      "scope": "api-tokens:read",
+      "body": [],
+      "query": [
+        {
+          "name": "days",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/api-tokens/:id/rotate",
+      "handler": "handleAPITokenRotate",
       "auth": "user",
       "scope": "api-tokens:write",
       "body": [],
@@ -1174,12 +1356,40 @@
     },
     {
       "method": "GET",
+      "path": "/api/auth/methods",
+      "handler": "handleAuthMethods",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
       "path": "/api/bots",
       "handler": "handleBotUserList",
       "auth": "user",
       "scope": "bots:read",
       "body": [],
-      "query": []
+      "query": [
+        {
+          "name": "q",
+          "type": "string"
+        },
+        {
+          "name": "group",
+          "type": "string"
+        },
+        {
+          "name": "summary",
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "string"
+        }
+      ]
     },
     {
       "method": "POST",
@@ -1216,6 +1426,10 @@
         {
           "name": "model_override",
           "type": "string"
+        },
+        {
+          "name": "tags",
+          "type": "[]string"
         }
       ],
       "query": []
@@ -1226,6 +1440,21 @@
       "handler": "handleBotUserDelete",
       "auth": "user",
       "scope": "bots:write",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/bots/:id",
+      "handler": "handleBotUserGet",
+      "auth": "user",
+      "scope": "bots:read",
       "body": [],
       "query": [],
       "path_params": [
@@ -1274,6 +1503,10 @@
         {
           "name": "host_skill_id",
           "type": "*int64"
+        },
+        {
+          "name": "tags",
+          "type": "*[]string"
         }
       ],
       "query": [],
@@ -1283,6 +1516,20 @@
           "type": "string"
         }
       ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/bots/status",
+      "handler": "handleAgentStatusBatch",
+      "auth": "user",
+      "scope": "bots:write",
+      "body": [
+        {
+          "name": "bot_ids",
+          "type": "[]string"
+        }
+      ],
+      "query": []
     },
     {
       "method": "GET",
@@ -1606,6 +1853,106 @@
           "type": "int64"
         }
       ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/compute-tasks",
+      "handler": "handleComputeTaskList",
+      "auth": "user",
+      "scope": "compute-tasks:read",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/compute-tasks",
+      "handler": "handleComputeTaskSubmit",
+      "auth": "user",
+      "scope": "compute-tasks:write",
+      "body": [
+        {
+          "name": "skill",
+          "type": "string"
+        },
+        {
+          "name": "input",
+          "type": "json.RawMessage"
+        },
+        {
+          "name": "constraints",
+          "type": "json.RawMessage"
+        },
+        {
+          "name": "priority",
+          "type": "int"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/compute-tasks/:id",
+      "handler": "handleComputeTaskGet",
+      "auth": "user",
+      "scope": "compute-tasks:read",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/compute-tasks/:id/cancel",
+      "handler": "handleAdminComputeTaskCancel",
+      "auth": "admin",
+      "scope": "admin:write",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/compute-tasks/:id/pause",
+      "handler": "handleAdminComputeTaskPause",
+      "auth": "admin",
+      "scope": "admin:write",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/compute-tasks/:id/priority",
+      "handler": "handleAdminComputeTaskSetPriority",
+      "auth": "admin",
+      "scope": "admin:write",
+      "body": [
+        {
+          "name": "priority",
+          "type": "int"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/compute-tasks/:id/release",
+      "handler": "handleAdminComputeTaskRelease",
+      "auth": "admin",
+      "scope": "admin:write",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/compute-tasks/:id/resume",
+      "handler": "handleAdminComputeTaskResume",
+      "auth": "admin",
+      "scope": "admin:write",
+      "body": [],
       "query": []
     },
     {
@@ -2622,6 +2969,26 @@
       ]
     },
     {
+      "method": "POST",
+      "path": "/api/me/password",
+      "handler": "handleChangePassword",
+      "auth": "user",
+      "scope": "me:write",
+      "body": [
+        {
+          "name": "old_password",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "new_password",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "query": []
+    },
+    {
       "method": "GET",
       "path": "/api/me/permissions",
       "handler": "handleMyPermissions",
@@ -2645,10 +3012,59 @@
     },
     {
       "method": "GET",
+      "path": "/api/modules",
+      "handler": "handleModules",
+      "auth": "user",
+      "scope": "modules:read",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
       "path": "/api/nav",
       "handler": "handleNav",
       "auth": "user",
       "scope": "nav:read",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/oauth/clients",
+      "handler": "handleOAuthClientList",
+      "auth": "admin",
+      "scope": "admin:read",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/oauth/clients",
+      "handler": "handleOAuthClientCreate",
+      "auth": "admin",
+      "scope": "admin:write",
+      "body": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "redirect_uris",
+          "type": "[]string"
+        },
+        {
+          "name": "scopes",
+          "type": "[]string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/openapi.json",
+      "handler": "handleOpenAPISpec",
+      "auth": "user",
+      "scope": "openapi.json:read",
       "body": [],
       "query": []
     },
@@ -4593,6 +5009,20 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/user",
+      "handler": "handleGiteaUser",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/user/emails",
+      "handler": "handleGiteaUserEmails",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
       "path": "/api/video-burn",
       "handler": "handleVideoBurn",
       "auth": "user",
@@ -4614,6 +5044,87 @@
         },
         {
           "name": "limit",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/zone/binary",
+      "handler": "handleZoneBinary",
+      "body": [],
+      "query": [
+        {
+          "name": "os",
+          "type": "string"
+        },
+        {
+          "name": "arch",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/zone/health",
+      "handler": "handleZoneHealth",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/zone/install.sh",
+      "handler": "handleZoneInstall",
+      "body": [],
+      "query": [
+        {
+          "name": "channel",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/auth/oidc/callback",
+      "handler": "handleOIDCCallback",
+      "body": [],
+      "query": [
+        {
+          "name": "error",
+          "type": "string"
+        },
+        {
+          "name": "code",
+          "type": "string"
+        },
+        {
+          "name": "state",
+          "type": "string"
+        }
+      ],
+      "headers": [
+        {
+          "name": "X-Device-Type",
+          "type": "string"
+        },
+        {
+          "name": "X-Push-Token",
+          "type": "string"
+        },
+        {
+          "name": "X-Device-Id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/auth/oidc/login",
+      "handler": "handleOIDCLogin",
+      "body": [],
+      "query": [
+        {
+          "name": "next",
           "type": "string"
         }
       ]
@@ -4658,6 +5169,19 @@
         {
           "name": "coder_config_json",
           "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/agent-tokens/verify",
+      "handler": "handleInternalAgentTokenVerify",
+      "body": [
+        {
+          "name": "token",
+          "type": "string",
+          "required": true
         }
       ],
       "query": []
@@ -4988,6 +5512,18 @@
       ]
     },
     {
+      "method": "GET",
+      "path": "/internal/v1/auth/verify-agent",
+      "handler": "handleInternalAuthVerifyAgent",
+      "body": [],
+      "query": [
+        {
+          "name": "token",
+          "type": "string"
+        }
+      ]
+    },
+    {
       "method": "POST",
       "path": "/internal/v1/billing/video-shots",
       "handler": "handleInternalVideoShotCall",
@@ -5094,6 +5630,153 @@
       "method": "GET",
       "path": "/internal/v1/chat-threads/:id",
       "handler": "handleInternalChatThreadGet",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/compute-tasks",
+      "handler": "handleInternalComputeTaskList",
+      "body": [],
+      "query": [
+        {
+          "name": "limit",
+          "type": "string"
+        },
+        {
+          "name": "status",
+          "type": "string"
+        },
+        {
+          "name": "requester_ref",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/compute-tasks",
+      "handler": "handleInternalComputeTaskSubmit",
+      "body": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        },
+        {
+          "name": "skill",
+          "type": "string"
+        },
+        {
+          "name": "input",
+          "type": "json.RawMessage"
+        },
+        {
+          "name": "constraints",
+          "type": "json.RawMessage"
+        },
+        {
+          "name": "priority",
+          "type": "int"
+        },
+        {
+          "name": "callback_path",
+          "type": "string"
+        },
+        {
+          "name": "requester_ref",
+          "type": "string"
+        },
+        {
+          "name": "acting_user_id",
+          "type": "string"
+        },
+        {
+          "name": "auto_start",
+          "type": "bool"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/compute-tasks/:id",
+      "handler": "handleInternalComputeTaskGet",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/compute-tasks/:id/cancel",
+      "handler": "handleInternalComputeTaskCancel",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/compute-tasks/:id/pause",
+      "handler": "handleInternalComputeTaskPause",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/compute-tasks/:id/priority",
+      "handler": "handleInternalComputeTaskPriority",
+      "body": [
+        {
+          "name": "priority",
+          "type": "int"
+        }
+      ],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/compute-tasks/:id/release",
+      "handler": "handleInternalComputeTaskRelease",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/v1/compute-tasks/:id/resume",
+      "handler": "handleInternalComputeTaskResume",
       "body": [],
       "query": [],
       "path_params": [
@@ -5431,6 +6114,20 @@
       "query": []
     },
     {
+      "method": "POST",
+      "path": "/login/oauth/access_token",
+      "handler": "handleOAuthToken",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/login/oauth/authorize",
+      "handler": "handleOAuthAuthorize",
+      "body": [],
+      "query": []
+    },
+    {
       "method": "GET",
       "path": "/metrics",
       "handler": "handleMetrics",
@@ -5442,6 +6139,41 @@
           "type": "string"
         }
       ]
+    },
+    {
+      "method": "GET",
+      "path": "/oauth/authorize",
+      "handler": "handleOAuthAuthorize",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/oauth/token",
+      "handler": "handleOAuthToken",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/oauth/userinfo",
+      "handler": "handleOAuthUserinfo",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/release/pubkey",
+      "handler": "handleReleaseResolveProxy",
+      "body": [],
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/release/resolve",
+      "handler": "handleReleaseResolveProxy",
+      "body": [],
+      "query": []
     },
     {
       "method": "GET",
