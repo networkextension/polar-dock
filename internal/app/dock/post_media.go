@@ -18,6 +18,7 @@ package dock
 import (
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -53,6 +54,16 @@ func (s *Server) registerPostMediaAsset(workspaceID, userID string, postID int64
 		return nil, fmt.Errorf("registerPostMediaAsset: empty workspace_id (post %d)", postID)
 	}
 	name := fmt.Sprintf("posts/%d/%s", postID, filepath.Base(srcPath))
+	return s.registerPostMediaAssetNamed(workspaceID, userID, name, srcPath, kind, map[string]any{"post_id": postID})
+}
+
+// registerPostMediaAssetNamed is registerPostMediaAsset with an explicit
+// asset name + metadata — the eager block-editor upload registers drafts
+// under posts/drafts/<mediaID>/ before any post exists.
+func (s *Server) registerPostMediaAssetNamed(workspaceID, userID, name, srcPath, kind string, metadata map[string]any) (*Asset, error) {
+	if workspaceID == "" {
+		return nil, fmt.Errorf("registerPostMediaAssetNamed: empty workspace_id (%s)", name)
+	}
 	a, err := s.insertAssetFromFile(AssetInsertInput{
 		WorkspaceID: workspaceID,
 		Kind:        kind,
@@ -62,7 +73,7 @@ func (s *Server) registerPostMediaAsset(workspaceID, userID string, postID int64
 		Mime:        mimeFromPath(srcPath),
 		SrcPath:     srcPath,
 		UploadedBy:  userID,
-		Metadata:    map[string]any{"post_id": postID},
+		Metadata:    metadata,
 	})
 	if err == nil {
 		return a, nil
@@ -72,6 +83,91 @@ func (s *Server) registerPostMediaAsset(workspaceID, userID string, postID int64
 		return s.getAssetByName(&ws, kind, name, "v1")
 	}
 	return nil, err
+}
+
+// postMediaMaxImageSize caps eager inline-image uploads from the block
+// editor. Post create historically has no per-image cap; new surface,
+// new bound. Chat images cap at 10 MiB — posts allow originals.
+const postMediaMaxImageSize = 20 << 20
+
+// handlePostMediaUpload is the eager upload endpoint for the block
+// editor (POST /api/posts/media, field "file"): the image is uploaded
+// while composing, thumbnailed like a post image, registered as a
+// draft asset (posts/drafts/<mediaID>/…), and the permanent
+// /api/media/<id> URLs are returned for inline :::figure/:::gallery
+// markdown. The post referencing the URLs is created later; unreferenced
+// drafts are the orphan-GC target (C-P1, Plane POLARDOCK #15).
+func (s *Server) handlePostMediaUpload(c *gin.Context) {
+	workspaceID, ok := requireWorkspaceID(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	if s.uploadDir == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "上传目录未配置"})
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil || file == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少文件"})
+		return
+	}
+	if !isUploadType(file, "image/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "只支持图片文件"})
+		return
+	}
+	if file.Size <= 0 || file.Size > postMediaMaxImageSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "图片超过大小限制 (20MB)"})
+		return
+	}
+
+	filename := buildUploadFilename(file.Filename)
+	dstPath := filepath.Join(s.uploadDir, filename)
+	if err := c.SaveUploadedFile(file, dstPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
+		return
+	}
+
+	publicURL := "/uploads/" + filename
+	imageItem, _, err := processUploadedPostImage(s.uploadDir, dstPath, publicURL, filename)
+	if err != nil {
+		log.Printf("process post media failed for %s: %v", dstPath, err)
+	}
+	if imageItem.OriginalURL == "" {
+		imageItem = normalizePostImageItem(publicURL, "", "")
+	}
+
+	// Register each variant as a draft asset; on failure the variant
+	// keeps its /uploads/ URL (same never-hard-fail posture as posts).
+	mediaID := generateResourceID()
+	cutover := func(u string) string {
+		src, isUpload := s.localPathForUploadsURL(u)
+		if !isUpload {
+			return u
+		}
+		name := "posts/drafts/" + mediaID + "/" + filepath.Base(src)
+		a, cerr := s.registerPostMediaAssetNamed(workspaceID, userID, name, src, "post-image",
+			map[string]any{"draft": true, "media_id": mediaID})
+		if cerr != nil || a == nil {
+			log.Printf("post-media draft cutover %s: %v", u, cerr)
+			return u
+		}
+		return mediaPublicURL(a.ID)
+	}
+	imageItem.OriginalURL = cutover(imageItem.OriginalURL)
+	imageItem.MediumURL = cutover(imageItem.MediumURL)
+	imageItem.SmallURL = cutover(imageItem.SmallURL)
+
+	c.JSON(http.StatusCreated, gin.H{
+		"media_id":   mediaID,
+		"url":        imageItem.OriginalURL,
+		"medium_url": imageItem.MediumURL,
+		"small_url":  imageItem.SmallURL,
+	})
 }
 
 // handlePublicMedia serves a public post-media asset: 302 to a fresh

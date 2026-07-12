@@ -1,5 +1,5 @@
 {
-  "count": 350,
+  "count": 351,
   "endpoints": [
     {
       "method": "GET",
@@ -3423,6 +3423,15 @@
           "type": "string"
         }
       ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/posts/media",
+      "handler": "handlePostMediaUpload",
+      "auth": "user",
+      "scope": "posts:write",
+      "body": [],
       "query": []
     },
     {
