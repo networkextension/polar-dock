@@ -1142,6 +1142,7 @@ func (s *Server) registerRoutes() {
 		api.POST("/posts", s.AuthMiddleware(), s.handlePostCreate)
 		api.GET("/posts", s.AuthMiddleware(), s.handlePostList)
 		api.POST("/posts/assist-with-bot", s.AuthMiddleware(), s.handlePostAssistWithBot)
+		api.POST("/posts/media", s.AuthMiddleware(), s.handlePostMediaUpload)
 		api.GET("/posts/:id", s.AuthMiddleware(), s.handlePostRead)
 		api.DELETE("/posts/:id", s.AuthMiddleware(), s.handlePostDelete)
 		api.POST("/posts/:id/like", s.AuthMiddleware(), s.handlePostLike)
