@@ -32,21 +32,28 @@ func (s *Server) handleRegister(c *gin.Context) {
 	inviteRequired := settings != nil && settings.RegistrationRequiresInvite
 	inviteCode := normalizeInviteCode(req.InvitationCode)
 	inviteMarker := ""
-	if inviteRequired {
+	// The code is validated whenever one is *supplied*, not only when
+	// the site requires one: a code is how a module role (opera 主创 /
+	// 管理员) is claimed, so an unrecognized code must be rejected
+	// rather than silently downgraded to a plain registration. Mirrors
+	// classifyInviteCode() in polar-opera's auth-identity.ts.
+	var claimedInvite *InviteCode
+	if inviteRequired || inviteCode != "" {
 		if inviteCode == "" {
 			jsonError(c, http.StatusForbidden, "auth.invite_required")
 			return
 		}
 		inviteMarker = "pending:" + strings.ToLower(strings.TrimSpace(req.Email)) + ":" + generateResourceID()[:8]
-		consumed, err := s.consumeInviteCode(inviteCode, inviteMarker, now)
+		claimed, err := s.consumeInviteCode(inviteCode, inviteMarker, now)
 		if err != nil {
 			jsonError(c, http.StatusInternalServerError, "common.server_error")
 			return
 		}
-		if !consumed {
+		if claimed == nil {
 			jsonError(c, http.StatusForbidden, "auth.invite_invalid")
 			return
 		}
+		claimedInvite = claimed
 	}
 
 	existingUser, err := s.getUserByEmail(req.Email)
@@ -100,6 +107,21 @@ func (s *Server) handleRegister(c *gin.Context) {
 			log.Printf("bind invite code failed: code=%s user=%s err=%v", inviteCode, user.ID, err)
 		}
 	}
+	// A role-bearing code lands its grant now, before the session is
+	// issued, so the very first /me the portal makes already carries
+	// the module role and can route to the right landing page.
+	moduleRole := ""
+	if claimedInvite != nil && claimedInvite.Module != "" && claimedInvite.Role != "" {
+		if err := s.grantModuleRole(claimedInvite.Module, user.ID, claimedInvite.Role, "invite:"+claimedInvite.CreatedBy, inviteCode, now); err != nil {
+			// Registration itself succeeded; failing the request here
+			// would leave the user unable to retry (email taken, code
+			// burnt). Log loudly — an admin can re-grant by hand.
+			log.Printf("grant module role failed: module=%s role=%s user=%s err=%v",
+				claimedInvite.Module, claimedInvite.Role, user.ID, err)
+		} else {
+			moduleRole = claimedInvite.Module + ":" + claimedInvite.Role
+		}
+	}
 
 	if err := s.upsertUserDeviceWithID(user.ID, deviceType, deviceID, pushToken, now); err != nil {
 		jsonError(c, http.StatusInternalServerError, "common.server_error")
@@ -118,10 +140,15 @@ func (s *Server) handleRegister(c *gin.Context) {
 	s.setAuthCookies(c, accessToken, refreshToken)
 	s.recordLoginEvent(c, user.ID, "register", deviceType)
 
-	jsonMessage(c, http.StatusCreated, "auth.register_success", gin.H{
+	payload := gin.H{
 		"user_id":  user.ID,
 		"username": user.Username,
-	})
+	}
+	if moduleRole != "" {
+		payload["module"] = claimedInvite.Module
+		payload["module_role"] = claimedInvite.Role
+	}
+	jsonMessage(c, http.StatusCreated, "auth.register_success", payload)
 }
 
 func (s *Server) handleLogin(c *gin.Context) {
@@ -241,11 +268,21 @@ func (s *Server) handleMe(c *gin.Context) {
 		}
 	}
 
+	// Per-module roles ({"opera":"researcher"}). An auth portal skinned
+	// for one module (opera-dock-ui) reads this straight after login to
+	// pick the landing page, instead of guessing from users.role.
+	moduleRoles, err := s.moduleRolesForUser(userIDStr)
+	if err != nil {
+		log.Printf("me: module roles lookup failed user=%s err=%v", userIDStr, err)
+		moduleRoles = map[string]string{}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"user_id":    userID,
-		"username":   username,
-		"role":       role,
-		"site_admin": isSiteAdmin,
+		"user_id":      userID,
+		"username":     username,
+		"role":         role,
+		"site_admin":   isSiteAdmin,
+		"module_roles": moduleRoles,
 		"email": func() string {
 			if user != nil {
 				return user.Email

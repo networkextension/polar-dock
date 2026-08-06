@@ -136,6 +136,14 @@ func (s *Server) handleSiteSettingsUpdate(c *gin.Context) {
 func (s *Server) handleInviteCodeGenerate(c *gin.Context) {
 	var req struct {
 		Count int `json:"count"`
+		// Module/Role turn the batch into role-granting codes: whoever
+		// redeems one is registered with that role inside that module
+		// (opera: admin / researcher / audience). Omit both for a plain
+		// "you may register" code.
+		Module        string `json:"module"`
+		Role          string `json:"role"`
+		Note          string `json:"note"`
+		ExpiresInDays int    `json:"expires_in_days"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		req.Count = 1
@@ -147,9 +155,35 @@ func (s *Server) handleInviteCodeGenerate(c *gin.Context) {
 		req.Count = 50
 	}
 
+	now := time.Now()
+	opts := InviteCodeMintOptions{
+		Module: normalizeModuleName(req.Module),
+		Role:   normalizeModuleRole(req.Role),
+		Note:   strings.TrimSpace(req.Note),
+	}
+	if (opts.Module == "") != (opts.Role == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "module 与 role 必须同时提供"})
+		return
+	}
+	if opts.Module != "" {
+		prefix, err := validateModuleRole(opts.Module, opts.Role)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的模块或角色"})
+			return
+		}
+		opts.Prefix = prefix
+	}
+	if req.ExpiresInDays > 0 {
+		if req.ExpiresInDays > 3650 {
+			req.ExpiresInDays = 3650
+		}
+		exp := now.AddDate(0, 0, req.ExpiresInDays)
+		opts.ExpiresAt = &exp
+	}
+
 	adminID, _ := c.Get("user_id")
 	adminIDStr, _ := adminID.(string)
-	codes, err := s.createInviteCodes(adminIDStr, req.Count, time.Now())
+	codes, err := s.createInviteCodes(adminIDStr, req.Count, opts, now)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "邀请码生成失败"})
 		return
@@ -160,19 +194,7 @@ func (s *Server) handleInviteCodeGenerate(c *gin.Context) {
 	// must never land in the audit log.
 	prefixes := make([]string, 0, len(codes))
 	for _, ic := range codes {
-		code := ic.Code
-		var head, tail string
-		switch {
-		case len(code) <= 4:
-			head = code
-		case len(code) <= 8:
-			head = code[:2]
-			tail = code[len(code)-2:]
-		default:
-			head = code[:4]
-			tail = code[len(code)-2:]
-		}
-		prefixes = append(prefixes, head+"…"+tail)
+		prefixes = append(prefixes, inviteCodeHint(ic.Code))
 	}
 	s.LogAdminAction(c, AdminAuditIn{
 		Category:   AuditCatProvisioning,
@@ -180,8 +202,11 @@ func (s *Server) handleInviteCodeGenerate(c *gin.Context) {
 		TargetKind: "site_setting",
 		TargetID:   "invite_codes",
 		Payload: map[string]any{
-			"count":             len(codes),
+			"count":              len(codes),
 			"code_hint_prefixes": prefixes,
+			"module":             opts.Module,
+			"role":               opts.Role,
+			"expires_at":         opts.ExpiresAt,
 		},
 	})
 

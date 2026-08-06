@@ -73,12 +73,37 @@ func (s *Server) handleInternalAuthVerify(c *gin.Context) {
 			workspaceID = req
 		}
 	}
+	// Module role: a plugin asks "who is this user *to me*", and dock
+	// answers with the grant recorded for the calling plugin (keyed on
+	// the HMAC-authenticated X-Polar-Plugin-Name — a plugin therefore
+	// cannot read, or claim, another module's roles). `role` is
+	// overridden so existing plugins pick this up without a code
+	// change; `platform_role` keeps the unmasked users.role for
+	// anything that needs it, and `module_role` is "" when the user has
+	// no grant in that module.
+	pluginName, _ := c.Get("plugin_name")
+	pluginStr, _ := pluginName.(string)
+	role := sess.Role
+	moduleRole := ""
+	if pluginStr != "" {
+		granted, err := s.getModuleRole(pluginStr, sess.UserID)
+		if err != nil {
+			log.Printf("internal auth verify: module role lookup failed plugin=%s user=%s err=%v",
+				pluginStr, sess.UserID, err)
+		} else if granted != "" {
+			moduleRole = granted
+			role = granted
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"user_id":      sess.UserID,
-		"username":     sess.Username,
-		"role":         sess.Role,
-		"workspace_id": workspaceID,
-		"expires_at":   sess.ExpiresAt.UTC().Format(time.RFC3339),
+		"user_id":       sess.UserID,
+		"username":      sess.Username,
+		"role":          role,
+		"platform_role": sess.Role,
+		"module":        pluginStr,
+		"module_role":   moduleRole,
+		"workspace_id":  workspaceID,
+		"expires_at":    sess.ExpiresAt.UTC().Format(time.RFC3339),
 	})
 }
 

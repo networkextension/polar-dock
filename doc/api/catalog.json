@@ -1,5 +1,5 @@
 {
-  "count": 351,
+  "count": 355,
   "endpoints": [
     {
       "method": "GET",
@@ -4094,6 +4094,98 @@
         {
           "name": "count",
           "type": "int"
+        },
+        {
+          "name": "module",
+          "type": "string"
+        },
+        {
+          "name": "role",
+          "type": "string"
+        },
+        {
+          "name": "note",
+          "type": "string"
+        },
+        {
+          "name": "expires_in_days",
+          "type": "int"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/site-settings/invite-codes/disable",
+      "handler": "handleInviteCodeDisable",
+      "auth": "admin",
+      "scope": "admin:write",
+      "body": [
+        {
+          "name": "code",
+          "type": "string"
+        }
+      ],
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/site-settings/module-roles",
+      "handler": "handleModuleRoleRevoke",
+      "auth": "admin",
+      "scope": "admin:write",
+      "body": [],
+      "query": [
+        {
+          "name": "module",
+          "type": "string"
+        },
+        {
+          "name": "user_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/site-settings/module-roles",
+      "handler": "handleModuleRoleList",
+      "auth": "admin",
+      "scope": "admin:read",
+      "body": [],
+      "query": [
+        {
+          "name": "module",
+          "type": "string"
+        },
+        {
+          "name": "limit",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/site-settings/module-roles",
+      "handler": "handleModuleRoleGrant",
+      "auth": "admin",
+      "scope": "admin:write",
+      "body": [
+        {
+          "name": "module",
+          "type": "string"
+        },
+        {
+          "name": "role",
+          "type": "string"
+        },
+        {
+          "name": "user_id",
+          "type": "string"
+        },
+        {
+          "name": "email",
+          "type": "string"
         }
       ],
       "query": []

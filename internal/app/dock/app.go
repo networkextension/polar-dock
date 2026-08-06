@@ -979,6 +979,12 @@ func (s *Server) registerRoutes() {
 		api.PUT("/prompts/:slug", s.AuthMiddleware(), s.handlePromptTemplateUpdate) // site-admin OR prompt:admin (handler-gated)
 		api.GET("/site-settings/invite-codes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleInviteCodeList)
 		api.POST("/site-settings/invite-codes", s.AuthMiddleware(), s.AdminMiddleware(), s.handleInviteCodeGenerate)
+		api.POST("/site-settings/invite-codes/disable", s.AuthMiddleware(), s.AdminMiddleware(), s.handleInviteCodeDisable)
+		// Per-module roles (opera 主创/管理员, …) — see module_roles_store.go
+		// for why these are a separate axis from users.role.
+		api.GET("/site-settings/module-roles", s.AuthMiddleware(), s.AdminMiddleware(), s.handleModuleRoleList)
+		api.POST("/site-settings/module-roles", s.AuthMiddleware(), s.AdminMiddleware(), s.handleModuleRoleGrant)
+		api.DELETE("/site-settings/module-roles", s.AuthMiddleware(), s.AdminMiddleware(), s.handleModuleRoleRevoke)
 		api.POST("/site-settings/icon", s.AuthMiddleware(), s.AdminMiddleware(), s.handleSiteIconUpload)
 		api.POST("/site-settings/apple-push-cert", s.AuthMiddleware(), s.AdminMiddleware(), s.handleApplePushCertificateUpload)
 		api.DELETE("/site-settings/apple-push-cert", s.AuthMiddleware(), s.AdminMiddleware(), s.handleApplePushCertificateDelete)
