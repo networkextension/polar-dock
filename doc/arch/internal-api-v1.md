@@ -83,13 +83,38 @@ Validates an end-user session token (whichever the user presented to the plugin 
 **Response 200:**
 ```json
 {
-  "user_id":      "u_abc",
-  "username":     "Kong",
-  "role":         "user",          // or "admin"
-  "workspace_id": "t_root",        // active workspace (from X-Workspace-Id or personal team)
-  "expires_at":   "2026-05-28T00:00:00Z"
+  "user_id":       "u_abc",
+  "username":      "Kong",
+  "role":          "researcher",    // module role when granted, else the platform role
+  "platform_role": "user",          // users.role — "user" or "admin"
+  "module":        "opera",         // the calling plugin (X-Polar-Plugin-Name)
+  "module_role":   "researcher",    // "" when this user has no grant in this module
+  "workspace_id":  "t_root",        // active workspace (from X-Workspace-Id or personal team)
+  "expires_at":    "2026-05-28T00:00:00Z"
 }
 ```
+
+**Module roles.** A plugin can have its own cast — 风洞 (`opera`) has `admin` / `researcher` /
+`audience` — which is *not* the platform role: `users.role='admin'` means dock **site** admin, so
+minting one for a module admin would escalate across the whole platform. Module grants therefore
+live in `module_user_roles(module, user_id, role)` and are resolved here against the
+HMAC-authenticated `X-Polar-Plugin-Name`, so a plugin can neither read nor claim another module's
+roles.
+
+`role` is overridden by the grant so an existing plugin picks it up with no code change;
+`platform_role` keeps the unmasked `users.role`. A user with no grant is unchanged
+(`module_role: ""`), so a plugin that has never issued grants sees exactly what it saw before.
+
+Grants are created by redeeming a role-bearing invite code at registration
+(`POST /api/register` with `invitation_code`) or by a site admin via
+`POST /api/site-settings/module-roles`. Codes are minted with
+`POST /api/site-settings/invite-codes {count, module, role, expires_in_days?, note?}`; a code's
+human-readable prefix (`WT-CREATOR-…`) is cosmetic — the row is the authority, so a fabricated code
+grants nothing, and an unrecognized code is **rejected** at registration rather than downgraded to a
+plain signup. `GET /api/me` returns the same data user-side as `module_roles: {"opera":"researcher"}`.
+
+Open-API (`polar_…`) tokens verify through this endpoint too but are not module-role aware — they
+act as their owner's platform role.
 
 **Response 401:** `{"error":"invalid session"}`.
 
