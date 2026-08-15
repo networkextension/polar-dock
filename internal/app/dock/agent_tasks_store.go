@@ -67,7 +67,19 @@ func (s *Server) enqueueTask(workspaceID, createdBy, skill string, input, constr
 
 // claimTask atomically pulls the next queued task whose skill the agent can do,
 // in the given workspace, and marks it running. Returns nil if none.
+//
+// Targeting (polar-cloud P1-A): a task may pin itself to one machine via
+// constraints_json {"host_id": "<hosts.id>"} and/or {"agent_id": "<agents.id>"}.
+// Such tasks are only claimable by that machine — needed when a follow-up
+// op (stop/destroy a VM) must run where the VM lives. Unpinned tasks
+// behave as before. hostID/agentID are the CLAIMER's identities as
+// resolved from its agent token (empty when unknown → cannot claim
+// pinned tasks).
 func (s *Server) claimTask(workspaceID, agentID string, skills []string) (*AgentTask, error) {
+	return s.claimTaskFor(workspaceID, agentID, "", "", skills)
+}
+
+func (s *Server) claimTaskFor(workspaceID, agentTokenID, claimerHostID, claimerAgentID string, skills []string) (*AgentTask, error) {
 	if len(skills) == 0 {
 		return nil, nil
 	}
@@ -81,9 +93,11 @@ func (s *Server) claimTask(workspaceID, agentID string, skills []string) (*Agent
 	err = tx.QueryRow(
 		`SELECT id FROM agent_tasks
 		 WHERE status='queued' AND workspace_id=$1 AND skill = ANY($2)
+		   AND (NULLIF(constraints_json->>'host_id', '') IS NULL OR constraints_json->>'host_id' = $3)
+		   AND (NULLIF(constraints_json->>'agent_id', '') IS NULL OR constraints_json->>'agent_id' = $4)
 		 ORDER BY priority DESC, created_at
 		 FOR UPDATE SKIP LOCKED LIMIT 1`,
-		workspaceID, pq.Array(skills),
+		workspaceID, pq.Array(skills), claimerHostID, claimerAgentID,
 	).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -93,7 +107,7 @@ func (s *Server) claimTask(workspaceID, agentID string, skills []string) (*Agent
 	}
 	if _, err := tx.Exec(
 		`UPDATE agent_tasks SET status='running', agent_id=$2, claimed_at=now(), updated_at=now() WHERE id=$1`,
-		id, agentID,
+		id, agentTokenID,
 	); err != nil {
 		return nil, err
 	}
@@ -352,4 +366,16 @@ func scanAgentTaskRows(r rowScanner) (*AgentTask, error) {
 		t.ReleasedAt = &releasedAt.Time
 	}
 	return &t, nil
+}
+
+// claimerIdentity resolves the claiming machine's hosts.id and agents.id from
+// its agent token so pinned tasks (constraints_json host_id/agent_id) match.
+// Best-effort: unknown → "" (only unpinned tasks are then claimable).
+func (s *Server) claimerIdentity(agentTokenID string) (hostID, agentID string) {
+	if agentTokenID == "" {
+		return "", ""
+	}
+	_ = s.db.QueryRow(`SELECT id FROM hosts WHERE agent_token_id = $1 ORDER BY last_seen_at DESC NULLS LAST LIMIT 1`, agentTokenID).Scan(&hostID)
+	_ = s.db.QueryRow(`SELECT id FROM agents WHERE agent_token_id = $1 LIMIT 1`, agentTokenID).Scan(&agentID)
+	return hostID, agentID
 }

@@ -69,6 +69,7 @@ extract(解码+抽帧+脸,**x86 也行**)、analyze(WhisperKit/FluidAudio,**要 
 
 **加:**
 - 任务 `constraints_json` 支持 `{"required_arch":"arm64"|"x86_64"|null, "needs_ane":true|false}`。
+- **已落地（polar-cloud P1-A，2026-08-15）**：`constraints_json` 的 `host_id`（= `hosts.id`）/ `agent_id`（= `agents.id`）— 任务钉到一台机器，`claimTask` 只让该机器领（按 claimer 的 agent token 反查 hosts/agents）；空/缺省 = 任意机器。用于 VM 的 stop/destroy 必须回到创建它的宿主。
 - `claimTask` 的 SQL 增加过滤:agent claim 时带上自己的 `arch`/`has_ane`(agent 已在 host_info 里有
   [[project-host-info-tiers]] 的 `iface_kind`/arch;复用),`WHERE constraints 兼容`。
 - agent `skill.advertise` 已带 capabilities;扩展为带 `{arch, ane}` 能力位。
