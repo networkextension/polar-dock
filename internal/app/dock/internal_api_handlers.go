@@ -583,6 +583,19 @@ func (s *Server) handleInternalAgentPresence(c *gin.Context) {
 			if !conn.attachedAt.IsZero() {
 				out["last_seen_at"] = conn.attachedAt.UTC().Format(time.RFC3339)
 			}
+			c.JSON(http.StatusOK, out)
+			return
+		}
+	}
+	// Phase 4b: agent may live in polar-hosts' hub.
+	if info := s.routeAgentLookup(botID); info != nil && info.Attached {
+		out["attached"] = true
+		out["remote"] = true
+		if info.HostID != "" {
+			out["host_id"] = info.HostID
+		}
+		if info.Tool != "" {
+			out["tool"] = info.Tool
 		}
 	}
 	c.JSON(http.StatusOK, out)

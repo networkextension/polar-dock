@@ -13,6 +13,7 @@ package dock
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -231,4 +232,83 @@ func remoteDispatchError(status int, body string) error {
 		return errAgentDisconnected
 	}
 	return fmt.Errorf("remote dispatch HTTP %d: %s", status, body)
+}
+
+// ── Phase 4b follow-ups: host-keyed lookup/dispatch + kick ─────────────────
+//
+// After the /ws/agent cutover the agent for a host lives in polar-hosts'
+// hub. These helpers keep dock features that address agents by host_id
+// (skill install/uninstall) or need to kick an agent working: local hub
+// first, then resolve the host's bot via the agents table and go remote.
+
+// botUserIDForHost resolves the bot bound to a host from the agents table
+// (v4: one agent row per host).
+func (s *Server) botUserIDForHost(hostID string) string {
+	var bot sql.NullString
+	_ = s.db.QueryRow(`SELECT bot_user_id FROM agents WHERE host_id = $1 AND bot_user_id IS NOT NULL ORDER BY last_hello_at DESC NULLS LAST LIMIT 1`, hostID).Scan(&bot)
+	if bot.Valid {
+		return bot.String
+	}
+	return ""
+}
+
+// routeAgentFrameByHost sends a fire-and-forget frame to the agent attached
+// for hostID (local hub or polar-hosts).
+func (s *Server) routeAgentFrameByHost(hostID string, frame map[string]any) error {
+	if s.agentHub != nil {
+		if conn := s.agentHub.lookupByHostID(hostID); conn != nil {
+			payload, err := json.Marshal(frame)
+			if err != nil {
+				return err
+			}
+			select {
+			case conn.send <- payload:
+				return nil
+			case <-conn.close:
+				return errAgentDisconnected
+			case <-time.After(5 * time.Second):
+				return errAgentSendTimeout
+			}
+		}
+	}
+	if s.polarHostsBaseURL == "" {
+		return errAgentNotAttached
+	}
+	bot := s.botUserIDForHost(hostID)
+	if bot == "" {
+		return errAgentNotAttached
+	}
+	return s.routeAgentFrame(bot, frame)
+}
+
+// routeAgentKick closes the agent connection identified by agent_id and/or
+// bot_user_id, locally or in polar-hosts. Returns true when a live
+// connection was found and closed.
+func (s *Server) routeAgentKick(agentID, botUserID string) bool {
+	if s.agentHub != nil {
+		conn := s.agentHub.lookupByAgentID(agentID)
+		if conn == nil && botUserID != "" {
+			conn = s.agentHub.lookup(botUserID)
+		}
+		if conn != nil {
+			safeCloseAgentConn(conn)
+			return true
+		}
+	}
+	if s.polarHostsBaseURL == "" {
+		return false
+	}
+	body, _ := json.Marshal(map[string]any{"agent_id": agentID, "bot_id": botUserID})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := s.doRemoteDispatch(ctx, "/internal/v1/agents/kick", body)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Kicked bool `json:"kicked"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode == http.StatusOK && out.Kicked
 }
