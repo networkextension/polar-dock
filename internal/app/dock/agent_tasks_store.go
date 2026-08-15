@@ -376,6 +376,11 @@ func (s *Server) claimerIdentity(agentTokenID string) (hostID, agentID string) {
 		return "", ""
 	}
 	_ = s.db.QueryRow(`SELECT id FROM hosts WHERE agent_token_id = $1 ORDER BY last_seen_at DESC NULLS LAST LIMIT 1`, agentTokenID).Scan(&hostID)
-	_ = s.db.QueryRow(`SELECT id FROM agents WHERE agent_token_id = $1 LIMIT 1`, agentTokenID).Scan(&agentID)
+	// v4: hosts.agent_token_id is NULL; the token→host link lives on agents.
+	var agentHostID sql.NullString
+	_ = s.db.QueryRow(`SELECT id, host_id FROM agents WHERE agent_token_id = $1 LIMIT 1`, agentTokenID).Scan(&agentID, &agentHostID)
+	if hostID == "" && agentHostID.Valid {
+		hostID = agentHostID.String
+	}
 	return hostID, agentID
 }
