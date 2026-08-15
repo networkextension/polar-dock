@@ -79,15 +79,6 @@ func (s *Server) handleHostSkillInstall(c *gin.Context) {
 		return
 	}
 
-	conn := s.agentHub.lookupByHostID(hostID)
-	if conn == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":   "agent not attached for host",
-			"host_id": hostID,
-		})
-		return
-	}
-
 	installID := "ins_" + generateResourceID()
 	frame := map[string]any{
 		"kind":             "skill.install",
@@ -100,27 +91,27 @@ func (s *Server) handleHostSkillInstall(c *gin.Context) {
 		"size_bytes":       entry.SizeBytes,
 		"manifest_preview": entry.ManifestJSON,
 	}
-	payload, err := json.Marshal(frame)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "marshal: " + err.Error()})
+	// Local hub or polar-hosts (Phase 4b).
+	if err := s.routeAgentFrameByHost(hostID, frame); err != nil {
+		switch {
+		case errors.Is(err, errAgentNotAttached):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent not attached for host", "host_id": hostID})
+		case errors.Is(err, errAgentDisconnected):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent disconnected"})
+		case errors.Is(err, errAgentSendTimeout):
+			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "agent send timeout"})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"error": "dispatch skill.install: " + err.Error()})
+		}
 		return
 	}
-	select {
-	case conn.send <- payload:
-		log.Printf("[skill.install] sent host=%s catalog=%s id=%s", hostID, req.CatalogID, installID)
-	case <-conn.close:
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent disconnected"})
-		return
-	case <-time.After(5 * time.Second):
-		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "agent send timeout"})
-		return
-	}
+	log.Printf("[skill.install] sent host=%s catalog=%s id=%s", hostID, req.CatalogID, installID)
 	c.JSON(http.StatusAccepted, gin.H{
-		"install_id":   installID,
-		"host_id":      hostID,
-		"catalog_id":   req.CatalogID,
-		"sent_at":      time.Now().UTC(),
-		"hint":         "result lands via WS skill.install.result + the next skill.advertise tick (~60s) reflects in host_skills",
+		"install_id": installID,
+		"host_id":    hostID,
+		"catalog_id": req.CatalogID,
+		"sent_at":    time.Now().UTC(),
+		"hint":       "result lands via WS skill.install.result + the next skill.advertise tick (~60s) reflects in host_skills",
 	})
 }
 
@@ -148,11 +139,6 @@ func (s *Server) handleHostSkillUninstall(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "publisher, skill_kind, version all required"})
 		return
 	}
-	conn := s.agentHub.lookupByHostID(hostID)
-	if conn == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent not attached for host"})
-		return
-	}
 	uninstallID := "uni_" + generateResourceID()
 	frame := map[string]any{
 		"kind":       "skill.uninstall",
@@ -162,21 +148,20 @@ func (s *Server) handleHostSkillUninstall(c *gin.Context) {
 		"version":    req.Version,
 		"force":      req.Force,
 	}
-	payload, err := json.Marshal(frame)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "marshal: " + err.Error()})
+	if err := s.routeAgentFrameByHost(hostID, frame); err != nil {
+		switch {
+		case errors.Is(err, errAgentNotAttached):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent not attached for host"})
+		case errors.Is(err, errAgentDisconnected):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent disconnected"})
+		case errors.Is(err, errAgentSendTimeout):
+			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "agent send timeout"})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"error": "dispatch skill.uninstall: " + err.Error()})
+		}
 		return
 	}
-	select {
-	case conn.send <- payload:
-		log.Printf("[skill.uninstall] sent host=%s %s/%s@%s id=%s force=%v", hostID, req.Publisher, req.SkillKind, req.Version, uninstallID, req.Force)
-	case <-conn.close:
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent disconnected"})
-		return
-	case <-time.After(5 * time.Second):
-		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "agent send timeout"})
-		return
-	}
+	log.Printf("[skill.uninstall] sent host=%s %s/%s@%s id=%s force=%v", hostID, req.Publisher, req.SkillKind, req.Version, uninstallID, req.Force)
 	c.JSON(http.StatusAccepted, gin.H{
 		"uninstall_id": uninstallID,
 		"host_id":      hostID,

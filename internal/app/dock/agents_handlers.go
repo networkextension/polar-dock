@@ -48,15 +48,8 @@ func (s *Server) handleAdminAgentKick(c *gin.Context) {
 
 	// Try agent_id first (v4 primary key in the hub), then fall back to
 	// bot_user_id for legacy attaches that pre-date the agents table.
-	conn := s.agentHub.lookupByAgentID(id)
-	if conn == nil && botUserID.Valid && botUserID.String != "" {
-		conn = s.agentHub.lookup(botUserID.String)
-	}
-	kicked := false
-	if conn != nil {
-		safeCloseAgentConn(conn)
-		kicked = true
-	}
+	// Local hub first, then polar-hosts (Phase 4b: agents may attach there).
+	kicked := s.routeAgentKick(id, botUserID.String)
 
 	s.LogAdminAction(c, AdminAuditIn{
 		Category:     AuditCatProvisioning,

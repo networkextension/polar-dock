@@ -577,7 +577,7 @@ func (s *Server) handleAgentDispatch(c *gin.Context) {
 		return
 	}
 	callID := generateResourceID()
-	result, err := s.agentHub.dispatchToolCall(botID, callID, req.Tool, req.Args)
+	result, err := s.routeAgentToolCall(botID, callID, req.Tool, req.Args)
 	if err != nil {
 		switch err {
 		case errAgentNotAttached:
@@ -867,6 +867,18 @@ func (s *Server) handleAgentStatus(c *gin.Context) {
 	}
 	conn := s.agentHub.lookup(botID)
 	if conn == nil {
+		// Phase 4b: the agent may be attached to polar-hosts' hub.
+		if info := s.routeAgentLookup(botID); info != nil && info.Attached {
+			caps := info.Capabilities
+			if caps == nil {
+				caps = []string{}
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"attached": true, "workdir": info.Workdir, "capabilities": caps,
+				"tool": info.Tool, "host_id": info.HostID, "remote": true,
+			})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"attached": false})
 		return
 	}
@@ -914,6 +926,15 @@ func (s *Server) handleAgentStatusBatch(c *gin.Context) {
 		}
 		conn := s.agentHub.lookup(id)
 		if conn == nil {
+			if info := s.routeAgentLookup(id); info != nil && info.Attached {
+				caps := info.Capabilities
+				if caps == nil {
+					caps = []string{}
+				}
+				out[id] = gin.H{"attached": true, "workdir": info.Workdir, "capabilities": caps,
+					"tool": info.Tool, "host_id": info.HostID, "remote": true}
+				continue
+			}
 			out[id] = gin.H{"attached": false}
 			continue
 		}
