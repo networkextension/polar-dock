@@ -113,11 +113,14 @@ func (s *Server) handleComputeTaskClaim(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "personal workspace lookup failed"})
 		return
 	}
-	// agent_id is informational here (the claim is workspace-scoped); pass the
-	// token id so finalize can verify the same agent reports back.
+	// agent_id stored on the row is the token id so finalize can verify the
+	// same agent reports back. The claimer's hosts.id / agents.id are resolved
+	// so tasks pinned via constraints_json {host_id|agent_id} only go to that
+	// machine (polar-cloud P1-A).
 	tokenIDVal, _ := c.Get("agent_token_id")
-	agentID, _ := tokenIDVal.(string)
-	task, err := s.claimTask(workspaceID, agentID, req.Skills)
+	agentTokenID, _ := tokenIDVal.(string)
+	claimerHostID, claimerAgentID := s.claimerIdentity(agentTokenID)
+	task, err := s.claimTaskFor(workspaceID, agentTokenID, claimerHostID, claimerAgentID, req.Skills)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
