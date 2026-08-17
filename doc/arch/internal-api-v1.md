@@ -207,22 +207,30 @@ Convenience endpoint. Plugin sends OpenAI-compatible chat-completion request **w
 
 ### 8. `POST /internal/v1/notify`
 
-Sends a push notification fan-out to a user's registered devices.
+Plugin → user notification fan-out (real since 2026-08-17; before that a stub that only counted devices).
 
 **Request:**
 ```json
 {
-  "user_id": "u_abc",
-  "title":   "wg device registered",
-  "body":    "iPhone 16 joined the mesh",
-  "kind":    "wg.device_registered",
-  "data":    { "device_id": "d_xyz" }
+  "user_id":      "u_abc",                 // OR
+  "workspace_id": "ws_123",                // all members of the workspace…
+  "roles":        ["owner","admin"],       // …optionally filtered by team role (default: everyone)
+  "title":        "云主机余额不足",
+  "body":         "余额 0.5 币，24h 后停机 …",
+  "kind":         "cloud.billing.grace",   // free-form tag; rendered as a trailing #hashtag
+  "url":          "https://cloud.4950.store:2443/#billing",
+  "data":         { "tenant_id": "ws_123" }
 }
 ```
+`user_id` alone → the notice lands in that user's personal workspace. `workspace_id` + `user_id` → only that member.
 
-**Response 200:** `{ "delivered": 2, "skipped": 0 }`.
+**Channels (all best-effort):**
+- **room** — a per-workspace system room named `系统通知` (created on demand by the `system` user) receives the notice as a text message from `system`; recipients are added as members if missing, so it shows up live (chat:events) + unread like any room message. This channel always works.
+- **email** — each recipient with an email, only if the dock has `SMTP_*` configured (zen currently does not → 0).
+- **push** — not wired (no APNs pipeline for non-chat payloads); the count of pushable devices is reported as `push_skipped`.
 
-`kind` controls which notification template / icon the client renders. New `kind` values can be added by plugins freely — the client's mapping is permissive.
+**Response 200:** `{ "delivered": {"room": 2, "email": 0, "push": 0}, "push_skipped": 1, "recipients": 2, "workspace_id": "ws_123", "room_id": 42, "kind": "cloud.billing.grace" }`.
+**400** if neither `user_id` nor `workspace_id`, or neither `title` nor `body`; **404** unknown user/workspace.
 
 ### 9. `POST /internal/v1/plugin-registry/heartbeat`
 

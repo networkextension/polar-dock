@@ -405,47 +405,7 @@ func (s *Server) handleInternalLLMChatCompletion(c *gin.Context) {
 	})
 }
 
-// ── 8. POST /internal/v1/notify ────────────────────────────────────────────
-// Phase 1-B ships a STUB: counts the user's pushable devices but
-// doesn't actually dispatch via APNs/FCM. Real push wiring lands once
-// a plugin needs it (Phase 1-C+) — the current chat push pipeline
-// expects a chat_messages.id, which doesn't exist for plugin-initiated
-// notifications without a richer model. Doc this in the response
-// body so plugins know to gracefully degrade.
-
-type internalNotifyReq struct {
-	UserID string         `json:"user_id" binding:"required"`
-	Title  string         `json:"title"`
-	Body   string         `json:"body"`
-	Kind   string         `json:"kind"`
-	Data   map[string]any `json:"data"`
-}
-
-func (s *Server) handleInternalNotify(c *gin.Context) {
-	var req internalNotifyReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		internalErr(c, http.StatusBadRequest, "invalid_json")
-		return
-	}
-	if strings.TrimSpace(req.UserID) == "" {
-		internalErr(c, http.StatusBadRequest, "user_id required")
-		return
-	}
-	devices, err := s.listPushableUserDevices(req.UserID)
-	if err != nil {
-		internalErr(c, http.StatusInternalServerError, "device lookup failed")
-		return
-	}
-	// Stub: don't actually dispatch. Returning a 200 with a {stub:true}
-	// hint so plugins can degrade gracefully without breaking their
-	// callers. Real dispatch path is documented as Phase 1-C+.
-	c.JSON(http.StatusOK, gin.H{
-		"delivered": 0,
-		"skipped":   len(devices),
-		"stub":      true,
-		"stub_note": "notify dispatch not yet wired for plugins; tracked for Phase 1-C+",
-	})
-}
+// ── 8. POST /internal/v1/notify ── see internal_notify.go ──────────────────
 
 // ── 9. POST /internal/v1/plugin-registry/heartbeat ─────────────────────────
 // Plugin announces it is alive. Updates last_heartbeat + version on

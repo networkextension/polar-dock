@@ -5899,8 +5899,15 @@
       "body": [
         {
           "name": "user_id",
-          "type": "string",
-          "required": true
+          "type": "string"
+        },
+        {
+          "name": "workspace_id",
+          "type": "string"
+        },
+        {
+          "name": "roles",
+          "type": "[]string"
         },
         {
           "name": "title",
@@ -5912,6 +5919,10 @@
         },
         {
           "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "url",
           "type": "string"
         },
         {
