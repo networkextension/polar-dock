@@ -410,3 +410,25 @@ func TestAgentHub_EmptyAgentIDFallsBackToBotKey(t *testing.T) {
 		t.Fatalf("legacy second register: prev = %p, want %p", prev, c1)
 	}
 }
+
+func TestHandleInternalNotify_MissingContent(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/internal/v1/notify", strings.NewReader(`{"workspace_id":"ws1"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	(&Server{}).handleInternalNotify(c)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want 400", w.Code)
+	}
+}
+
+func TestFormatNotice(t *testing.T) {
+	got := formatNotice(internalNotifyReq{Title: "余额不足", Body: "还剩 0.5 币", URL: "https://cloud.example/billing", Kind: "cloud.billing.grace"})
+	want := "余额不足\n还剩 0.5 币\nhttps://cloud.example/billing\n#cloud.billing.grace"
+	if got != want {
+		t.Fatalf("formatNotice: got %q want %q", got, want)
+	}
+	if formatNotice(internalNotifyReq{Body: "b"}) != "b" {
+		t.Fatalf("body-only notice should be bare body")
+	}
+}
