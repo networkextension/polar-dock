@@ -1,5 +1,5 @@
 {
-  "count": 351,
+  "count": 352,
   "endpoints": [
     {
       "method": "GET",
@@ -5284,6 +5284,24 @@
         }
       ],
       "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/internal/v1/agents/:id",
+      "handler": "handleInternalAgentGet",
+      "body": [],
+      "query": [
+        {
+          "name": "workspace_id",
+          "type": "string"
+        }
+      ],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
     },
     {
       "method": "POST",

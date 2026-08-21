@@ -867,6 +867,9 @@ func (s *Server) registerRoutes() {
 		// register; raw machine_uuid arrives on the wire, host_id is
 		// hashed server-side, agent_id is server-minted.
 		internal.POST("/agents/register", s.handleInternalAgentRegister)
+		// agent facts by v4 id (os/arch/hostname/online) — fw-svc 编译
+		// 变体判定(macOS pf 保留 com.apple anchors)与 machines 富化。
+		internal.GET("/agents/:id", s.handleInternalAgentGet)
 		internal.POST("/workspace-proxy-tokens/ensure", s.handleInternalWorkspaceProxyTokenEnsure)
 		internal.POST("/bots/create-for-agent", s.handleInternalBotForAgent)
 
