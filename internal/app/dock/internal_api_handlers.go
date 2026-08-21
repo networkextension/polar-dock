@@ -7,6 +7,7 @@ package dock
 // See doc/arch/internal-api-v1.md for request/response shapes.
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -879,4 +880,79 @@ func (s *Server) handleInternalAgentTokenVerify(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"valid": true, "token_id": tokenID, "user_id": userID})
+}
+
+// ── 21. GET /internal/v1/agents/:id ─────────────────────────────────
+// Resolves a dock agents-v4 id ("ag_…") to its machine facts (os/arch/
+// hostname + liveness). First consumer: polar-firewall's fw-svc, which
+// needs the target OS to decide pf compilation variants (macOS keeps the
+// com.apple anchor scaffolding) and enriches its machines overlay.
+// Optional ?workspace_id= narrows the lookup (404 on mismatch) so a
+// workspace-scoped caller can't probe other tenants' agents.
+//
+// online = live hub attach (via the agent's bot user, local or
+// polar-hosts hub) OR hosts.last_seen_at within 60s — the same
+// freshness window polar-hosts' UI uses (hosts.ts ONLINE_MS).
+
+func (s *Server) handleInternalAgentGet(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		internalErr(c, http.StatusBadRequest, "id required")
+		return
+	}
+	var (
+		workspaceID, name, os, arch, hostID   string
+		hostName, hostOS, hostArch, botUserID sql.NullString
+		lastHello, hostLastSeen               sql.NullTime
+	)
+	err := s.db.QueryRow(`
+		SELECT a.workspace_id, a.name, COALESCE(a.os, COALESCE(h.os, '')), COALESCE(a.arch, COALESCE(h.arch, '')),
+		       a.host_id, a.bot_user_id, h.name, h.os, h.arch, a.last_hello_at, h.last_seen_at
+		FROM agents a LEFT JOIN hosts h ON h.id = a.host_id
+		WHERE a.id = $1`, id).
+		Scan(&workspaceID, &name, &os, &arch, &hostID, &botUserID,
+			&hostName, &hostOS, &hostArch, &lastHello, &hostLastSeen)
+	if err == sql.ErrNoRows {
+		internalErr(c, http.StatusNotFound, "agent not found")
+		return
+	}
+	if err != nil {
+		internalErr(c, http.StatusInternalServerError, "agent lookup failed")
+		return
+	}
+	if want := strings.TrimSpace(c.Query("workspace_id")); want != "" && want != workspaceID {
+		internalErr(c, http.StatusNotFound, "agent not found")
+		return
+	}
+
+	const onlineWindow = 60 * time.Second
+	online := hostLastSeen.Valid && time.Since(hostLastSeen.Time) < onlineWindow ||
+		lastHello.Valid && time.Since(lastHello.Time) < onlineWindow
+	if !online && botUserID.Valid && botUserID.String != "" {
+		if s.agentHub != nil && s.agentHub.lookup(botUserID.String) != nil {
+			online = true
+		} else if info := s.routeAgentLookup(botUserID.String); info != nil && info.Attached {
+			online = true
+		}
+	}
+
+	out := gin.H{
+		"id":           id,
+		"workspace_id": workspaceID,
+		"name":         name,
+		"os":           os,
+		"arch":         arch,
+		"host_id":      hostID,
+		"host_name":    hostName.String,
+		"host_os":      hostOS.String,
+		"host_arch":    hostArch.String,
+		"online":       online,
+	}
+	if lastHello.Valid {
+		out["last_hello_at"] = lastHello.Time.UTC().Format(time.RFC3339)
+	}
+	if hostLastSeen.Valid {
+		out["host_last_seen_at"] = hostLastSeen.Time.UTC().Format(time.RFC3339)
+	}
+	c.JSON(http.StatusOK, out)
 }
