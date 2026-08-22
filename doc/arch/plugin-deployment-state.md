@@ -198,3 +198,16 @@ kickstart dock.
       stale-device GC is the model).
 - [ ] Per-plugin Prometheus alert rules — currently only wg has
       dashboards/alerts from Phase 1.
+
+
+## polar-routing (added 2026-08-22)
+
+| item | zen |
+|---|---|
+| repo | `networkextension/polar-routing` (svc + `routecmd/`; agent side in polar-agent `route_task.go` / `route_collector.go`) |
+| port / DB | `127.0.0.1:8117` / `polar_routing` (8114 is photo-svc) |
+| launchd | `polar.routing-svc` → `~/.local/bin/polar-routing-svc-launch.sh` → `~/routing-svc.env` (socket DSN, quoted) |
+| nginx | `servers/routing.4950.store.conf` + `^~ /api/routing/` in the zen block |
+| DNS | `routing.4950.store` A → 58.37.118.81 (via polar-dns, lzhu zone) |
+| agents | `POLAR_AGENT_ROUTING_BASE=http://127.0.0.1:8117/api/routing` in each `com.polar.agent.*` plist |
+| status | LIVE; E2E apply → committed → rollback verified on zen 2026-08-22 |
