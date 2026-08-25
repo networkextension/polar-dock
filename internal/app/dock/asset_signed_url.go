@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -114,6 +115,30 @@ func buildSignedBlobURL(providerBaseURL, sha256Hex string, ttl time.Duration, se
 	}
 	base := strings.TrimRight(providerBaseURL, "/")
 	return base + "/v1/blob/" + sha256Hex + "?token=" + token, nil
+}
+
+// buildSignedDownloadURL is buildSignedBlobURL plus the two hints the
+// provider reflects into response headers: ?ct= → Content-Type (so Safari
+// plays media) and ?name= → Content-Disposition filename (so a browser
+// download is called "foo.apk", not the sha256). Neither is part of the
+// signed canonical (sha:exp), so they ride along unsigned; the provider
+// vets both before use. name is the catalog name's last path element.
+func buildSignedDownloadURL(providerBaseURL string, a *Asset, ttl time.Duration, secret []byte) (string, error) {
+	u, err := buildSignedBlobURL(providerBaseURL, a.SHA256, ttl, secret)
+	if err != nil {
+		return "", err
+	}
+	q := url.Values{}
+	if a.Mime != "" && a.Mime != "application/octet-stream" {
+		q.Set("ct", a.Mime)
+	}
+	if name := path.Base(strings.TrimSpace(a.Name)); name != "" && name != "." && name != "/" {
+		q.Set("name", name)
+	}
+	if len(q) == 0 {
+		return u, nil
+	}
+	return u + "&" + q.Encode(), nil
 }
 
 // buildSignedPutURL mints a scoped **upload** grant — the symmetric of
