@@ -395,7 +395,7 @@ func (s *Server) redirectToProviderBlob(c *gin.Context, a *Asset, callerRegion s
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no provider has this asset (yet)"})
 		return
 	}
-	url, err := buildSignedBlobURL(provider.BaseURL, a.SHA256, defaultAssetSignedURLTTL, []byte(provider.HMACToken))
+	url, err := buildSignedDownloadURL(provider.BaseURL, a, defaultAssetSignedURLTTL, []byte(provider.HMACToken))
 	if err != nil {
 		log.Printf("assets: signed URL build failed asset=%d: %v", a.ID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})

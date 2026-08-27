@@ -95,3 +95,27 @@ func TestBuildSignedBlobURL_Shape(t *testing.T) {
 		t.Errorf("URL missing ?token= query: %q", url)
 	}
 }
+
+// The download variant appends ?ct= and ?name= (last path element of the
+// catalog name) after the signed token; octet-stream / empty name add nothing.
+func TestBuildSignedDownloadURL_Hints(t *testing.T) {
+	a := &Asset{
+		SHA256: strings.Repeat("a", 64),
+		Name:   "releases/android/polar-datacollector-v1.0.0-1.apk",
+		Mime:   "application/vnd.android.package-archive",
+	}
+	u, err := buildSignedDownloadURL("https://assets.example/", a, time.Minute, []byte("s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"?token=", "&ct=application%2Fvnd.android.package-archive", "&name=polar-datacollector-v1.0.0-1.apk"} {
+		if !strings.Contains(u, want) {
+			t.Errorf("missing %q in %q", want, u)
+		}
+	}
+	plain := &Asset{SHA256: strings.Repeat("b", 64), Mime: "application/octet-stream"}
+	u, _ = buildSignedDownloadURL("https://assets.example", plain, time.Minute, []byte("s"))
+	if strings.Contains(u, "&") {
+		t.Errorf("no hints expected for octet-stream/unnamed asset: %q", u)
+	}
+}
