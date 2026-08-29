@@ -15,6 +15,7 @@ diary/
 # and silently hid newly-added Go files in that package.
 /dock
 /main
+/polar-dock
 /dist/
 doc/memo.md
 doc/posts.json
