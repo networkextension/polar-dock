@@ -49,7 +49,7 @@ TTL="${TTL:-300}"
 ENV="${ENV:-}"
 API="https://api.name.com/v4/domains/${DOMAIN}/records"
 
-SUBDOMAINS=(project expense latch hosts iosdist library video packtunnel wg assets)
+SUBDOMAINS=(project expense latch hosts iosdist library video packtunnel wg assets event)
 
 # is_private_ip: true for RFC1918 / loopback addresses (10/8, 172.16/12,
 # 192.168/16, 127/8). Used to guard the whole-domain wildcard.
