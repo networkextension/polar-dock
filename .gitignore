@@ -1,5 +1,7 @@
 .specstory/
 data/
+research/
+3part/
 ui/node_modules/
 ui/dist/
 ui/public/scripts/*.js.map

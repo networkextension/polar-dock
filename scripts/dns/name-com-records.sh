@@ -35,7 +35,7 @@ TARGET_IP="${TARGET_IP:-58.37.118.182}"
 TTL="${TTL:-300}"
 API="https://api.name.com/v4/domains/${DOMAIN}/records"
 
-SUBDOMAINS=(project expense latch hosts iosdist library video packtunnel wg)
+SUBDOMAINS=(project expense latch hosts iosdist library video packtunnel wg event)
 
 MODE="bulk"
 DRY_RUN=0

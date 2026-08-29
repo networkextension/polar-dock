@@ -51,10 +51,14 @@ type AgentListItem struct {
 // bearer (which dock never persists in plaintext — only the
 // agent_tokens.token_hash) is unreachable from this path even if a
 // future Scan changed.
+// NOTE: ideamesh.hosts has no host_info_json column (that lives on
+// polar-hosts side per the #351 split). Dock returns empty
+// host_hw_model — UI falls back to a truncated host_id when both
+// host_name and host_hw_model are empty.
 const agentSelectColumns = `
 	SELECT a.id, a.workspace_id, a.host_id,
 	       COALESCE(h.name, ''),
-	       COALESCE(h.host_info_json->>'hw_model', ''),
+	       ''::TEXT AS host_hw_model,
 	       a.name,
 	       COALESCE(a.bot_user_id, ''),
 	       RIGHT(a.agent_token_id, 8),
