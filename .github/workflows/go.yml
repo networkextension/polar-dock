@@ -12,7 +12,11 @@ on:
 jobs:
 
   build:
-    runs-on: ubuntu-latest
+    # ci-mac @ .82 的 polar-cloud macOS VM（runner dock-ci-mac2，与
+    # polar-WindTunnel / polar-firewall 同机）。
+    # 本仓是私有仓：跑 ubuntu-latest 会被账单拦下（3 秒零步骤，
+    # "recent account payments have failed"），自建 runner 不计费。
+    runs-on: [self-hosted, macOS, ARM64]
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -46,6 +50,13 @@ jobs:
   # This job makes that smoke a pre-merge gate.
   boot-smoke:
     name: Boot smoke (fresh Postgres migration path)
+    # 这个 job 用 services:（postgres + redis 服务容器），**macOS runner 不支持
+    # 服务容器**，而现有的自建 runner 只有 macOS 一台（ci-mac 里也没装任何容器
+    # 运行时）。所以它仍留在 ubuntu-latest 上 —— 私有仓计费被拦，会继续失败。
+    # 要真正修好有两条路，都需要先决定：
+    #   a) 给这台 macOS VM 装 colima/docker（VZ guest 里的嵌套虚拟化，未验证可行）
+    #   b) 找/建一台 Linux self-hosted runner（组织里已有 wt-ci-linux 在线，
+    #      但它是 polar-WindTunnel 的 repo 级 runner，且宿主未定位到）
     runs-on: ubuntu-latest
     needs: build
     services:
