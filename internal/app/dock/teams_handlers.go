@@ -502,3 +502,73 @@ func (s *Server) handleTeamMembers(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"members": members})
 }
+
+// POST /api/teams/:id/members — add an existing account to a team directly.
+//
+// Every other way in needs the invitee to act: an emailed invitation they
+// must accept, or a registration code they must redeem. That leaves no path
+// for "this account already exists and belongs in this team" — the shape you
+// hit when a module grants someone a role but their team membership was
+// never wired up, and the shape a backfill needs. Site admins were reduced
+// to writing INSERTs by hand (infra/staging/mint-team.sh does exactly that).
+//
+// Role is capped at member/viewer by addTeamMember; promoting someone stays
+// with handleTeamMemberRoleUpdate, which is where that decision is reviewed.
+func (s *Server) handleTeamMemberAdd(c *gin.Context) {
+	teamID, actorRole, ok := requireTeamRoleFromCtx(c)
+	if !ok {
+		return
+	}
+	if !teamRoleAllows(actorRole, TeamRoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+	var req struct {
+		UserID string `json:"user_id"`
+		Role   string `json:"role"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的输入数据"})
+		return
+	}
+	targetUserID := strings.TrimSpace(req.UserID)
+	if targetUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id 不能为空"})
+		return
+	}
+	user, err := s.getUserByID(targetUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+	// The home team is one person's own workspace; adding others to it would
+	// quietly turn a private area into a shared one (same reason the
+	// invitation endpoint refuses it).
+	team, err := s.getTeam(teamID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	if team == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "团队不存在"})
+		return
+	}
+	if isHomeTeam(team) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "主工作区不能添加成员"})
+		return
+	}
+	if err := s.addTeamMember(teamID, targetUserID, req.Role); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	member, err := s.getTeamMember(teamID, targetUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "已加入团队", "member": member})
+}

@@ -88,6 +88,11 @@ func (s *Server) handleSiteSettingsUpdate(c *gin.Context) {
 		Name                       string `json:"name" binding:"required"`
 		Description                string `json:"description"`
 		RegistrationRequiresInvite bool   `json:"registration_requires_invite"`
+		// Tenancy posture. Off (the default) means a module-role invite code
+		// with no team of its own lands the new account in DefaultTeamID —
+		// without it they register successfully and then belong nowhere.
+		MultiTenantEnabled bool   `json:"multi_tenant_enabled"`
+		DefaultTeamID      string `json:"default_team_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -102,7 +107,26 @@ func (s *Server) handleSiteSettingsUpdate(c *gin.Context) {
 	}
 
 	description := strings.TrimSpace(req.Description)
-	if err := s.updateSiteSettings(name, description, req.RegistrationRequiresInvite); err != nil {
+	defaultTeamID := strings.TrimSpace(req.DefaultTeamID)
+	// Single tenant with no default team is the configuration that produced
+	// the bug this setting exists to prevent, so refuse it outright rather
+	// than saving something that silently does nothing.
+	if !req.MultiTenantEnabled && defaultTeamID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "关闭多租户时必须指定 default_team_id"})
+		return
+	}
+	if defaultTeamID != "" {
+		team, err := s.getTeam(defaultTeamID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if team == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "default_team_id 指向的团队不存在"})
+			return
+		}
+	}
+	if err := s.updateSiteSettings(name, description, req.RegistrationRequiresInvite, req.MultiTenantEnabled, defaultTeamID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
 	}
@@ -123,6 +147,8 @@ func (s *Server) handleSiteSettingsUpdate(c *gin.Context) {
 				"name":                         name,
 				"description":                  description,
 				"registration_requires_invite": req.RegistrationRequiresInvite,
+				"multi_tenant_enabled":         req.MultiTenantEnabled,
+				"default_team_id":              defaultTeamID,
 			},
 		},
 	})
@@ -144,6 +170,12 @@ func (s *Server) handleInviteCodeGenerate(c *gin.Context) {
 		Role          string `json:"role"`
 		Note          string `json:"note"`
 		ExpiresInDays int    `json:"expires_in_days"`
+		// TeamID: the collaboration workspace the redeemer joins. Left out,
+		// a role-bearing code inherits the site default team (single-tenant
+		// deployments) — a module role without a team is an account that can
+		// log in and do nothing.
+		TeamID   string `json:"team_id"`
+		TeamRole string `json:"team_role"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		req.Count = 1
@@ -157,9 +189,32 @@ func (s *Server) handleInviteCodeGenerate(c *gin.Context) {
 
 	now := time.Now()
 	opts := InviteCodeMintOptions{
-		Module: normalizeModuleName(req.Module),
-		Role:   normalizeModuleRole(req.Role),
-		Note:   strings.TrimSpace(req.Note),
+		Module:   normalizeModuleName(req.Module),
+		Role:     normalizeModuleRole(req.Role),
+		Note:     strings.TrimSpace(req.Note),
+		TeamID:   strings.TrimSpace(req.TeamID),
+		TeamRole: strings.TrimSpace(req.TeamRole),
+	}
+	if opts.TeamRole == "" {
+		opts.TeamRole = TeamRoleMember
+	}
+	// Refuse owner/admin here rather than at redemption: a code minted with
+	// one would look fine for days and then fail silently for every person
+	// who used it. addTeamMember enforces the same rule as a backstop.
+	if opts.TeamRole != TeamRoleMember && opts.TeamRole != TeamRoleViewer {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "team_role 只能是 member 或 viewer"})
+		return
+	}
+	if opts.TeamID != "" {
+		team, err := s.getTeam(opts.TeamID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误"})
+			return
+		}
+		if team == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "team_id 指向的团队不存在"})
+			return
+		}
 	}
 	if (opts.Module == "") != (opts.Role == "") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "module 与 role 必须同时提供"})
@@ -206,6 +261,8 @@ func (s *Server) handleInviteCodeGenerate(c *gin.Context) {
 			"code_hint_prefixes": prefixes,
 			"module":             opts.Module,
 			"role":               opts.Role,
+			"team_id":            opts.TeamID,
+			"team_role":          opts.TeamRole,
 			"expires_at":         opts.ExpiresAt,
 		},
 	})

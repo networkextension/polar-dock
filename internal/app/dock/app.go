@@ -1363,6 +1363,7 @@ func (s *Server) registerRoutes() {
 		// finer-grained gates (admin can demote members but only
 		// owner can touch admins; everyone can self-leave; owner
 		// must transfer before leaving; etc).
+		api.POST("/teams/:id/members", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleAdmin), s.handleTeamMemberAdd)
 		api.PUT("/teams/:id/members/:user_id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamMemberRoleUpdate)
 		api.DELETE("/teams/:id/members/:user_id", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleViewer), s.handleTeamMemberRemove)
 		api.POST("/teams/:id/transfer", s.AuthMiddleware(), s.RequireTeamRole("id", TeamRoleOwner), s.handleTeamTransfer)

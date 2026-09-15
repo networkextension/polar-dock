@@ -1,5 +1,5 @@
 {
-  "count": 356,
+  "count": 357,
   "endpoints": [
     {
       "method": "GET",
@@ -4029,6 +4029,14 @@
         {
           "name": "registration_requires_invite",
           "type": "bool"
+        },
+        {
+          "name": "multi_tenant_enabled",
+          "type": "bool"
+        },
+        {
+          "name": "default_team_id",
+          "type": "string"
         }
       ],
       "query": []
@@ -4110,6 +4118,14 @@
         {
           "name": "expires_in_days",
           "type": "int"
+        },
+        {
+          "name": "team_id",
+          "type": "string"
+        },
+        {
+          "name": "team_role",
+          "type": "string"
         }
       ],
       "query": []
@@ -4641,6 +4657,24 @@
       "auth": "user",
       "scope": "teams:read",
       "body": [],
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/teams/:id/members",
+      "handler": "handleTeamMemberAdd",
+      "auth": "user",
+      "scope": "teams:write",
+      "body": [
+        {
+          "name": "user_id",
+          "type": "string"
+        },
+        {
+          "name": "role",
+          "type": "string"
+        }
+      ],
       "query": []
     },
     {
