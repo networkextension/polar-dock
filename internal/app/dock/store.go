@@ -240,6 +240,25 @@ type InviteCode struct {
 	UsedBy    string     `json:"used_by,omitempty"`
 	UsedAt    *time.Time `json:"used_at,omitempty"`
 	Disabled  bool       `json:"disabled"`
+	// Module/Role: the module role this code grants on redemption
+	// ("opera" + "researcher"). Empty on plain registration codes.
+	Module    string     `json:"module,omitempty"`
+	Role      string     `json:"role,omitempty"`
+	Note      string     `json:"note,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// ModuleUserRole — one user's role inside one plugin module. See the
+// module_user_roles DDL in openDB() for why this is not users.role.
+type ModuleUserRole struct {
+	Module     string    `json:"module"`
+	UserID     string    `json:"user_id"`
+	Username   string    `json:"username,omitempty"`
+	Email      string    `json:"email,omitempty"`
+	Role       string    `json:"role"`
+	GrantedBy  string    `json:"granted_by,omitempty"`
+	SourceCode string    `json:"source_code,omitempty"`
+	GrantedAt  time.Time `json:"granted_at"`
 }
 
 type SystemInfo struct {
@@ -1035,7 +1054,39 @@ CREATE TABLE IF NOT EXISTS invite_codes (
 	disabled BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+-- Invite codes can carry a module role grant: redeeming the code at
+-- registration writes module_user_roles(module, user, role). The code
+-- itself is the authority — the human-readable prefix (WT-CREATOR-…)
+-- is cosmetic, so a made-up code can never mint a role. Empty
+-- module/role = a plain "you may register here" code (legacy shape).
+ALTER TABLE invite_codes
+	ADD COLUMN IF NOT EXISTS module TEXT NOT NULL DEFAULT '';
+ALTER TABLE invite_codes
+	ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT '';
+ALTER TABLE invite_codes
+	ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT '';
+ALTER TABLE invite_codes
+	ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_invite_codes_created_at ON invite_codes(created_at DESC);
+
+-- module_user_roles: a user's role *inside one plugin module* (opera,
+-- film, …), kept separate from users.role (the platform role, where
+-- 'admin' means site admin). A windtunnel admin must not become a dock
+-- site admin, so module grants never touch users.role; they surface
+-- only to the module that owns them, via /internal/v1/auth/verify
+-- (keyed on the calling plugin's name) and /api/me.module_roles.
+CREATE TABLE IF NOT EXISTS module_user_roles (
+	module TEXT NOT NULL,
+	user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	role TEXT NOT NULL,
+	granted_by TEXT NOT NULL DEFAULT '',
+	source_code TEXT NOT NULL DEFAULT '',
+	granted_at TIMESTAMPTZ NOT NULL,
+	PRIMARY KEY (module, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_module_user_roles_user ON module_user_roles(user_id);
 
 -- teams: top-level collaboration workspace. Every user gets a personal
 -- team auto-created on first relevant action (kind='personal'); explicit
@@ -6731,15 +6782,28 @@ func normalizeInviteCode(value string) string {
 	return code
 }
 
-func generateInviteCode() string {
+// generateInviteCode builds a code with a human-readable prefix. The
+// prefix is cosmetic — redemption always looks the row up in
+// invite_codes, so inventing "WT-ADMIN-whatever" grants nothing.
+// Returns (display, stored): the stored form is normalized (upper, no
+// dashes) because that is what redemption compares against.
+func generateInviteCode(prefix string) (string, string) {
 	raw := strings.ToUpper(generateResourceID())
-	if len(raw) < 10 {
-		return "IM" + raw
+	if len(raw) > 10 {
+		raw = raw[:10]
 	}
-	return "IM" + raw[:10]
+	display := "IM" + raw
+	if prefix != "" {
+		display = prefix + "-" + raw
+	}
+	return display, normalizeInviteCode(display)
 }
 
-func (s *Server) createInviteCodes(createdBy string, count int, now time.Time) ([]InviteCode, error) {
+// createInviteCodes mints `count` single-use codes. module/role, when
+// non-empty, make each code a role grant: redeeming it writes
+// module_user_roles for that module. Both must already be validated by
+// validateModuleRole — the prefix argument comes from there.
+func (s *Server) createInviteCodes(createdBy string, count int, opts InviteCodeMintOptions, now time.Time) ([]InviteCode, error) {
 	if count <= 0 {
 		count = 1
 	}
@@ -6752,14 +6816,18 @@ func (s *Server) createInviteCodes(createdBy string, count int, now time.Time) (
 	maxAttempts := count * 10
 	for len(codes) < count && attempts < maxAttempts {
 		attempts += 1
-		code := generateInviteCode()
+		display, stored := generateInviteCode(opts.Prefix)
 		res, err := s.db.Exec(
-			`INSERT INTO invite_codes (code, created_by, created_at, used_by, used_at, disabled)
-			 VALUES ($1, $2, $3, '', NULL, FALSE)
+			`INSERT INTO invite_codes (code, created_by, created_at, used_by, used_at, disabled, module, role, note, expires_at)
+			 VALUES ($1, $2, $3, '', NULL, FALSE, $4, $5, $6, $7)
 			 ON CONFLICT (code) DO NOTHING`,
-			code,
+			stored,
 			strings.TrimSpace(createdBy),
 			now,
+			opts.Module,
+			opts.Role,
+			opts.Note,
+			opts.ExpiresAt,
 		)
 		if err != nil {
 			return nil, err
@@ -6769,16 +6837,32 @@ func (s *Server) createInviteCodes(createdBy string, count int, now time.Time) (
 			continue
 		}
 		codes = append(codes, InviteCode{
-			Code:      code,
+			// Hand the admin the dashed form: it is what gets pasted
+			// into the register page, and normalization makes the two
+			// interchangeable on the way back in.
+			Code:      display,
 			CreatedBy: strings.TrimSpace(createdBy),
 			CreatedAt: now,
 			Disabled:  false,
+			Module:    opts.Module,
+			Role:      opts.Role,
+			Note:      opts.Note,
+			ExpiresAt: opts.ExpiresAt,
 		})
 	}
 	if len(codes) != count {
 		return nil, errors.New("failed to generate enough unique invite codes")
 	}
 	return codes, nil
+}
+
+// InviteCodeMintOptions — what an admin chose when generating codes.
+type InviteCodeMintOptions struct {
+	Module    string
+	Role      string
+	Prefix    string
+	Note      string
+	ExpiresAt *time.Time
 }
 
 func (s *Server) listInviteCodes(limit int) ([]InviteCode, error) {
@@ -6790,7 +6874,7 @@ func (s *Server) listInviteCodes(limit int) ([]InviteCode, error) {
 	}
 
 	rows, err := s.db.Query(
-		`SELECT code, created_by, created_at, used_by, used_at, disabled
+		`SELECT code, created_by, created_at, used_by, used_at, disabled, module, role, note, expires_at
 		 FROM invite_codes
 		 ORDER BY created_at DESC
 		 LIMIT $1`,
@@ -6804,12 +6888,16 @@ func (s *Server) listInviteCodes(limit int) ([]InviteCode, error) {
 	items := make([]InviteCode, 0, limit)
 	for rows.Next() {
 		var item InviteCode
-		var usedAt sql.NullTime
-		if err := rows.Scan(&item.Code, &item.CreatedBy, &item.CreatedAt, &item.UsedBy, &usedAt, &item.Disabled); err != nil {
+		var usedAt, expiresAt sql.NullTime
+		if err := rows.Scan(&item.Code, &item.CreatedBy, &item.CreatedAt, &item.UsedBy, &usedAt, &item.Disabled,
+			&item.Module, &item.Role, &item.Note, &expiresAt); err != nil {
 			return nil, err
 		}
 		if usedAt.Valid {
 			item.UsedAt = &usedAt.Time
+		}
+		if expiresAt.Valid {
+			item.ExpiresAt = &expiresAt.Time
 		}
 		items = append(items, item)
 	}
@@ -6819,20 +6907,17 @@ func (s *Server) listInviteCodes(limit int) ([]InviteCode, error) {
 	return items, nil
 }
 
-func (s *Server) consumeInviteCode(code, usedBy string, usedAt time.Time) (bool, error) {
+// disableInviteCode kills an unredeemed code. Already-redeemed codes
+// stay as they are — the grant they produced is revoked separately via
+// module_user_roles, since disabling the code cannot un-register a user.
+func (s *Server) disableInviteCode(code string) (bool, error) {
 	normalized := normalizeInviteCode(code)
 	if normalized == "" {
 		return false, nil
 	}
 	res, err := s.db.Exec(
-		`UPDATE invite_codes
-		    SET used_by = $2, used_at = $3
-		  WHERE code = $1
-		    AND disabled = FALSE
-		    AND used_at IS NULL`,
+		`UPDATE invite_codes SET disabled = TRUE WHERE code = $1 AND disabled = FALSE`,
 		normalized,
-		strings.TrimSpace(usedBy),
-		usedAt,
 	)
 	if err != nil {
 		return false, err
@@ -6842,6 +6927,44 @@ func (s *Server) consumeInviteCode(code, usedBy string, usedAt time.Time) (bool,
 		return false, err
 	}
 	return rows > 0, nil
+}
+
+// consumeInviteCode claims a code for `usedBy` and returns the row it
+// claimed, so the caller learns which module role the code grants in
+// the same atomic step. nil (no error) = the code does not exist, is
+// disabled, expired, or already used — all of which the caller must
+// treat as "reject the registration".
+func (s *Server) consumeInviteCode(code, usedBy string, usedAt time.Time) (*InviteCode, error) {
+	normalized := normalizeInviteCode(code)
+	if normalized == "" {
+		return nil, nil
+	}
+	var item InviteCode
+	var expiresAt sql.NullTime
+	err := s.db.QueryRow(
+		`UPDATE invite_codes
+		    SET used_by = $2, used_at = $3
+		  WHERE code = $1
+		    AND disabled = FALSE
+		    AND used_at IS NULL
+		    AND (expires_at IS NULL OR expires_at > $3)
+		  RETURNING code, created_by, created_at, used_by, disabled, module, role, note, expires_at`,
+		normalized,
+		strings.TrimSpace(usedBy),
+		usedAt,
+	).Scan(&item.Code, &item.CreatedBy, &item.CreatedAt, &item.UsedBy, &item.Disabled,
+		&item.Module, &item.Role, &item.Note, &expiresAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if expiresAt.Valid {
+		item.ExpiresAt = &expiresAt.Time
+	}
+	item.UsedAt = &usedAt
+	return &item, nil
 }
 
 func (s *Server) releaseInviteCode(code, usedBy string) error {
