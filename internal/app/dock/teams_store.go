@@ -16,6 +16,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -779,5 +780,48 @@ func (s *Server) convertLegacyPersonalTeams() error {
 	if n, _ := res.RowsAffected(); n > 0 {
 		log.Printf("teams: R1c converted %d legacy personal team(s) to kind='team'", n)
 	}
+	return nil
+}
+
+// ── addTeamMember: the one write path for "put this user in that team" ──
+//
+// Until now the only ways into team_members were createTeam (owner row),
+// ensurePersonalTeam (self-heal), accepting an emailed invitation, and the
+// root-team bootstrap. Registration had none — so a user could redeem a
+// module-role invite code, be told who they are, and still belong to no
+// collaboration workspace. Plugins scope every read and write by team, so
+// that account could log in and do nothing: "you are not in any team".
+//
+// 🔴 role is restricted to member/viewer ON PURPOSE. IsSiteAdmin answers
+// "is this user in the root team with role owner|admin" (perm_site_admin.go).
+// The default team on a single-tenant deployment IS the root team, so
+// accepting 'admin' here would turn an ordinary invite code into a site
+// administrator factory. Callers that legitimately need to promote someone
+// go through handleTeamMemberRoleUpdate, which is gated on team admin.
+func (s *Server) addTeamMember(teamID, userID, role string) error {
+	teamID = strings.TrimSpace(teamID)
+	userID = strings.TrimSpace(userID)
+	if teamID == "" || userID == "" {
+		return errors.New("team_id and user_id are required")
+	}
+	switch strings.TrimSpace(role) {
+	case TeamRoleMember, TeamRoleViewer:
+	case "":
+		role = TeamRoleMember
+	default:
+		return fmt.Errorf("addTeamMember refuses role %q: only %s/%s may be granted here",
+			role, TeamRoleMember, TeamRoleViewer)
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO team_members (team_id, user_id, role, joined_at)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (team_id, user_id) DO NOTHING`,
+		teamID, userID, role, time.Now(),
+	); err != nil {
+		return err
+	}
+	// The root-team membership cache keys site-admin status; a new row there
+	// must not be answered from a stale "not a member" entry.
+	s.invalidateSiteAdminCache(userID)
 	return nil
 }

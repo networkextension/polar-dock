@@ -79,3 +79,55 @@ POST /api/site-settings/module-roles {"module":"opera","role":"researcher","emai
 ```
 
 站点管理员本人不受影响（`platform_role=admin`，且可以自己给自己发码）。
+
+---
+
+## 角色只说「他是谁」，不说「他在哪」—— 团队归属
+
+模块角色回答的是身份问题。但下游插件（风洞）的每一次读写都按 **team 作用域**，
+所以只发角色不给团队，得到的是一个**能登录、什么也做不了**的账号：注册成功、
+`module_roles` 里有 `opera: researcher`，一进风洞却被挡在「你还不在任何团队里」。
+
+2026-09-15 线上真出过：`sx520@163.com` 兑了 `WT-CREATOR-` 码，拿到 researcher，
+落地无团队。同期 41 个有 opera 角色的账号里，**34 个不在任何 team**。
+
+根因是 `handleRegister` 全程不碰 `teams` / `team_members`（`createUser` 连个人区
+都不建 —— 那是懒创建的）。这条链路现在补上了。
+
+### 邀请码带 team
+
+```bash
+POST /api/site-settings/invite-codes
+{"count":5,"module":"opera","role":"researcher",
+ "team_id":"<team>","team_role":"member"}
+```
+
+- `team_id` 省略 → 兑码时回落到 `site_settings.default_team_id`（**仅当多租户关闭**）
+- `team_role` 只接受 **`member` / `viewer`**，发码与入库两处都拦
+
+🔴 **为什么必须拦 owner/admin**：`IsSiteAdmin` 的判据是「root team 成员**且** role ∈
+{owner, admin}」（`perm_site_admin.go`）。单租户部署里 default team 往往**就是** root
+team，放行 `admin` 等于让一张普通邀请码批量制造站点管理员。
+
+### 多租户开关
+
+`site_settings` 两个字段，`PUT /api/site-settings` 可改：
+
+| 字段 | 默认 | 含义 |
+|---|---|---|
+| `multi_tenant_enabled` | `false` | 关 = 单租户；不带 team 的码落到 default team |
+| `default_team_id` | `''` | 单租户下的落脚团队；关多租户时必填，否则 400 |
+
+开多租户后，不带 team 的码**故意不给团队** —— 多个租户共存时没有「默认」可言。
+
+### 把已有账号加进团队
+
+此前只有「发邮件邀请等对方接受」和「兑码注册」两条路，都要对方动作。存量账号
+（角色早就有、团队从没配）没有任何入口，只能手写 SQL。现在：
+
+```bash
+POST /api/teams/<team_id>/members {"user_id":"<uid>","role":"member"}
+```
+
+team admin 权限，`role` 同样限 `member` / `viewer`；主工作区（home team）拒绝加人。
+提升成 admin 仍走 `PUT /api/teams/:id/members/:user_id`。

@@ -123,6 +123,38 @@ func (s *Server) handleRegister(c *gin.Context) {
 		}
 	}
 
+	// A module role says who someone is; it does not say which collaboration
+	// workspace their data lives in — and plugins scope every read and write
+	// by team. Granting one without a team is what produced accounts that
+	// registered fine and then hit "you are not in any team" with no way
+	// forward, so the two land together or the code is not doing its job.
+	//
+	// Which team: the code's own, else the site default when this deployment
+	// is single-tenant. With multi-tenancy on, a code that names no team
+	// deliberately grants none — there is no sensible default to pick.
+	if claimedInvite != nil {
+		targetTeam := strings.TrimSpace(claimedInvite.TeamID)
+		if targetTeam == "" && settings != nil && !settings.MultiTenantEnabled {
+			targetTeam = strings.TrimSpace(settings.DefaultTeamID)
+		}
+		if targetTeam != "" {
+			// createUser does not create the home team (it is lazy, via
+			// resolveActiveWorkspace). /internal/v1/auth/verify defaults
+			// workspace_id to the home team, so without this the first
+			// plugin call back gets an empty workspace.
+			if _, err := s.ensurePersonalTeam(user.ID); err != nil {
+				log.Printf("ensure personal team failed: user=%s err=%v", user.ID, err)
+			}
+			// Same failure stance as grantModuleRole above: registration has
+			// already succeeded and the code is burnt, so never fail the
+			// request here — log and let an admin add the member by hand.
+			if err := s.addTeamMember(targetTeam, user.ID, claimedInvite.TeamRole); err != nil {
+				log.Printf("join team failed: team=%s user=%s role=%s err=%v",
+					targetTeam, user.ID, claimedInvite.TeamRole, err)
+			}
+		}
+	}
+
 	if err := s.upsertUserDeviceWithID(user.ID, deviceType, deviceID, pushToken, now); err != nil {
 		jsonError(c, http.StatusInternalServerError, "common.server_error")
 		return

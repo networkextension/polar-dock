@@ -223,14 +223,19 @@ type Tag struct {
 }
 
 type SiteSettings struct {
-	Name                       string                `json:"name"`
-	Description                string                `json:"description"`
-	IconURL                    string                `json:"icon_url"`
-	RegistrationRequiresInvite bool                  `json:"registration_requires_invite"`
-	ApplePushDevCert           *ApplePushCertificate `json:"apple_push_dev_cert,omitempty"`
-	ApplePushProdCert          *ApplePushCertificate `json:"apple_push_prod_cert,omitempty"`
-	SystemInfo                 *SystemInfo           `json:"system_info,omitempty"`
-	UpdatedAt                  time.Time             `json:"updated_at"`
+	Name                       string `json:"name"`
+	Description                string `json:"description"`
+	IconURL                    string `json:"icon_url"`
+	RegistrationRequiresInvite bool   `json:"registration_requires_invite"`
+	// Tenancy. MultiTenantEnabled=false → new accounts land in DefaultTeamID.
+	// DefaultTeamID is stripped for anonymous callers (GET /api/site-settings
+	// is public) — see handleSiteSettingsGet.
+	MultiTenantEnabled bool                  `json:"multi_tenant_enabled"`
+	DefaultTeamID      string                `json:"default_team_id"`
+	ApplePushDevCert   *ApplePushCertificate `json:"apple_push_dev_cert,omitempty"`
+	ApplePushProdCert  *ApplePushCertificate `json:"apple_push_prod_cert,omitempty"`
+	SystemInfo         *SystemInfo           `json:"system_info,omitempty"`
+	UpdatedAt          time.Time             `json:"updated_at"`
 }
 
 type InviteCode struct {
@@ -246,6 +251,12 @@ type InviteCode struct {
 	Role      string     `json:"role,omitempty"`
 	Note      string     `json:"note,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// TeamID/TeamRole: the collaboration workspace the redeemer joins.
+	// Empty TeamID falls back to site_settings.default_team_id while the
+	// deployment is single-tenant (handleRegister). TeamRole is capped at
+	// member/viewer by addTeamMember — see the warning there.
+	TeamID   string `json:"team_id,omitempty"`
+	TeamRole string `json:"team_role,omitempty"`
 }
 
 // ModuleUserRole — one user's role inside one plugin module. See the
@@ -1035,14 +1046,27 @@ ALTER TABLE site_settings
 ALTER TABLE site_settings
 	ADD COLUMN IF NOT EXISTS apple_push_prod_cert_uploaded_at TIMESTAMPTZ;
 
+-- Tenancy posture. multi_tenant_enabled = FALSE means this deployment
+-- runs as a single tenant: a user who redeems a module-role invite code
+-- without an explicit team joins default_team_id instead of ending up
+-- with no collaboration workspace at all. Turning it on restores the
+-- strict behaviour (a code must name its own team, or the account gets
+-- no team and downstream plugins refuse it — which is correct once
+-- several tenants share the deployment).
+ALTER TABLE site_settings
+	ADD COLUMN IF NOT EXISTS multi_tenant_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE site_settings
+	ADD COLUMN IF NOT EXISTS default_team_id TEXT NOT NULL DEFAULT '';
+
 INSERT INTO site_settings (
 	id, name, description, icon_url,
 	registration_requires_invite,
 	apple_push_dev_cert_url, apple_push_dev_cert_name, apple_push_dev_cert_uploaded_at,
 	apple_push_prod_cert_url, apple_push_prod_cert_name, apple_push_prod_cert_uploaded_at,
+	multi_tenant_enabled, default_team_id,
 	updated_at
 )
-VALUES (1, 'Polar-', '', '', FALSE, '', '', NULL, '', '', NULL, NOW())
+VALUES (1, 'Polar-', '', '', FALSE, '', '', NULL, '', '', NULL, FALSE, '', NOW())
 ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS invite_codes (
@@ -1067,6 +1091,26 @@ ALTER TABLE invite_codes
 	ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT '';
 ALTER TABLE invite_codes
 	ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+-- A code can also carry the TEAM the redeemer joins. A module role says
+-- who someone is; it does not say which collaboration workspace their
+-- data lives in — and downstream plugins scope every read and write by
+-- team. Granting the role without a team is what produced accounts that
+-- could log in and then hit "you are not in any team" with no way
+-- forward. Empty team_id = fall back to site_settings.default_team_id
+-- when multi-tenancy is off (see handleRegister).
+--
+-- team_role is deliberately limited to member/viewer by addTeamMember:
+-- site-admin status is "member of the root team with role owner|admin"
+-- (perm_site_admin.go), so an owner/admin here would silently mint site
+-- administrators out of ordinary invite codes.
+--
+-- No REFERENCES teams(id): this block runs before the teams CREATE TABLE
+-- below, and a forward reference fails first boot on an empty database.
+ALTER TABLE invite_codes
+	ADD COLUMN IF NOT EXISTS team_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE invite_codes
+	ADD COLUMN IF NOT EXISTS team_role TEXT NOT NULL DEFAULT 'member';
 
 CREATE INDEX IF NOT EXISTS idx_invite_codes_created_at ON invite_codes(created_at DESC);
 
@@ -6581,6 +6625,7 @@ func (s *Server) getSiteSettings() (*SiteSettings, error) {
 		`SELECT name, description, icon_url, registration_requires_invite,
 		        apple_push_dev_cert_url, apple_push_dev_cert_name, apple_push_dev_cert_uploaded_at,
 		        apple_push_prod_cert_url, apple_push_prod_cert_name, apple_push_prod_cert_uploaded_at,
+		        multi_tenant_enabled, default_team_id,
 		        updated_at
 		 FROM site_settings
 		 WHERE id = 1`,
@@ -6595,6 +6640,8 @@ func (s *Server) getSiteSettings() (*SiteSettings, error) {
 		&prodURL,
 		&prodName,
 		&prodUploadedAt,
+		&settings.MultiTenantEnabled,
+		&settings.DefaultTeamID,
 		&settings.UpdatedAt,
 	)
 	if err != nil {
@@ -6604,6 +6651,8 @@ func (s *Server) getSiteSettings() (*SiteSettings, error) {
 				Description:                "",
 				IconURL:                    "",
 				RegistrationRequiresInvite: false,
+				MultiTenantEnabled:         false,
+				DefaultTeamID:              "",
 				UpdatedAt:                  time.Now(),
 			}, nil
 		}
@@ -6632,13 +6681,14 @@ func (s *Server) getSiteSettings() (*SiteSettings, error) {
 	return &settings, nil
 }
 
-func (s *Server) updateSiteSettings(name, description string, registrationRequiresInvite bool) error {
+func (s *Server) updateSiteSettings(name, description string, registrationRequiresInvite, multiTenantEnabled bool, defaultTeamID string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO site_settings (
 		     id, name, description, icon_url,
 		     registration_requires_invite,
 		     apple_push_dev_cert_url, apple_push_dev_cert_name, apple_push_dev_cert_uploaded_at,
 		     apple_push_prod_cert_url, apple_push_prod_cert_name, apple_push_prod_cert_uploaded_at,
+		     multi_tenant_enabled, default_team_id,
 		     updated_at
 		 )
 		 VALUES (
@@ -6649,16 +6699,21 @@ func (s *Server) updateSiteSettings(name, description string, registrationRequir
 		     COALESCE((SELECT apple_push_prod_cert_url FROM site_settings WHERE id = 1), ''),
 		     COALESCE((SELECT apple_push_prod_cert_name FROM site_settings WHERE id = 1), ''),
 		     (SELECT apple_push_prod_cert_uploaded_at FROM site_settings WHERE id = 1),
+		     $4, $5,
 		     NOW()
 		 )
 		 ON CONFLICT (id)
 		 DO UPDATE SET name = EXCLUDED.name,
 		               description = EXCLUDED.description,
 		               registration_requires_invite = EXCLUDED.registration_requires_invite,
+		               multi_tenant_enabled = EXCLUDED.multi_tenant_enabled,
+		               default_team_id = EXCLUDED.default_team_id,
 		               updated_at = NOW()`,
 		name,
 		description,
 		registrationRequiresInvite,
+		multiTenantEnabled,
+		defaultTeamID,
 	)
 	return err
 }
@@ -6670,6 +6725,7 @@ func (s *Server) updateSiteIcon(iconURL string) error {
 		     registration_requires_invite,
 		     apple_push_dev_cert_url, apple_push_dev_cert_name, apple_push_dev_cert_uploaded_at,
 		     apple_push_prod_cert_url, apple_push_prod_cert_name, apple_push_prod_cert_uploaded_at,
+		     multi_tenant_enabled, default_team_id,
 		     updated_at
 		 )
 		 VALUES (1, COALESCE((SELECT name FROM site_settings WHERE id = 1), 'Polar-'),
@@ -6682,6 +6738,8 @@ func (s *Server) updateSiteIcon(iconURL string) error {
 		             COALESCE((SELECT apple_push_prod_cert_url FROM site_settings WHERE id = 1), ''),
 		             COALESCE((SELECT apple_push_prod_cert_name FROM site_settings WHERE id = 1), ''),
 		             (SELECT apple_push_prod_cert_uploaded_at FROM site_settings WHERE id = 1),
+		             COALESCE((SELECT multi_tenant_enabled FROM site_settings WHERE id = 1), FALSE),
+		             COALESCE((SELECT default_team_id FROM site_settings WHERE id = 1), ''),
 		             NOW())
 		 ON CONFLICT (id)
 		 DO UPDATE SET icon_url = EXCLUDED.icon_url, updated_at = NOW()`,
@@ -6699,6 +6757,7 @@ func (s *Server) updateApplePushCertificate(environment, fileURL, fileName strin
 		           registration_requires_invite,
 		           apple_push_dev_cert_url, apple_push_dev_cert_name, apple_push_dev_cert_uploaded_at,
 		           apple_push_prod_cert_url, apple_push_prod_cert_name, apple_push_prod_cert_uploaded_at,
+		           multi_tenant_enabled, default_team_id,
 		           updated_at
 		         )
 		         VALUES (
@@ -6711,6 +6770,8 @@ func (s *Server) updateApplePushCertificate(environment, fileURL, fileName strin
 		           COALESCE((SELECT apple_push_prod_cert_url FROM site_settings WHERE id = 1), ''),
 		           COALESCE((SELECT apple_push_prod_cert_name FROM site_settings WHERE id = 1), ''),
 		           (SELECT apple_push_prod_cert_uploaded_at FROM site_settings WHERE id = 1),
+		           COALESCE((SELECT multi_tenant_enabled FROM site_settings WHERE id = 1), FALSE),
+		           COALESCE((SELECT default_team_id FROM site_settings WHERE id = 1), ''),
 		           NOW()
 		         )
 		         ON CONFLICT (id)
@@ -6724,6 +6785,7 @@ func (s *Server) updateApplePushCertificate(environment, fileURL, fileName strin
 		           registration_requires_invite,
 		           apple_push_dev_cert_url, apple_push_dev_cert_name, apple_push_dev_cert_uploaded_at,
 		           apple_push_prod_cert_url, apple_push_prod_cert_name, apple_push_prod_cert_uploaded_at,
+		           multi_tenant_enabled, default_team_id,
 		           updated_at
 		         )
 		         VALUES (
@@ -6736,6 +6798,8 @@ func (s *Server) updateApplePushCertificate(environment, fileURL, fileName strin
 		           COALESCE((SELECT apple_push_dev_cert_name FROM site_settings WHERE id = 1), ''),
 		           (SELECT apple_push_dev_cert_uploaded_at FROM site_settings WHERE id = 1),
 		           $1, $2, $3,
+		           COALESCE((SELECT multi_tenant_enabled FROM site_settings WHERE id = 1), FALSE),
+		           COALESCE((SELECT default_team_id FROM site_settings WHERE id = 1), ''),
 		           NOW()
 		         )
 		         ON CONFLICT (id)
@@ -6818,8 +6882,8 @@ func (s *Server) createInviteCodes(createdBy string, count int, opts InviteCodeM
 		attempts += 1
 		display, stored := generateInviteCode(opts.Prefix)
 		res, err := s.db.Exec(
-			`INSERT INTO invite_codes (code, created_by, created_at, used_by, used_at, disabled, module, role, note, expires_at)
-			 VALUES ($1, $2, $3, '', NULL, FALSE, $4, $5, $6, $7)
+			`INSERT INTO invite_codes (code, created_by, created_at, used_by, used_at, disabled, module, role, note, expires_at, team_id, team_role)
+			 VALUES ($1, $2, $3, '', NULL, FALSE, $4, $5, $6, $7, $8, $9)
 			 ON CONFLICT (code) DO NOTHING`,
 			stored,
 			strings.TrimSpace(createdBy),
@@ -6828,6 +6892,8 @@ func (s *Server) createInviteCodes(createdBy string, count int, opts InviteCodeM
 			opts.Role,
 			opts.Note,
 			opts.ExpiresAt,
+			opts.TeamID,
+			opts.TeamRole,
 		)
 		if err != nil {
 			return nil, err
@@ -6863,6 +6929,10 @@ type InviteCodeMintOptions struct {
 	Prefix    string
 	Note      string
 	ExpiresAt *time.Time
+	// TeamID empty = redeemer falls back to the site default team while
+	// multi-tenancy is off. TeamRole is validated by addTeamMember.
+	TeamID   string
+	TeamRole string
 }
 
 func (s *Server) listInviteCodes(limit int) ([]InviteCode, error) {
@@ -6874,7 +6944,7 @@ func (s *Server) listInviteCodes(limit int) ([]InviteCode, error) {
 	}
 
 	rows, err := s.db.Query(
-		`SELECT code, created_by, created_at, used_by, used_at, disabled, module, role, note, expires_at
+		`SELECT code, created_by, created_at, used_by, used_at, disabled, module, role, note, expires_at, team_id, team_role
 		 FROM invite_codes
 		 ORDER BY created_at DESC
 		 LIMIT $1`,
@@ -6890,7 +6960,7 @@ func (s *Server) listInviteCodes(limit int) ([]InviteCode, error) {
 		var item InviteCode
 		var usedAt, expiresAt sql.NullTime
 		if err := rows.Scan(&item.Code, &item.CreatedBy, &item.CreatedAt, &item.UsedBy, &usedAt, &item.Disabled,
-			&item.Module, &item.Role, &item.Note, &expiresAt); err != nil {
+			&item.Module, &item.Role, &item.Note, &expiresAt, &item.TeamID, &item.TeamRole); err != nil {
 			return nil, err
 		}
 		if usedAt.Valid {
@@ -6948,12 +7018,12 @@ func (s *Server) consumeInviteCode(code, usedBy string, usedAt time.Time) (*Invi
 		    AND disabled = FALSE
 		    AND used_at IS NULL
 		    AND (expires_at IS NULL OR expires_at > $3)
-		  RETURNING code, created_by, created_at, used_by, disabled, module, role, note, expires_at`,
+		  RETURNING code, created_by, created_at, used_by, disabled, module, role, note, expires_at, team_id, team_role`,
 		normalized,
 		strings.TrimSpace(usedBy),
 		usedAt,
 	).Scan(&item.Code, &item.CreatedBy, &item.CreatedAt, &item.UsedBy, &item.Disabled,
-		&item.Module, &item.Role, &item.Note, &expiresAt)
+		&item.Module, &item.Role, &item.Note, &expiresAt, &item.TeamID, &item.TeamRole)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
