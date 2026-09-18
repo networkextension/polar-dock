@@ -113,8 +113,11 @@ human-readable prefix (`WT-CREATOR-…`) is cosmetic — the row is the authorit
 grants nothing, and an unrecognized code is **rejected** at registration rather than downgraded to a
 plain signup. `GET /api/me` returns the same data user-side as `module_roles: {"opera":"researcher"}`.
 
-Open-API (`polar_…`) tokens verify through this endpoint too but are not module-role aware — they
-act as their owner's platform role.
+Open-API (`polar_…`) tokens verify through this endpoint too and resolve the **same** way: the
+token acts as its owner, so it carries the owner's grant in the calling module. They previously
+answered with the owner's platform role only, which made the same person an `opera` 管理员 in the
+browser and a plain `user` through a token — the plugin reads `role`, so it fell back to its own
+default and denied module-admin-only data.
 
 **Response 401:** `{"error":"invalid session"}`.
 
