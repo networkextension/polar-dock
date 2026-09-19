@@ -82,30 +82,63 @@ func (s *Server) handleInternalAuthVerify(c *gin.Context) {
 	// change; `platform_role` keeps the unmasked users.role for
 	// anything that needs it, and `module_role` is "" when the user has
 	// no grant in that module.
-	pluginName, _ := c.Get("plugin_name")
-	pluginStr, _ := pluginName.(string)
-	role := sess.Role
-	moduleRole := ""
-	if pluginStr != "" {
-		granted, err := s.getModuleRole(pluginStr, sess.UserID)
-		if err != nil {
-			log.Printf("internal auth verify: module role lookup failed plugin=%s user=%s err=%v",
-				pluginStr, sess.UserID, err)
-		} else if granted != "" {
-			moduleRole = granted
-			role = granted
-		}
+	pluginStr := callingPlugin(c)
+	role, moduleRole := moduleRoleOverride(sess.Role, s.lookupModuleRole(pluginStr, sess.UserID))
+	c.JSON(http.StatusOK, authVerifyBody(
+		sess.UserID, sess.Username, role, sess.Role, pluginStr, moduleRole,
+		workspaceID, sess.ExpiresAt.UTC().Format(time.RFC3339),
+	))
+}
+
+// callingPlugin is the HMAC-authenticated plugin name hmacPluginAuth put on
+// the request, or "" when the route ran without it.
+func callingPlugin(c *gin.Context) string {
+	v, _ := c.Get("plugin_name")
+	name, _ := v.(string)
+	return name
+}
+
+// lookupModuleRole is getModuleRole with the "no plugin / lookup failed" cases
+// folded into an empty string — callers want a role, not three branches.
+func (s *Server) lookupModuleRole(plugin, userID string) string {
+	if plugin == "" {
+		return ""
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"user_id":       sess.UserID,
-		"username":      sess.Username,
+	granted, err := s.getModuleRole(plugin, userID)
+	if err != nil {
+		log.Printf("internal auth verify: module role lookup failed plugin=%s user=%s err=%v",
+			plugin, userID, err)
+		return ""
+	}
+	return granted
+}
+
+// moduleRoleOverride decides what a plugin sees as `role`: its own grant when
+// there is one, else the platform role. Shared by both verify branches on
+// purpose — when only the session branch had it, the same user was an opera
+// 管理员 in the browser and a plain user through a polar_ API token.
+func moduleRoleOverride(platformRole, granted string) (role, moduleRole string) {
+	if granted != "" {
+		return granted, granted
+	}
+	return platformRole, ""
+}
+
+// authVerifyBody is the one shape /internal/v1/auth/verify answers with, for a
+// browser session and for an API token alike. Plugins cache this for 30s and
+// read `role`; a field that exists in one branch only is a bug waiting to
+// happen (TestAuthVerifyBody_FieldSet pins it).
+func authVerifyBody(userID, username, role, platformRole, module, moduleRole, workspaceID, expiresAt string) gin.H {
+	return gin.H{
+		"user_id":       userID,
+		"username":      username,
 		"role":          role,
-		"platform_role": sess.Role,
-		"module":        pluginStr,
+		"platform_role": platformRole,
+		"module":        module,
 		"module_role":   moduleRole,
 		"workspace_id":  workspaceID,
-		"expires_at":    sess.ExpiresAt.UTC().Format(time.RFC3339),
-	})
+		"expires_at":    expiresAt,
+	}
 }
 
 // ── 1b. GET /internal/v1/auth/verify-agent?token=<polar_agent_…> ───────────
@@ -142,10 +175,17 @@ func (s *Server) handleInternalAuthVerifyAgent(c *gin.Context) {
 }
 
 // writeAPITokenVerify answers /internal/v1/auth/verify for a polar_ open-API
-// token: the token acts as its owner (real role from the users table), scoped
-// to the token's workspace unless the caller forwards a ?workspace_id the owner
-// is a member of. expires_at mirrors the token's expiry (or a short cache TTL
-// when the token never expires). Returns false if the owner can't be resolved.
+// token: the token acts as its owner, scoped to the token's workspace unless
+// the caller forwards a ?workspace_id the owner is a member of. expires_at
+// mirrors the token's expiry (or a short cache TTL when the token never
+// expires). Returns false if the owner can't be resolved.
+//
+// The role follows the same rule as the session branch above: the calling
+// module's grant wins over users.role. Acting as the owner has to mean the
+// owner's role *in that module* — otherwise the same person is an opera
+// 管理员 in the browser and a plain user through a polar_ token, and the
+// plugin, which only reads `role`, falls back to its own default (opera:
+// researcher). That asymmetry cost an afternoon of 403s on audience:read.
 func (s *Server) writeAPITokenVerify(c *gin.Context, tok *APIToken) bool {
 	u, err := s.getUserByID(tok.OwnerUserID)
 	if err != nil || u == nil {
@@ -161,14 +201,15 @@ func (s *Server) writeAPITokenVerify(c *gin.Context, tok *APIToken) bool {
 	if tok.ExpiresAt != nil && tok.ExpiresAt.Before(exp) {
 		exp = *tok.ExpiresAt
 	}
+	// plugin_name is set by hmacPluginAuth on this same request, so a plugin
+	// still cannot read — or claim — another module's roles.
+	pluginStr := callingPlugin(c)
+	role, moduleRole := moduleRoleOverride(u.Role, s.lookupModuleRole(pluginStr, u.ID))
 	go s.touchAPIToken(tok.ID)
-	c.JSON(http.StatusOK, gin.H{
-		"user_id":      u.ID,
-		"username":     u.Username,
-		"role":         u.Role,
-		"workspace_id": workspaceID,
-		"expires_at":   exp.UTC().Format(time.RFC3339),
-	})
+	c.JSON(http.StatusOK, authVerifyBody(
+		u.ID, u.Username, role, u.Role, pluginStr, moduleRole,
+		workspaceID, exp.UTC().Format(time.RFC3339),
+	))
 	return true
 }
 
