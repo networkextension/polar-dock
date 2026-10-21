@@ -90,9 +90,27 @@ Validates an end-user session token (whichever the user presented to the plugin 
   "module":        "opera",         // the calling plugin (X-Polar-Plugin-Name)
   "module_role":   "researcher",    // "" when this user has no grant in this module
   "workspace_id":  "t_root",        // active workspace (from X-Workspace-Id or personal team)
-  "expires_at":    "2026-05-28T00:00:00Z"
+  "expires_at":    "2026-05-28T00:00:00Z",
+  "kind":          "session",       // "session" | "api_token"
+  "token_id":      null,            // api token id (integer) when kind = "api_token", else null
+  "scopes":        null             // null | string[] — see "Scopes" below
 }
 ```
+
+**`kind` / `token_id` / `scopes`** (added 2026-10-21, additive; both branches carry all three so a
+plugin never sees a branch-specific field set — `TestAuthVerifyBody_FieldSet` pins it):
+
+| credential | `kind` | `token_id` | `scopes` |
+|---|---|---|---|
+| browser session | `"session"` | `null` | `null` |
+| `polar_` token with **no** stored scopes (dock: full access) | `"api_token"` | id | `null` |
+| `polar_` token with scopes | `"api_token"` | id | only entries prefixed `"<calling module>:"`, plus `"*"` if granted — may be `[]` |
+
+`null` and `[]` mean different things and a plugin MUST NOT collapse them: `null` = the token is
+unscoped (a plugin may allow it, e.g. during a transition), `[]` = the token is scoped but holds
+nothing for this module (deny). A plugin never sees another module's scopes or dock's own
+(`hosts:write`, …). dock does not enforce module scopes here — the plugin does, against its own
+route → scope table (see `module-manifest.md` once a module registers one).
 
 **Module roles.** A plugin can have its own cast — 风洞 (`opera`) has `admin` / `researcher` /
 `audience` — which is *not* the platform role: `users.role='admin'` means dock **site** admin, so
@@ -122,6 +140,10 @@ default and denied module-admin-only data.
 **Response 401:** `{"error":"invalid session"}`.
 
 **Caching:** plugins SHOULD cache by token for 30 seconds. Cache TTL must not exceed 60 seconds.
+Dock side, the `polar_` branch is served from the redis verify cache (`verify:api:{sha256}`, token
+row + owner, TTL `min(30 s, until expiry)`, evicted on revoke / rotate) and the module-role lookup
+from `verify:modrole:{module}:{user_id}` (evicted on grant / revoke) — see
+`control-plane-data-plane-split.md`. `last_used_at` is bumped at most once a minute per token.
 
 ### 2. `GET /internal/v1/users/:id`
 

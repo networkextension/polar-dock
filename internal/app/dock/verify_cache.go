@@ -77,6 +77,24 @@ func (s *Server) verifyCacheSet(kind, key string, val any) {
 	_ = s.redis.Set(context.Background(), s.verifyKey(kind, key), b, verifyCachePosTTL).Err()
 }
 
+// verifyCacheSetTTL is verifyCacheSet with a caller-chosen TTL, capped at
+// verifyCachePosTTL. Used for credentials that can expire sooner than the
+// default window (an api token 10 s from its expires_at must not be served
+// from cache for 30 s). ttl <= 0 stores nothing.
+func (s *Server) verifyCacheSetTTL(kind, key string, val any, ttl time.Duration) {
+	if !s.verifyCache || s.redis == nil || key == "" || ttl <= 0 {
+		return
+	}
+	if ttl > verifyCachePosTTL {
+		ttl = verifyCachePosTTL
+	}
+	b, err := json.Marshal(val)
+	if err != nil {
+		return
+	}
+	_ = s.redis.Set(context.Background(), s.verifyKey(kind, key), b, ttl).Err()
+}
+
 // verifyCacheSetNegative caches a known-invalid lookup for a short window.
 func (s *Server) verifyCacheSetNegative(kind, key string) {
 	if !s.verifyCache || s.redis == nil || key == "" {
