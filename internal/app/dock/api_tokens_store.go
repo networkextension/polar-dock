@@ -5,14 +5,18 @@ package dock
 // surface. P0: full-access (scopes stored but not yet enforced — that's P1).
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -127,17 +131,45 @@ func (s *Server) rotateAPIToken(id int64, workspaceID string) (raw string, tok *
 	if err != nil {
 		return "", nil, err
 	}
+	// The subquery locks the row and hands back the OLD hash, so the verify
+	// cache entry for the old secret (keyed by hash) can be evicted — without
+	// it a rotated-out secret keeps verifying for up to verifyCachePosTTL.
+	var oldHash string
 	row := s.db.QueryRow(
 		`UPDATE api_tokens SET token_hash=$1, prefix=$2
-		  WHERE id=$3 AND workspace_id=$4 AND status='active'
-		  RETURNING `+apiTokenCols,
+		   FROM (SELECT id AS old_id, token_hash AS old_hash
+		           FROM api_tokens WHERE id=$3 FOR UPDATE) old
+		  WHERE api_tokens.id = old.old_id AND workspace_id=$4 AND status='active'
+		  RETURNING `+apiTokenColsQualified+`, old.old_hash`,
 		hashHex, prefix, id, workspaceID,
 	)
-	t, err := scanAPIToken(row)
+	t, err := scanAPIToken(extraScan{row, []any{&oldHash}})
 	if err != nil {
 		return "", nil, err
 	}
+	s.verifyCacheDel("api", oldHash)
 	return raw, t, nil
+}
+
+// apiTokenColsQualified is apiTokenCols prefixed with the table name, for
+// statements that join another relation (rotate's UPDATE … FROM).
+var apiTokenColsQualified = func() string {
+	parts := strings.Split(apiTokenCols, ",")
+	for i, p := range parts {
+		parts[i] = "api_tokens." + strings.TrimSpace(p)
+	}
+	return strings.Join(parts, ", ")
+}()
+
+// extraScan appends extra destinations after the ones scanAPIToken passes,
+// so a RETURNING list can carry columns beyond apiTokenCols.
+type extraScan struct {
+	rs    interface{ Scan(...any) error }
+	extra []any
+}
+
+func (e extraScan) Scan(dest ...any) error {
+	return e.rs.Scan(append(dest, e.extra...)...)
 }
 
 // ipAllowed reports whether clientIP is permitted by an api_token's allowlist.
@@ -203,41 +235,162 @@ func (s *Server) listAPITokens(workspaceID string) ([]APIToken, error) {
 // revokeAPIToken soft-revokes a token, scoped to the workspace so a caller
 // can't revoke another workspace's token.
 func (s *Server) revokeAPIToken(id int64, workspaceID string) error {
-	res, err := s.db.Exec(
+	// RETURNING token_hash so the verify-cache entry (keyed by hash) can be
+	// evicted — revocation takes effect immediately instead of after the
+	// positive TTL. Same shape as revokeAgentToken.
+	var tokenHash string
+	err := s.db.QueryRow(
 		`UPDATE api_tokens SET status='revoked', revoked_at=now()
-		  WHERE id=$1 AND workspace_id=$2 AND status='active'`,
+		  WHERE id=$1 AND workspace_id=$2 AND status='active'
+		  RETURNING token_hash`,
 		id, workspaceID,
-	)
+	).Scan(&tokenHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sql.ErrNoRows
+	}
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return sql.ErrNoRows
-	}
+	s.verifyCacheDel("api", tokenHash)
 	return nil
+}
+
+// apiTokenEntry is the cached positive result of an api-token lookup: the
+// token row plus its owner's username / platform role, so the
+// /internal/v1/auth/verify hot path needs neither api_tokens nor users from
+// Postgres while the entry is warm. Owner fields are "" when the owner row is
+// gone (LEFT JOIN) — /api middleware never needed them, verify rejects it.
+type apiTokenEntry struct {
+	Token         APIToken `json:"token"`
+	OwnerUsername string   `json:"owner_username"`
+	OwnerRole     string   `json:"owner_role"`
+	OwnerFound    bool     `json:"owner_found"`
+}
+
+// apiTokenCacheTTL is how long a positive entry may live: the default
+// verify-cache window, cut short when the token expires sooner. <= 0 means
+// "do not cache" (already expired).
+func apiTokenCacheTTL(expiresAt *time.Time, now time.Time) time.Duration {
+	if expiresAt == nil {
+		return verifyCachePosTTL
+	}
+	left := expiresAt.Sub(now)
+	if left < verifyCachePosTTL {
+		return left
+	}
+	return verifyCachePosTTL
 }
 
 // resolveAPIToken looks up an active, non-expired token by its raw secret.
 // Returns nil when missing / revoked / expired. Used by AuthMiddleware.
 func (s *Server) resolveAPIToken(raw string) *APIToken {
+	e := s.resolveAPITokenEntry(raw)
+	if e == nil {
+		return nil
+	}
+	return &e.Token
+}
+
+// resolveAPITokenEntry is resolveAPIToken plus the owner snapshot, behind the
+// redis verify cache (key verify:api:{sha256}, same scheme as agent tokens —
+// the raw secret is never a key). Revoke / rotate evict the entry; expiry is
+// re-checked on every hit; DB errors are never cached.
+func (s *Server) resolveAPITokenEntry(raw string) *apiTokenEntry {
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, apiTokenPrefix) {
 		return nil
 	}
-	row := s.db.QueryRow(`SELECT `+apiTokenCols+` FROM api_tokens WHERE token_hash=$1 AND status='active'`, hashAPIToken(raw))
-	t, err := scanAPIToken(row)
+	h := hashAPIToken(raw)
+	now := time.Now()
+
+	var cached apiTokenEntry
+	if neg, hit := s.verifyCacheGet("api", h, &cached); hit {
+		if neg {
+			return nil
+		}
+		if cached.Token.ExpiresAt != nil && cached.Token.ExpiresAt.Before(now) {
+			return nil
+		}
+		return &cached
+	}
+
+	var ownerName, ownerRole sql.NullString
+	row := s.db.QueryRow(
+		`SELECT `+apiTokenColsQualified+`, u.username, u.role
+		   FROM api_tokens
+		   LEFT JOIN users u ON u.id = api_tokens.owner_user_id
+		  WHERE api_tokens.token_hash=$1 AND api_tokens.status='active'`, h)
+	t, err := scanAPIToken(extraScan{row, []any{&ownerName, &ownerRole}})
+	if errors.Is(err, sql.ErrNoRows) {
+		s.verifyCacheSetNegative("api", h)
+		return nil
+	}
 	if err != nil {
+		return nil // transient DB error — do not cache
+	}
+	if t.ExpiresAt != nil && t.ExpiresAt.Before(now) {
+		s.verifyCacheSetNegative("api", h)
 		return nil
 	}
-	if t.ExpiresAt != nil && t.ExpiresAt.Before(time.Now()) {
-		return nil
+	e := &apiTokenEntry{
+		Token:         *t,
+		OwnerUsername: ownerName.String,
+		OwnerRole:     ownerRole.String,
+		OwnerFound:    ownerName.Valid,
 	}
-	return t
+	s.verifyCacheSetTTL("api", h, e, apiTokenCacheTTL(t.ExpiresAt, now))
+	return e
 }
 
 // touchAPIToken bumps last_used_at (best-effort, async-safe).
 func (s *Server) touchAPIToken(id int64) {
 	_, _ = s.db.Exec(`UPDATE api_tokens SET last_used_at=now() WHERE id=$1`, id)
+}
+
+// apiTokenTouchInterval bounds last_used_at writes to one per token per
+// interval — the column is a "last seen around" hint, not an audit trail
+// (api_token_calls is the audit), so a write per request is wasted IO.
+const apiTokenTouchInterval = 60 * time.Second
+
+// apiTokenTouchLocal is the in-process fallback throttle (token id →
+// time.Time of the last write) used when redis is absent or erroring.
+var apiTokenTouchLocal sync.Map
+
+func (s *Server) apiTokenTouchKey(id int64) string {
+	prefix := DefaultRedisPrefix
+	if s.redisPrefix != "" {
+		prefix = s.redisPrefix
+	}
+	return fmt.Sprintf("%s:api_token_touch:%d", prefix, id)
+}
+
+// shouldTouchAPIToken reports whether this process should write last_used_at
+// now. With redis: SET NX EX 60 across all dock replicas. Without (or on a
+// redis error): a per-process sync.Map gate.
+func (s *Server) shouldTouchAPIToken(id int64, now time.Time) bool {
+	if s.redis != nil {
+		ok, err := s.redis.SetNX(context.Background(), s.apiTokenTouchKey(id), "1", apiTokenTouchInterval).Result()
+		if err == nil {
+			return ok
+		}
+		log.Printf("api token touch: redis gate failed, falling back to local: %v", err)
+	}
+	if v, ok := apiTokenTouchLocal.Load(id); ok {
+		if last, _ := v.(time.Time); now.Sub(last) < apiTokenTouchInterval {
+			return false
+		}
+	}
+	apiTokenTouchLocal.Store(id, now)
+	return true
+}
+
+// touchAPITokenThrottled is touchAPIToken behind shouldTouchAPIToken. Call it
+// from the request hot paths (AuthMiddleware, /internal/v1/auth/verify).
+func (s *Server) touchAPITokenThrottled(id int64) {
+	if !s.shouldTouchAPIToken(id, time.Now()) {
+		return
+	}
+	s.touchAPIToken(id)
 }
 
 // ── P2: per-call audit (api_token_calls) ──────────────────────────────────

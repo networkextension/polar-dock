@@ -64,6 +64,22 @@ disables the layer instantly if that window is ever unacceptable.
 Deferred from this commit only because the proxy/api revoke paths are billing/security-sensitive
 and warrant their own focused review.
 
+**Cache coverage (2026-10-21, POLAROPERA-48):**
+
+| kind | key | value | TTL | evicted by |
+|---|---|---|---|---|
+| `agent` | token sha256 | `{id, user_id}` | 30 s / neg 5 s | `revokeAgentToken` |
+| `api` | token sha256 | token row + owner `username` / `role` | `min(30 s, until expires_at)` / neg 5 s | `revokeAPIToken` (`RETURNING token_hash`), `rotateAPIToken` (old hash via locked subquery) |
+| `modrole` | `{module}:{user_id}` | granted role (`""` = no grant, cached too) | 30 s | `grantModuleRole`, `revokeModuleRole` |
+
+`resolveAPIToken` serves both dock's own `/api` `AuthMiddleware` and the `polar_` branch of
+`/internal/v1/auth/verify`; on a hit neither `api_tokens` nor `users` is queried, and expiry is
+re-checked against the cached `expires_at`. A change to the owner's `users.role` is picked up within
+30 s. DB errors are never cached. `last_used_at` is no longer written per request:
+`touchAPITokenThrottled` writes at most once per token per 60 s (redis `SET NX EX 60` on
+`{prefix}:api_token_touch:{id}`, in-process `sync.Map` when redis is absent). Still uncached:
+`lookupLLMProxyTokenByHash`, `getPluginModuleByName`.
+
 ### Phase 2 — extract the LLM proxy
 
 Move the proxy into `polar-llm-proxy-svc` (own process, N replicas, own box if needed). It talks

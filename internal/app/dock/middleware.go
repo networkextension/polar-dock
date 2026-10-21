@@ -182,7 +182,7 @@ func (s *Server) AuthMiddleware() gin.HandlerFunc {
 					}
 					c.Set("auth_kind", "api_token")
 					c.Set("api_token_id", tok.ID)
-					go s.touchAPIToken(tok.ID)
+					go s.touchAPITokenThrottled(tok.ID)
 					// P2: audit + metrics after the handler chain runs (real
 					// status + latency). Capture primitives — the gin.Context
 					// is not safe to touch from the recording goroutine.

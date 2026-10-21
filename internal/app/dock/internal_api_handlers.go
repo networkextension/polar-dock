@@ -51,11 +51,11 @@ func (s *Server) handleInternalAuthVerify(c *gin.Context) {
 		// via this endpoint (zone-svc, release, …) accept api keys, not just
 		// browser sessions. The token acts as its OWNER: we return the owner's
 		// real role (so an admin-owned token clears admin-gated plugin
-		// endpoints) + the token's workspace. Scope limits are enforced by
-		// dock's own /api middleware, not here — a plugin-svc admin gate only
-		// checks role, so use full-scope tokens for plugin ops.
+		// endpoints) + the token's workspace. dock does not enforce scopes
+		// here; it hands the calling module its slice of them (`scopes`,
+		// see filterScopesForModule) and the module enforces.
 		if s.openAPITokens {
-			if tok := s.resolveAPIToken(token); tok != nil && s.writeAPITokenVerify(c, tok) {
+			if e := s.resolveAPITokenEntry(token); e != nil && s.writeAPITokenVerify(c, e) {
 				return
 			}
 		}
@@ -87,6 +87,7 @@ func (s *Server) handleInternalAuthVerify(c *gin.Context) {
 	c.JSON(http.StatusOK, authVerifyBody(
 		sess.UserID, sess.Username, role, sess.Role, pluginStr, moduleRole,
 		workspaceID, sess.ExpiresAt.UTC().Format(time.RFC3339),
+		verifyKindSession, nil, nil,
 	))
 }
 
@@ -100,9 +101,18 @@ func callingPlugin(c *gin.Context) string {
 
 // lookupModuleRole is getModuleRole with the "no plugin / lookup failed" cases
 // folded into an empty string — callers want a role, not three branches.
+//
+// Behind the verify cache as verify:modrole:{module}:{user_id} — a grant or
+// "no grant" ("") is cached for verifyCachePosTTL; grantModuleRole /
+// revokeModuleRole evict it. Lookup errors are not cached.
 func (s *Server) lookupModuleRole(plugin, userID string) string {
 	if plugin == "" {
 		return ""
+	}
+	key := moduleRoleCacheKey(plugin, userID)
+	var cached string
+	if neg, hit := s.verifyCacheGet("modrole", key, &cached); hit && !neg {
+		return cached
 	}
 	granted, err := s.getModuleRole(plugin, userID)
 	if err != nil {
@@ -110,7 +120,13 @@ func (s *Server) lookupModuleRole(plugin, userID string) string {
 			plugin, userID, err)
 		return ""
 	}
+	s.verifyCacheSet("modrole", key, granted)
 	return granted
+}
+
+// moduleRoleCacheKey is the {module}:{user_id} tail of the verify:modrole key.
+func moduleRoleCacheKey(module, userID string) string {
+	return normalizeModuleName(module) + ":" + strings.TrimSpace(userID)
 }
 
 // moduleRoleOverride decides what a plugin sees as `role`: its own grant when
@@ -128,7 +144,23 @@ func moduleRoleOverride(platformRole, granted string) (role, moduleRole string) 
 // browser session and for an API token alike. Plugins cache this for 30s and
 // read `role`; a field that exists in one branch only is a bug waiting to
 // happen (TestAuthVerifyBody_FieldSet pins it).
-func authVerifyBody(userID, username, role, platformRole, module, moduleRole, workspaceID, expiresAt string) gin.H {
+//
+// kind / token_id / scopes (2026-10-21, POLAROPERA-48):
+//   - session:   "session",   null, null
+//   - api token: "api_token", <id>, filterScopesForModule(token.scopes, module)
+//
+// A nil tokenID / nil scopes marshal as JSON null; an empty non-nil scopes
+// slice marshals as [] ("token is scoped, nothing for this module").
+func authVerifyBody(userID, username, role, platformRole, module, moduleRole, workspaceID, expiresAt string,
+	kind string, tokenID *int64, scopes []string) gin.H {
+	var scopesVal any // untyped nil → null
+	if scopes != nil {
+		scopesVal = scopes
+	}
+	var tokenIDVal any
+	if tokenID != nil {
+		tokenIDVal = *tokenID
+	}
 	return gin.H{
 		"user_id":       userID,
 		"username":      username,
@@ -138,7 +170,38 @@ func authVerifyBody(userID, username, role, platformRole, module, moduleRole, wo
 		"module_role":   moduleRole,
 		"workspace_id":  workspaceID,
 		"expires_at":    expiresAt,
+		"kind":          kind,
+		"token_id":      tokenIDVal,
+		"scopes":        scopesVal,
 	}
+}
+
+const (
+	verifyKindSession  = "session"
+	verifyKindAPIToken = "api_token"
+)
+
+// filterScopesForModule is the slice of an api token's scopes a module gets
+// to see in verify:
+//   - token has NO stored scopes (dock: full access) → nil  (JSON null)
+//   - otherwise → entries prefixed "<module>:" plus "*" if present, possibly
+//     an empty, non-nil slice (JSON []): scoped, but nothing for this module.
+//
+// A module never sees another module's scopes or dock's own (hosts:write …).
+// With no calling module only "*" can pass.
+func filterScopesForModule(scopes []string, module string) []string {
+	if len(scopes) == 0 {
+		return nil
+	}
+	module = normalizeModuleName(module)
+	out := make([]string, 0, len(scopes))
+	for _, sc := range scopes {
+		sc = strings.TrimSpace(sc)
+		if sc == "*" || (module != "" && strings.HasPrefix(sc, module+":")) {
+			out = append(out, sc)
+		}
+	}
+	return out
 }
 
 // ── 1b. GET /internal/v1/auth/verify-agent?token=<polar_agent_…> ───────────
@@ -186,11 +249,11 @@ func (s *Server) handleInternalAuthVerifyAgent(c *gin.Context) {
 // 管理员 in the browser and a plain user through a polar_ token, and the
 // plugin, which only reads `role`, falls back to its own default (opera:
 // researcher). That asymmetry cost an afternoon of 403s on audience:read.
-func (s *Server) writeAPITokenVerify(c *gin.Context, tok *APIToken) bool {
-	u, err := s.getUserByID(tok.OwnerUserID)
-	if err != nil || u == nil {
+func (s *Server) writeAPITokenVerify(c *gin.Context, e *apiTokenEntry) bool {
+	if e == nil || !e.OwnerFound {
 		return false
 	}
+	tok := &e.Token
 	workspaceID := tok.WorkspaceID
 	if req := strings.TrimSpace(c.Query("workspace_id")); req != "" && req != workspaceID {
 		if m, err := s.getTeamMember(req, tok.OwnerUserID); err == nil && m != nil {
@@ -204,11 +267,13 @@ func (s *Server) writeAPITokenVerify(c *gin.Context, tok *APIToken) bool {
 	// plugin_name is set by hmacPluginAuth on this same request, so a plugin
 	// still cannot read — or claim — another module's roles.
 	pluginStr := callingPlugin(c)
-	role, moduleRole := moduleRoleOverride(u.Role, s.lookupModuleRole(pluginStr, u.ID))
-	go s.touchAPIToken(tok.ID)
+	role, moduleRole := moduleRoleOverride(e.OwnerRole, s.lookupModuleRole(pluginStr, tok.OwnerUserID))
+	go s.touchAPITokenThrottled(tok.ID)
+	tokenID := tok.ID
 	c.JSON(http.StatusOK, authVerifyBody(
-		u.ID, u.Username, role, u.Role, pluginStr, moduleRole,
+		tok.OwnerUserID, e.OwnerUsername, role, e.OwnerRole, pluginStr, moduleRole,
 		workspaceID, exp.UTC().Format(time.RFC3339),
+		verifyKindAPIToken, &tokenID, filterScopesForModule(tok.Scopes, pluginStr),
 	))
 	return true
 }

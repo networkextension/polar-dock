@@ -56,13 +56,14 @@ func TestCallingPlugin(t *testing.T) {
 // 两条分支共用这一个构造函数，字段集就不会再各长各的。
 // 契约见 doc/arch/internal-api-v1.md §1；插件缓存 30s 后只读 `role`。
 func TestAuthVerifyBody_FieldSet(t *testing.T) {
-	body := authVerifyBody("u_abc", "Kong", "admin", "user", "opera", "admin", "t_root", "2026-09-18T00:00:00Z")
+	body := authVerifyBody("u_abc", "Kong", "admin", "user", "opera", "admin", "t_root", "2026-09-18T00:00:00Z",
+		verifyKindSession, nil, nil)
 	got := make([]string, 0, len(body))
 	for k := range body {
 		got = append(got, k)
 	}
 	sort.Strings(got)
-	want := []string{"expires_at", "module", "module_role", "platform_role", "role", "username", "user_id", "workspace_id"}
+	want := []string{"expires_at", "kind", "module", "module_role", "platform_role", "role", "scopes", "token_id", "username", "user_id", "workspace_id"}
 	sort.Strings(want)
 	if len(got) != len(want) {
 		t.Fatalf("字段集 = %v, want %v", got, want)

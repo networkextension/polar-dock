@@ -108,7 +108,7 @@ the browser).
 5. Bind context: `workspace_id = token.workspace_id` (token is workspace-pinned;
    `X-Workspace-Id` is ignored for tokens — no cross-workspace surprise),
    `user_id = owner`, `auth_kind = "api_token"`.
-6. Async: bump `last_used_at`, insert `api_token_calls` row, Prometheus counters.
+6. Async: bump `last_used_at` (throttled: at most once per token per 60 s, `touchAPITokenThrottled`), insert `api_token_calls` row, Prometheus counters.
 
 Handlers don't change — they already read `workspace_id`/`user_id` from
 context, exactly like the session path sets them.

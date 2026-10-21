@@ -111,6 +111,9 @@ func (s *Server) grantModuleRole(module, userID, role, grantedBy, sourceCode str
 		normalizeInviteCode(sourceCode),
 		now,
 	)
+	if err == nil {
+		s.verifyCacheDel("modrole", moduleRoleCacheKey(m, userID))
+	}
 	return err
 }
 
@@ -123,6 +126,7 @@ func (s *Server) revokeModuleRole(module, userID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	s.verifyCacheDel("modrole", moduleRoleCacheKey(module, userID))
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return false, err
