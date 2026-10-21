@@ -151,6 +151,115 @@ func (s *Server) rotateAPIToken(id int64, workspaceID string) (raw string, tok *
 	return raw, t, nil
 }
 
+// apiTokenPatch is a partial edit of an active token (PATCH
+// /api/api-tokens/:id). nil = leave unchanged. Expiry needs a separate
+// ExpiresSet flag because "set to never" (ExpiresAt == nil) is a real edit.
+// The secret / hash / prefix are never touched — the machines holding the
+// token keep working with the new settings.
+type apiTokenPatch struct {
+	Name        *string
+	Scopes      *[]string
+	IPAllowlist *[]string
+	RPM         *int
+	ExpiresSet  bool
+	ExpiresAt   *time.Time
+}
+
+// apply returns a copy of t with the patch applied, plus the names of the
+// fields whose value actually changed (JSON field names, for the audit row).
+func (p apiTokenPatch) apply(t APIToken) (APIToken, []string) {
+	out := t
+	changed := []string{}
+	if p.Name != nil && *p.Name != t.Name {
+		out.Name = *p.Name
+		changed = append(changed, "name")
+	}
+	if p.Scopes != nil && !equalStrings(*p.Scopes, t.Scopes) {
+		out.Scopes = append([]string{}, (*p.Scopes)...)
+		changed = append(changed, "scopes")
+	}
+	if p.IPAllowlist != nil && !equalStrings(*p.IPAllowlist, t.IPAllowlist) {
+		out.IPAllowlist = append([]string{}, (*p.IPAllowlist)...)
+		changed = append(changed, "ip_allowlist")
+	}
+	if p.RPM != nil && *p.RPM != t.RateLimitRPM {
+		out.RateLimitRPM = *p.RPM
+		changed = append(changed, "rate_limit_rpm")
+	}
+	if p.ExpiresSet && !equalTimePtr(p.ExpiresAt, t.ExpiresAt) {
+		out.ExpiresAt = p.ExpiresAt
+		changed = append(changed, "expires_at")
+	}
+	return out, changed
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalTimePtr(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
+}
+
+// getAPIToken loads one token row of the workspace (any status).
+func (s *Server) getAPIToken(id int64, workspaceID string) (*APIToken, error) {
+	return scanAPIToken(s.db.QueryRow(
+		`SELECT `+apiTokenCols+` FROM api_tokens WHERE id=$1 AND workspace_id=$2`, id, workspaceID))
+}
+
+// updateAPIToken applies p to an active token of the workspace, in one
+// transaction (row locked FOR UPDATE so the before-snapshot matches what was
+// overwritten). Returns the before / after rows and the changed field names;
+// sql.ErrNoRows when the token is missing, revoked or in another workspace.
+// Evicts the verify-cache entry (which holds the whole row), so new scopes /
+// IP allowlist / rpm / expiry apply on the very next request.
+func (s *Server) updateAPIToken(id int64, workspaceID string, p apiTokenPatch) (before, after *APIToken, changed []string, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var tokenHash string
+	before, err = scanAPIToken(extraScan{tx.QueryRow(
+		`SELECT `+apiTokenCols+`, token_hash FROM api_tokens
+		  WHERE id=$1 AND workspace_id=$2 AND status='active' FOR UPDATE`,
+		id, workspaceID), []any{&tokenHash}})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	next, changed := p.apply(*before)
+	if len(changed) > 0 {
+		scopesJSON, _ := json.Marshal(next.Scopes)
+		ipJSON, _ := json.Marshal(next.IPAllowlist)
+		if _, err = tx.Exec(
+			`UPDATE api_tokens SET name=$1, scopes=$2, ip_allowlist=$3, rate_limit_rpm=$4, expires_at=$5
+			  WHERE id=$6`,
+			next.Name, scopesJSON, ipJSON, next.RateLimitRPM, next.ExpiresAt, id,
+		); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, nil, nil, err
+	}
+	if len(changed) > 0 {
+		s.verifyCacheDel("api", tokenHash)
+	}
+	return before, &next, changed, nil
+}
+
 // apiTokenColsQualified is apiTokenCols prefixed with the table name, for
 // statements that join another relation (rotate's UPDATE … FROM).
 var apiTokenColsQualified = func() string {

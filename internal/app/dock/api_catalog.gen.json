@@ -1,5 +1,5 @@
 {
-  "count": 358,
+  "count": 359,
   "endpoints": [
     {
       "method": "GET",
@@ -1078,6 +1078,42 @@
       "auth": "user",
       "scope": "api-tokens:write",
       "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/api-tokens/:id",
+      "handler": "handleAPITokenUpdate",
+      "auth": "user",
+      "scope": "api-tokens:write",
+      "body": [
+        {
+          "name": "name",
+          "type": "*string"
+        },
+        {
+          "name": "scopes",
+          "type": "*[]string"
+        },
+        {
+          "name": "ip_allowlist",
+          "type": "*[]string"
+        },
+        {
+          "name": "rate_limit_rpm",
+          "type": "*int"
+        },
+        {
+          "name": "expires_at",
+          "type": "json.RawMessage"
+        }
+      ],
       "query": [],
       "path_params": [
         {
