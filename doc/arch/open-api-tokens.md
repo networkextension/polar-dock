@@ -138,6 +138,19 @@ Reuse the `/proxy-tokens.html` patterns (list + create modal + audit drawer):
   **Create** → show secret once + copy button + ready-to-paste `curl`.
 - **Revoke** (soft, `status=revoked`) + **Rotate** (revoke + mint new, same
   scopes).
+- **Edit** (2026-10-21, POLAROPERA-48) — `PATCH /api/api-tokens/:id`, body any
+  subset of `{name, scopes[], ip_allowlist[], rate_limit_rpm, expires_at}`;
+  absent = unchanged, `"expires_at": null` = never expires (an RFC3339 value must
+  be in the future), `rate_limit_rpm` 1..100000. The secret, hash and prefix
+  are untouched, so the machines already holding the token don't need it
+  re-pasted. Returns `200 {token}` (no secret). Errors: 400 `input.invalid` /
+  `api.unknown_scope` / `api.invalid_ip`; 403 `api.session_required`,
+  `api.admin_scope_forbidden`, `forbidden` (not the token owner nor a workspace
+  owner/admin); 404 `not_found` (missing, revoked, other workspace). The UI
+  pre-fills the create modal and keeps scopes it no longer recognises: on
+  edit, a scope the token **already holds** may stay even if the catalog no
+  longer knows it (e.g. a module dropped it); only newly added scopes must be
+  known (`api.unknown_scope`) and pass the admin-scope gate.
 - **Per-token usage**: aggregate `api_token_calls` (calls, top paths, error
   rate) — same modal UX as the proxy audit view.
 
@@ -163,6 +176,10 @@ Reuse the `/proxy-tokens.html` patterns (list + create modal + audit drawer):
 - **P4** — public **API reference** page from `catalog.json` (scope shown per
   endpoint) + **OpenAPI 3 export** from the catalog → feeds the
   polar-sdk-swift/kotlin codegen track.
+- **P5** — in-place edit (`PATCH /api/api-tokens/:id`) + tightened issuance:
+  only browser sessions may create / edit tokens, admin scopes need a site
+  admin, edit is limited to the owner or a workspace owner/admin, and
+  create / update / rotate / revoke write team-audit rows.
 
 ## Security notes
 
@@ -171,6 +188,22 @@ Reuse the `/proxy-tokens.html` patterns (list + create modal + audit drawer):
 - Audit every call; revoke is immediate (active-hash partial index).
 - nginx already serves public `/api/*`; `/internal/*` stays blocked there.
 - Tokens are workspace-pinned → blast radius = one workspace.
+- Editing a token evicts its `verify:api:{sha256}` cache entry (the entry holds
+  the whole row), so new scopes / IP allowlist / RPM / expiry apply on the next
+  request — on dock's `/api` and on `/internal/v1/auth/verify` — not after the
+  positive TTL.
+- A `polar_` token cannot create or edit tokens (`auth_kind == "api_token"` →
+  403 `api.session_required`), even one holding `*` or `api-tokens:write` — a
+  token must never be able to widen itself. (Rotate / revoke by token are
+  unchanged.)
+- `admin` / `admin:*` scopes can only be granted by a site admin (`IsSiteAdmin`),
+  on create and on edit (edit checks only the scopes being newly added) →
+  otherwise 403 `api.admin_scope_forbidden`.
+- Team audit (`category=team_audit`, subject `api_token`): `api_token.create`,
+  `api_token.update` (details `before` / `after` / `changed_fields`),
+  `api_token.rotate`, `api_token.revoke`. Details carry name, scopes, IP
+  allowlist, RPM, expiry (and prefix on create / rotate) — never the hash or
+  secret.
 
 ## Open questions
 

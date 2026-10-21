@@ -943,6 +943,7 @@ func (s *Server) registerRoutes() {
 		api.GET("/api-tokens", s.AuthMiddleware(), s.handleAPITokenList)
 		api.GET("/api-token-scopes", s.AuthMiddleware(), s.handleAPITokenScopes)
 		api.GET("/openapi.json", s.AuthMiddleware(), s.handleOpenAPISpec)
+		api.PATCH("/api-tokens/:id", s.AuthMiddleware(), s.handleAPITokenUpdate)
 		api.POST("/api-tokens/:id/rotate", s.AuthMiddleware(), s.handleAPITokenRotate)
 		api.GET("/api-tokens/:id/calls", s.AuthMiddleware(), s.handleAPITokenCalls)
 		api.GET("/api-tokens/:id/calls/aggregate", s.AuthMiddleware(), s.handleAPITokenCallsAggregate)
