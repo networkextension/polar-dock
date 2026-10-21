@@ -90,12 +90,29 @@ Validates an end-user session token (whichever the user presented to the plugin 
   "module":        "opera",         // the calling plugin (X-Polar-Plugin-Name)
   "module_role":   "researcher",    // "" when this user has no grant in this module
   "workspace_id":  "t_root",        // active workspace (from X-Workspace-Id or personal team)
-  "expires_at":    "2026-05-28T00:00:00Z",
+  "expires_at":    "2026-05-28T00:00:00Z", // cache TTL hint — NOT the token's lifetime, see below
   "kind":          "session",       // "session" | "api_token"
   "token_id":      null,            // api token id (integer) when kind = "api_token", else null
-  "scopes":        null             // null | string[] — see "Scopes" below
+  "scopes":        null,            // null | string[] — see "Scopes" below
+  "token_expires_at": null          // api token's real expiry (RFC3339 UTC); null = never / session
 }
 ```
+
+**`expires_at` vs `token_expires_at`** (`token_expires_at` added 2026-10-21, additive,
+POLAROPERA-281; both branches carry it):
+
+| credential | `expires_at` (how long the plugin may cache this answer) | `token_expires_at` (the credential's real expiry) |
+|---|---|---|
+| browser session | session expiry | `null` |
+| `polar_` token with an expiry | `min(now + 30 s, token expiry)` | token expiry, RFC3339 UTC |
+| `polar_` token that never expires | `now + 30 s` | `null` |
+
+`expires_at` is a **cache TTL hint**. For an API token it is at most 30 s in the future, so a
+plugin that shows it as "token expires at …" tells every user their token dies today (that was the
+bug: on-site apps showed 「⚠ 0 天后过期」 for every token). Anything that displays or reasons about
+a token's lifetime MUST read `token_expires_at`; `null` there means "never expires", not "unknown".
+The verify cache (`verify:api:<hash>`) stores the whole token row, so a cache hit and a Postgres
+hit answer the same `token_expires_at`.
 
 **`kind` / `token_id` / `scopes`** (added 2026-10-21, additive; both branches carry all three so a
 plugin never sees a branch-specific field set — `TestAuthVerifyBody_FieldSet` pins it):

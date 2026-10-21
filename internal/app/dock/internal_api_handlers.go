@@ -87,7 +87,7 @@ func (s *Server) handleInternalAuthVerify(c *gin.Context) {
 	c.JSON(http.StatusOK, authVerifyBody(
 		sess.UserID, sess.Username, role, sess.Role, pluginStr, moduleRole,
 		workspaceID, sess.ExpiresAt.UTC().Format(time.RFC3339),
-		verifyKindSession, nil, nil,
+		verifyKindSession, nil, nil, nil,
 	))
 }
 
@@ -151,8 +151,18 @@ func moduleRoleOverride(platformRole, granted string) (role, moduleRole string) 
 //
 // A nil tokenID / nil scopes marshal as JSON null; an empty non-nil scopes
 // slice marshals as [] ("token is scoped, nothing for this module").
+//
+// expires_at vs token_expires_at (2026-10-21, POLAROPERA-281):
+//   - expires_at is how long the plugin may cache this answer. For a session
+//     it is the session expiry; for an api token it is min(now+30s, token
+//     expiry) — a cache hint, NOT the token's lifetime.
+//   - token_expires_at is the api token's real expiry (RFC3339 UTC), or null
+//     when the token never expires. Always null for a session.
+//
+// Platforms surfaced expires_at as "token expires in 0 days" before this
+// field existed; anything showing a token lifetime must read token_expires_at.
 func authVerifyBody(userID, username, role, platformRole, module, moduleRole, workspaceID, expiresAt string,
-	kind string, tokenID *int64, scopes []string) gin.H {
+	kind string, tokenID *int64, scopes []string, tokenExpiresAt *time.Time) gin.H {
 	var scopesVal any // untyped nil → null
 	if scopes != nil {
 		scopesVal = scopes
@@ -161,18 +171,23 @@ func authVerifyBody(userID, username, role, platformRole, module, moduleRole, wo
 	if tokenID != nil {
 		tokenIDVal = *tokenID
 	}
+	var tokenExpVal any // untyped nil → null ("never expires" / session)
+	if tokenExpiresAt != nil {
+		tokenExpVal = tokenExpiresAt.UTC().Format(time.RFC3339)
+	}
 	return gin.H{
-		"user_id":       userID,
-		"username":      username,
-		"role":          role,
-		"platform_role": platformRole,
-		"module":        module,
-		"module_role":   moduleRole,
-		"workspace_id":  workspaceID,
-		"expires_at":    expiresAt,
-		"kind":          kind,
-		"token_id":      tokenIDVal,
-		"scopes":        scopesVal,
+		"user_id":          userID,
+		"username":         username,
+		"role":             role,
+		"platform_role":    platformRole,
+		"module":           module,
+		"module_role":      moduleRole,
+		"workspace_id":     workspaceID,
+		"expires_at":       expiresAt,
+		"kind":             kind,
+		"token_id":         tokenIDVal,
+		"scopes":           scopesVal,
+		"token_expires_at": tokenExpVal,
 	}
 }
 
@@ -240,8 +255,11 @@ func (s *Server) handleInternalAuthVerifyAgent(c *gin.Context) {
 // writeAPITokenVerify answers /internal/v1/auth/verify for a polar_ open-API
 // token: the token acts as its owner, scoped to the token's workspace unless
 // the caller forwards a ?workspace_id the owner is a member of. expires_at
-// mirrors the token's expiry (or a short cache TTL when the token never
-// expires). Returns false if the owner can't be resolved.
+// is the plugin cache hint min(now+30s, token expiry); the token's real
+// expiry goes out as token_expires_at (null = never). The entry may come from
+// the verify cache — it holds the whole token row, ExpiresAt included, so
+// both paths fill token_expires_at the same. Returns false if the owner
+// can't be resolved.
 //
 // The role follows the same rule as the session branch above: the calling
 // module's grant wins over users.role. Acting as the owner has to mean the
@@ -274,6 +292,7 @@ func (s *Server) writeAPITokenVerify(c *gin.Context, e *apiTokenEntry) bool {
 		tok.OwnerUserID, e.OwnerUsername, role, e.OwnerRole, pluginStr, moduleRole,
 		workspaceID, exp.UTC().Format(time.RFC3339),
 		verifyKindAPIToken, &tokenID, filterScopesForModule(tok.Scopes, pluginStr),
+		tok.ExpiresAt,
 	))
 	return true
 }
