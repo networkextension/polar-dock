@@ -131,3 +131,15 @@ POST /api/teams/<team_id>/members {"user_id":"<uid>","role":"member"}
 
 team admin 权限，`role` 同样限 `member` / `viewer`；主工作区（home team）拒绝加人。
 提升成 admin 仍走 `PUT /api/teams/:id/members/:user_id`。
+
+## 词表来自模块 manifest（2026-10-21）
+
+模块可以在 `PUT /internal/v1/modules/:module/manifest` 里声明 `roles[{id, name, invite_prefix}]`
+（见 `module-manifest.md`）。登记后 `moduleRoleVocabulary` / `validateModuleRole` **先查 manifest**：
+
+- 声明了 roles → 以它为封闭词表；码面前缀取 `invite_prefix`，没填就是 `UPPER(module)-UPPER(role)`。
+- 没有 manifest，或 manifest 的 roles 为空 → 退回 `module_roles_store.go` 里写死的 `moduleRolePolicies`
+  （opera 的三条至今仍在，作兜底）。
+
+opera 的 manifest 必须带 `WT-ADMIN` / `WT-CREATOR` / `WT-AUDIENCE`，否则与 polar-opera
+`classifyInviteCode()` 脱钩；`module_manifest_test.go` 与 `module_roles_test.go` 都钉住了这三个前缀。

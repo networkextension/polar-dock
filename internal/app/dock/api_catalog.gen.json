@@ -1,5 +1,5 @@
 {
-  "count": 357,
+  "count": 358,
   "endpoints": [
     {
       "method": "GET",
@@ -6035,6 +6035,19 @@
         }
       ],
       "query": []
+    },
+    {
+      "method": "PUT",
+      "path": "/internal/v1/modules/:module/manifest",
+      "handler": "handleInternalModuleManifestPut",
+      "body": [],
+      "query": [],
+      "path_params": [
+        {
+          "name": "module",
+          "type": "string"
+        }
+      ]
     },
     {
       "method": "POST",

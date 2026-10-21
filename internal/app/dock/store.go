@@ -3831,6 +3831,20 @@ CREATE INDEX IF NOT EXISTS idx_plugin_access_requests_ws
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_plugin_access_requests_open
     ON plugin_access_requests(workspace_id, plugin_name, scope, api_route)
     WHERE status = 'pending';
+
+-- module_manifests — a module's self-declared permission surface (roles +
+-- invite prefixes, API-token scopes, presets, route → scope table), PUT by
+-- the module at startup via /internal/v1/modules/:module/manifest. One row
+-- per module; body_sha256 makes an unchanged re-PUT a no-op. No FK to
+-- plugin_modules (same fresh-DB ordering stance as plugin_releases). See
+-- doc/arch/module-manifest.md.
+CREATE TABLE IF NOT EXISTS module_manifests (
+    module      TEXT PRIMARY KEY,
+    version     TEXT NOT NULL DEFAULT '',
+    body_sha256 TEXT NOT NULL,
+    body        JSONB NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()

@@ -99,8 +99,15 @@ func (s *Server) requiredScope(method, fullPath string) string {
 }
 
 // knownScope reports whether scope is a real, grantable scope (for create
-// validation). The "*" wildcard is always accepted.
+// validation). The "*" wildcard is always accepted, as are scopes declared
+// by a registered module manifest and "<registered module>:*" (see
+// module_manifest.go).
 func knownScope(scope string) bool {
+	return dockScopeKnown(scope) || manifestRegistry.hasScope(scope)
+}
+
+// dockScopeKnown is knownScope restricted to dock's own /api catalog.
+func dockScopeKnown(scope string) bool {
 	scopeOnce.Do(loadScopes)
 	return scope == apiscopes.Wildcard || allScopeSet[scope]
 }

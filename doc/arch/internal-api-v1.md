@@ -110,7 +110,8 @@ plugin never sees a branch-specific field set — `TestAuthVerifyBody_FieldSet` 
 unscoped (a plugin may allow it, e.g. during a transition), `[]` = the token is scoped but holds
 nothing for this module (deny). A plugin never sees another module's scopes or dock's own
 (`hosts:write`, …). dock does not enforce module scopes here — the plugin does, against its own
-route → scope table (see `module-manifest.md` once a module registers one).
+route → scope table (registered via `PUT /internal/v1/modules/:module/manifest`, §9b /
+`module-manifest.md`).
 
 **Module roles.** A plugin can have its own cast — 风洞 (`opera`) has `admin` / `researcher` /
 `audience` — which is *not* the platform role: `users.role='admin'` means dock **site** admin, so
@@ -300,6 +301,14 @@ Plugin announces it is alive. Called **every 30 seconds** by each plugin process
 **Response 200:** `{ "ack": true, "config_version": 7 }` — `config_version` lets the plugin know when to re-pull its config.
 
 The first time a name appears, the plugin is auto-rejected unless an admin has provisioned the row in `plugin_modules` (with the HMAC key). This prevents an attacker who learns one key from creating new plugin identities.
+
+### 9b. `PUT /internal/v1/modules/:module/manifest`
+
+A module declares its roles (+ invite prefixes), API-token scopes, scope presets and route → scope
+table. `:module` and the body's `module` must equal `X-Polar-Plugin-Name` (else **403**).
+**200** `{"ack": true, "changed": <bool>, "version": "<manifest_version>"}` (`changed=false` when the
+canonical body sha is unchanged); **400** `{"error": "<reason>"}` on validation failure or a body over
+256 KB. Full body shape, validation rules and who consumes it: `module-manifest.md`.
 
 ---
 

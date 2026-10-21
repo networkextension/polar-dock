@@ -263,6 +263,9 @@ func NewServer(cfg Config) (*Server, error) {
 		botListCache: newBotListCache(),
 	}
 	server.backgroundCtx, server.backgroundStop = context.WithCancel(context.Background())
+	// Module manifests → in-process registry (+ redis mirror) before any
+	// route can consult knownScope / validateModuleRole.
+	server.startModuleManifestRegistry(server.backgroundCtx)
 
 	if cfg.IOSDistResourceKey != "" {
 		key, err := decodeIOSDistResourceKey(cfg.IOSDistResourceKey)
@@ -828,6 +831,8 @@ func (s *Server) registerRoutes() {
 		internal.POST("/llm/chat-completion", s.handleInternalLLMChatCompletion)
 		internal.POST("/notify", s.handleInternalNotify)
 		internal.POST("/plugin-registry/heartbeat", s.handleInternalHeartbeat)
+		// Module manifest: roles / scopes / presets / routes (module_manifest.go).
+		internal.PUT("/modules/:module/manifest", s.handleInternalModuleManifestPut)
 
 		// Issue #344: read-only view of the wg_peer_status samples
 		// the agent reports via skill.event{metric}. polar-wg polls

@@ -91,7 +91,12 @@ func (s *Server) handleAPITokenScopes(c *gin.Context) {
 	if _, ok := requireUserID(c); !ok {
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"groups": apiScopeCatalog(), "wildcard": "*"})
+	c.JSON(http.StatusOK, gin.H{
+		"groups":   apiScopeCatalog(),
+		"wildcard": "*",
+		// Scopes declared by registered module manifests (module_manifest.go).
+		"modules": buildModuleScopeCatalog(manifestRegistry.modules(), s.pluginDisplayName),
+	})
 }
 
 // handleAPITokenCalls — GET /api/api-tokens/:id/calls?limit=N. Recent calls
