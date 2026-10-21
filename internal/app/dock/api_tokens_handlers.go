@@ -240,11 +240,6 @@ func (s *Server) handleAPITokenUpdate(c *gin.Context) {
 		jsonError(c, http.StatusBadRequest, "input.invalid")
 		return
 	}
-	patch, errKey := validateAPITokenPatch(req.Name, req.Scopes, req.IPAllowlist, req.RateLimitRPM, req.ExpiresAt, time.Now())
-	if errKey != "" {
-		jsonError(c, http.StatusBadRequest, errKey)
-		return
-	}
 	cur, err := s.getAPIToken(id, ws)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && cur.Status != "active") {
 		jsonError(c, http.StatusNotFound, "not_found")
@@ -256,6 +251,15 @@ func (s *Server) handleAPITokenUpdate(c *gin.Context) {
 	}
 	if !apiTokenCanEdit(userID, cur.OwnerUserID, workspaceRole(c)) {
 		jsonError(c, http.StatusForbidden, "forbidden")
+		return
+	}
+	// Validated against the stored scopes: a scope the token already holds may
+	// stay even if the catalog no longer knows it (a module dropped it — the UI
+	// sends such scopes back unchanged as read-only chips); only newly added
+	// scopes must be known.
+	patch, errKey := validateAPITokenPatch(req.Name, req.Scopes, req.IPAllowlist, req.RateLimitRPM, req.ExpiresAt, cur.Scopes, time.Now())
+	if errKey != "" {
+		jsonError(c, http.StatusBadRequest, errKey)
 		return
 	}
 	// Only newly granted scopes go through the admin gate: a workspace admin
@@ -284,10 +288,12 @@ func (s *Server) handleAPITokenUpdate(c *gin.Context) {
 }
 
 // validateAPITokenPatch turns the PATCH body into an apiTokenPatch, or returns
-// the error key. Pure (now injected) so it's table-testable. expiresRaw: nil /
+// the error key. Pure (existing scopes + now injected) so it's table-testable.
+// existing = the token's stored scopes: those may be kept even when no longer
+// in the catalog; any other scope must pass knownScope. expiresRaw: nil /
 // empty = absent (unchanged), JSON null = never expires, else an RFC3339
 // string that must be in the future.
-func validateAPITokenPatch(name *string, scopes, ips *[]string, rpm *int, expiresRaw json.RawMessage, now time.Time) (apiTokenPatch, string) {
+func validateAPITokenPatch(name *string, scopes, ips *[]string, rpm *int, expiresRaw json.RawMessage, existing []string, now time.Time) (apiTokenPatch, string) {
 	var p apiTokenPatch
 	if name != nil {
 		n := strings.TrimSpace(*name)
@@ -300,7 +306,7 @@ func validateAPITokenPatch(name *string, scopes, ips *[]string, rpm *int, expire
 		out := make([]string, 0, len(*scopes))
 		for _, sc := range *scopes {
 			sc = strings.TrimSpace(sc)
-			if !knownScope(sc) {
+			if !knownScope(sc) && !containsString(existing, sc) {
 				return p, "api.unknown_scope"
 			}
 			out = append(out, sc)
@@ -349,6 +355,18 @@ func apiTokenCanEdit(callerID, ownerID, workspaceRole string) bool {
 		return true
 	}
 	return teamRoleAllows(workspaceRole, TeamRoleAdmin)
+}
+
+func containsString(list []string, v string) bool {
+	if v == "" {
+		return false
+	}
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // addedScopes returns the scopes in next that cur doesn't already hold.

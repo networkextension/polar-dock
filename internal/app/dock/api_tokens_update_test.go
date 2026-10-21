@@ -109,12 +109,53 @@ func TestValidateAPITokenPatch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			p, errKey := validateAPITokenPatch(c.n, c.scopes, c.ips, c.rpm, c.expires, now)
+			p, errKey := validateAPITokenPatch(c.n, c.scopes, c.ips, c.rpm, c.expires, nil, now)
 			if errKey != c.wantErr {
 				t.Fatalf("errKey = %q, want %q", errKey, c.wantErr)
 			}
 			if c.check != nil {
 				c.check(t, p)
+			}
+		})
+	}
+}
+
+// Scopes already on the token survive validation even when the catalog no
+// longer knows them (module dropped a scope; the UI echoes them back), but a
+// newly added unknown scope is still rejected.
+func TestValidateAPITokenPatchKeepsExistingUnknownScopes(t *testing.T) {
+	now := time.Now()
+	normal, admin := firstScopes(t)
+	existing := []string{normal, "gone:legacy:read"}
+	cases := []struct {
+		name     string
+		existing []string
+		scopes   []string
+		wantErr  string
+		wantAdd  []string // addedScopes(existing, result) → what the admin gate sees
+	}{
+		{"keep stale existing scope", existing, []string{normal, "gone:legacy:read"}, "", nil},
+		{"keep stale, trimmed", existing, []string{" gone:legacy:read "}, "", nil},
+		{"drop stale scope", existing, []string{normal}, "", nil},
+		{"add new unknown alongside stale", existing, []string{"gone:legacy:read", "other:new:read"}, "api.unknown_scope", nil},
+		{"stale scope not on this token", []string{normal}, []string{"gone:legacy:read"}, "api.unknown_scope", nil},
+		{"no existing scopes", nil, []string{"gone:legacy:read"}, "api.unknown_scope", nil},
+		{"blank never allowed", []string{""}, []string{""}, "api.unknown_scope", nil},
+		{"stale kept, new admin scope flagged for gate", existing, []string{"gone:legacy:read", admin}, "", []string{admin}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sc := c.scopes
+			p, errKey := validateAPITokenPatch(nil, &sc, nil, nil, nil, c.existing, now)
+			if errKey != c.wantErr {
+				t.Fatalf("errKey = %q, want %q", errKey, c.wantErr)
+			}
+			if errKey != "" {
+				return
+			}
+			got := addedScopes(c.existing, *p.Scopes)
+			if len(got) != len(c.wantAdd) || (len(got) > 0 && got[0] != c.wantAdd[0]) {
+				t.Fatalf("addedScopes = %v, want %v", got, c.wantAdd)
 			}
 		})
 	}
@@ -141,7 +182,7 @@ func TestAPITokenPatchExpiresDecoding(t *testing.T) {
 		if err := json.Unmarshal([]byte(c.in), &b); err != nil {
 			t.Fatal(err)
 		}
-		p, errKey := validateAPITokenPatch(b.Name, nil, nil, nil, b.ExpiresAt, now)
+		p, errKey := validateAPITokenPatch(b.Name, nil, nil, nil, b.ExpiresAt, nil, now)
 		if errKey != "" {
 			t.Fatalf("%s: errKey %q", c.in, errKey)
 		}

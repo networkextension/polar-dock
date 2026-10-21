@@ -147,7 +147,10 @@ Reuse the `/proxy-tokens.html` patterns (list + create modal + audit drawer):
   `api.unknown_scope` / `api.invalid_ip`; 403 `api.session_required`,
   `api.admin_scope_forbidden`, `forbidden` (not the token owner nor a workspace
   owner/admin); 404 `not_found` (missing, revoked, other workspace). The UI
-  pre-fills the create modal and keeps scopes it no longer recognises.
+  pre-fills the create modal and keeps scopes it no longer recognises: on
+  edit, a scope the token **already holds** may stay even if the catalog no
+  longer knows it (e.g. a module dropped it); only newly added scopes must be
+  known (`api.unknown_scope`) and pass the admin-scope gate.
 - **Per-token usage**: aggregate `api_token_calls` (calls, top paths, error
   rate) — same modal UX as the proxy audit view.
 
