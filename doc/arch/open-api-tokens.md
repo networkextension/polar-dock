@@ -91,6 +91,19 @@ The catalog already knows each route's auth tier, so the generator can also
 emit a `scope` column into `catalog.json`, which doubles as the public **API
 reference** ("this endpoint needs `posts:write`").
 
+### Module scopes (2026-10-21, POLAROPERA-48)
+
+Besides dock's own `domain:action` scopes, a token may carry scopes declared by a plugin module's
+manifest (`opera:sessions:read`, three-part, see `module-manifest.md`) and `<module>:*`. Create-time
+validation (`knownScope`) accepts them only once the module has registered its manifest.
+`GET /api/api-token-scopes` adds a `modules` array (per module: `display_name`, `groups[{group, scopes[{id,
+name, sensitive}]}]`, `presets[{id, name, scopes}]`) next to the unchanged `groups` / `wildcard`.
+
+dock does not enforce module scopes on its own `/api` (they never match a dock route, so a
+module-only token gets 403 there). The module enforces them: `/internal/v1/auth/verify` returns
+`kind` / `token_id` / `scopes` — the token's scopes filtered to `<calling module>:` + `*`, `null` for an
+unscoped token (`internal-api-v1.md` §1).
+
 ## Auth middleware — `apiTokenAuth`
 
 Sits alongside the session middleware on `/api/*`. A request whose

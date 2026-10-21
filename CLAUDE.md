@@ -77,5 +77,6 @@ Missing optional infra degrades rather than crashes: no GeoLite2 → login works
 ## Key references
 
 - `doc/arch/open-platform.md`, `doc/arch/internal-api-v1.md`, `doc/arch/database-ownership.md`, `doc/arch/auth-and-tokens.md` — the platform/plugin architecture and token model.
+- `doc/arch/module-manifest.md` (module-declared roles / API-token scopes / presets / routes, `PUT /internal/v1/modules/:module/manifest`), `doc/arch/module-roles.md`, `doc/arch/open-api-tokens.md` — module permissions and open-API tokens.
 - `teams.md` — workspace model. `iosapp.md` — iOS distribution. `doc/chat.md`, `doc/llm-bot.md` — chat + bot/LLM routing.
 - Env vars and provider config: `README.md` "Environment Variables" + `cmd/dock/main.go` (the authoritative list of what's read at boot).

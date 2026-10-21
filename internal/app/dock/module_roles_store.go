@@ -60,10 +60,16 @@ func normalizeModuleRole(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
-// moduleRoleVocabulary returns the roles a module accepts, or nil when
-// the module is open-vocabulary.
+// moduleRoleVocabulary returns the roles a module accepts (role → invite
+// prefix), or nil when the module is open-vocabulary. A registered module
+// manifest that declares roles wins (module_manifest.go); otherwise the
+// hard-coded moduleRolePolicies apply.
 func moduleRoleVocabulary(module string) map[string]string {
-	return moduleRolePolicies[normalizeModuleName(module)]
+	m := normalizeModuleName(module)
+	if vocab := manifestRegistry.roleVocabulary(m); vocab != nil {
+		return vocab
+	}
+	return moduleRolePolicies[m]
 }
 
 // validateModuleRole checks a (module, role) pair and returns the
@@ -74,7 +80,7 @@ func validateModuleRole(module, role string) (string, error) {
 	if !moduleNamePattern.MatchString(m) {
 		return "", errInvalidModuleName
 	}
-	if vocab := moduleRolePolicies[m]; vocab != nil {
+	if vocab := moduleRoleVocabulary(m); vocab != nil {
 		prefix, ok := vocab[r]
 		if !ok {
 			return "", errInvalidModuleRole
